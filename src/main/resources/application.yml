@@ -1,0 +1,38 @@
+server:
+  port: 10088
+  servlet:
+    session:
+      timeout: 4h  # Extend session to 4 hours for better UX
+
+spring:
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${google.oauth.client-id}
+            client-secret: ${google.oauth.client-secret}
+            scope:
+              - openid
+              - profile
+              - email
+            redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
+        provider:
+          google:
+            authorization-uri: https://accounts.google.com/o/oauth2/v2/auth
+            token-uri: https://www.googleapis.com/oauth2/v4/token
+            user-info-uri: https://www.googleapis.com/oauth2/v2/userinfo
+            user-name-attribute: email
+
+app:
+  google:
+    apiKey: ${google.api.key}
+    geocodeUrl: "https://maps.googleapis.com/maps/api/geocode/json"
+    regionBias: "us"
+  auth:
+    allowed-user: ${allowed.user1:user1@example.com}
+
+
+teslemetry:
+  oauth:
+    token: ${teslemetry.api.key}

@@ -1,0 +1,10 @@
+.mvn/
+*.log
+.git/
+.gitignore
+README.md
+Dockerfile
+.dockerignore
+.idea/
+*.iml
+.vscode/
