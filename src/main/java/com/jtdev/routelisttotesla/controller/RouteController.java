@@ -1,18 +1,24 @@
 package com.jtdev.routelisttotesla.controller;
 
 
+import com.jtdev.routelisttotesla.model.AutoNavSession;
 import com.jtdev.routelisttotesla.model.FleetApi;
 import com.jtdev.routelisttotesla.model.PlaceCandidate;
 import com.jtdev.routelisttotesla.model.PlaceCandidatesResponse;
+import com.jtdev.routelisttotesla.model.UserSession;
 import com.jtdev.routelisttotesla.service.AddressOcrService;
+import com.jtdev.routelisttotesla.service.AutoNavigationService;
 import com.jtdev.routelisttotesla.service.GeocodingClient;
 import com.jtdev.routelisttotesla.service.ImageCacheService;
+import com.jtdev.routelisttotesla.service.UserSessionService;
 import jakarta.validation.constraints.NotEmpty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -29,14 +35,19 @@ public class RouteController {
     private final AddressOcrService ocr;
     private final GeocodingClient geocoder;
     private final ImageCacheService cacheService;
+    private final AutoNavigationService autoNavigationService;
+    private final UserSessionService userSessionService;
 
     @Autowired
     FleetApi fleetApi;
 
-    public RouteController(AddressOcrService ocr, GeocodingClient geocoder, ImageCacheService cacheService) {
+    public RouteController(AddressOcrService ocr, GeocodingClient geocoder, ImageCacheService cacheService,
+                          AutoNavigationService autoNavigationService, UserSessionService userSessionService) {
         this.ocr = ocr; 
         this.geocoder = geocoder;
         this.cacheService = cacheService;
+        this.autoNavigationService = autoNavigationService;
+        this.userSessionService = userSessionService;
     }
 
     @PostMapping(value = "/places", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -218,5 +229,248 @@ public class RouteController {
         }
         
         return ResponseEntity.ok(response);
+    }
+
+    // ==================================================================================
+    //                           AUTO-NAVIGATION ENDPOINTS
+    // ==================================================================================
+
+    /**
+     * Start automatic navigation - creates a session and begins monitoring the vehicle
+     */
+    @PostMapping(value = "/auto-navigate/{vin}", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<Map<String, Object>> startAutoNavigation(
+            @PathVariable String vin,
+            @RequestBody PlaceCandidatesResponse addressData,
+            @AuthenticationPrincipal OAuth2User principal) {
+        
+        String userId = getUserId(principal);
+        List<PlaceCandidate> candidates = addressData.candidates();
+        
+        // Filter out empty addresses
+        candidates = candidates.stream()
+                .filter(c -> c.text() != null && !c.text().trim().isEmpty())
+                .collect(Collectors.toList());
+        
+        if (candidates.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "No valid addresses provided"));
+        }
+        
+        try {
+            // Create and start the session
+            AutoNavSession session = autoNavigationService.createSession(vin, userId, candidates);
+            autoNavigationService.startSession(session.getSessionId());
+            
+            // Store the session ID in user session for recovery
+            userSessionService.setActiveAutoNavSession(userId, session.getSessionId());
+            
+            Map<String, Object> response = buildSessionStatusResponse(session);
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            log.error("Failed to start auto-navigation: {}", e.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Get the status of an auto-navigation session
+     */
+    @GetMapping("/auto-navigate/status/{sessionId}")
+    public ResponseEntity<Map<String, Object>> getAutoNavStatus(@PathVariable String sessionId) {
+        AutoNavSession session = autoNavigationService.getSession(sessionId);
+        
+        if (session == null) {
+            return ResponseEntity.notFound().build();
+        }
+        
+        Map<String, Object> response = buildSessionStatusResponse(session);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Get any active auto-navigation session for the current user
+     */
+    @GetMapping("/auto-navigate/active")
+    public ResponseEntity<Map<String, Object>> getActiveAutoNavSession(@AuthenticationPrincipal OAuth2User principal) {
+        String userId = getUserId(principal);
+        AutoNavSession session = autoNavigationService.getActiveSessionForUser(userId);
+        
+        if (session == null) {
+            return ResponseEntity.ok(Map.of("active", false));
+        }
+        
+        Map<String, Object> response = buildSessionStatusResponse(session);
+        response.put("active", true);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Stop an auto-navigation session
+     */
+    @PostMapping("/auto-navigate/stop/{sessionId}")
+    public ResponseEntity<Map<String, Object>> stopAutoNavigation(
+            @PathVariable String sessionId,
+            @AuthenticationPrincipal OAuth2User principal) {
+        
+        String userId = getUserId(principal);
+        
+        try {
+            AutoNavSession session = autoNavigationService.stopSession(sessionId);
+            
+            // Clear the active session from user session
+            userSessionService.clearActiveAutoNavSession(userId);
+            
+            Map<String, Object> response = buildSessionStatusResponse(session);
+            return ResponseEntity.ok(response);
+            
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        } catch (Exception e) {
+            log.error("Failed to stop auto-navigation: {}", e.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Build a standardized response for session status
+     */
+    private Map<String, Object> buildSessionStatusResponse(AutoNavSession session) {
+        Map<String, Object> response = new HashMap<>();
+        response.put("sessionId", session.getSessionId());
+        response.put("vin", session.getVin());
+        response.put("status", session.getStatus().name());
+        response.put("currentGroupIndex", session.getCurrentGroupIndex());
+        response.put("totalGroups", session.getTotalGroups());
+        response.put("completedAddresses", session.getCompletedAddresses());
+        response.put("totalAddresses", session.getAllAddresses().size());
+        response.put("progressPercentage", session.getProgressPercentage());
+        response.put("lastError", session.getLastError());
+        
+        if (session.getLastPollAt() != null) {
+            response.put("lastPollAt", session.getLastPollAt().toString());
+        }
+        if (session.getUpdatedAt() != null) {
+            response.put("updatedAt", session.getUpdatedAt().toString());
+        }
+        
+        return response;
+    }
+
+    // ==================================================================================
+    //                           SESSION RECOVERY ENDPOINTS
+    // ==================================================================================
+
+    /**
+     * Save the current session data for later recovery
+     */
+    @PostMapping(value = "/session/save", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<Map<String, Object>> saveSession(
+            @RequestBody Map<String, Object> sessionData,
+            @AuthenticationPrincipal OAuth2User principal) {
+        
+        String userId = getUserId(principal);
+        
+        try {
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> candidatesData = (List<Map<String, Object>>) sessionData.get("candidates");
+            @SuppressWarnings("unchecked")
+            List<String> imageHashes = (List<String>) sessionData.get("imageHashes");
+            String vin = (String) sessionData.get("vin");
+            String defaultState = (String) sessionData.get("defaultState");
+            
+            // Convert candidates data to PlaceCandidate objects
+            List<PlaceCandidate> candidates = candidatesData.stream()
+                    .map(this::mapToPlaceCandidate)
+                    .collect(Collectors.toList());
+            
+            UserSession session = new UserSession(userId, vin, defaultState, candidates, imageHashes);
+            userSessionService.saveSession(session);
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("saved", true);
+            response.put("addressCount", candidates.size());
+            response.put("expiresIn", session.getMinutesUntilExpiration() + " minutes");
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            log.error("Failed to save session: {}", e.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Load a previously saved session
+     */
+    @GetMapping("/session/load")
+    public ResponseEntity<Map<String, Object>> loadSession(@AuthenticationPrincipal OAuth2User principal) {
+        String userId = getUserId(principal);
+        
+        UserSession session = userSessionService.loadSession(userId);
+        
+        if (session == null || !session.isValid()) {
+            return ResponseEntity.ok(Map.of("valid", false));
+        }
+        
+        Map<String, Object> response = new HashMap<>();
+        response.put("valid", true);
+        response.put("vin", session.getVin());
+        response.put("defaultState", session.getDefaultState());
+        response.put("candidates", session.getAddresses());
+        response.put("imageHashes", session.getImageHashes());
+        response.put("minutesRemaining", session.getMinutesUntilExpiration());
+        response.put("activeAutoNavSessionId", session.getActiveAutoNavSessionId());
+        
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Check if a valid session exists (lightweight check)
+     */
+    @GetMapping("/session/check")
+    public ResponseEntity<Map<String, Object>> checkSession(@AuthenticationPrincipal OAuth2User principal) {
+        String userId = getUserId(principal);
+        Map<String, Object> info = userSessionService.getSessionInfo(userId);
+        return ResponseEntity.ok(info);
+    }
+
+    /**
+     * Delete the current session
+     */
+    @DeleteMapping("/session")
+    public ResponseEntity<Map<String, Object>> deleteSession(@AuthenticationPrincipal OAuth2User principal) {
+        String userId = getUserId(principal);
+        boolean deleted = userSessionService.deleteSession(userId);
+        return ResponseEntity.ok(Map.of("deleted", deleted));
+    }
+
+    /**
+     * Helper to convert map to PlaceCandidate
+     */
+    private PlaceCandidate mapToPlaceCandidate(Map<String, Object> data) {
+        String text = (String) data.get("text");
+        String normalized = (String) data.get("normalized");
+        String sourceImage = (String) data.get("sourceImage");
+        int lineIndex = data.get("lineIndex") != null ? ((Number) data.get("lineIndex")).intValue() : 0;
+        double lat = data.get("lat") != null ? ((Number) data.get("lat")).doubleValue() : 0;
+        double lon = data.get("lon") != null ? ((Number) data.get("lon")).doubleValue() : 0;
+        String pid = (String) data.get("pid");
+        
+        return new PlaceCandidate(text, normalized, sourceImage, lineIndex, lat, lon, pid);
+    }
+
+    /**
+     * Get user ID from OAuth principal
+     */
+    private String getUserId(OAuth2User principal) {
+        if (principal == null) {
+            throw new IllegalStateException("User not authenticated");
+        }
+        String email = principal.getAttribute("email");
+        if (email == null) {
+            email = principal.getName();
+        }
+        return email;
     }
 }

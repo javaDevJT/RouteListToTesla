@@ -5,6 +5,90 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Route List to Tesla</title>
     <style>
+        /* Auto-nav specific styles */
+        .auto-nav-panel {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            color: white;
+        }
+
+        .auto-nav-panel h3 {
+            margin: 0 0 15px 0;
+            font-size: 18px;
+        }
+
+        .auto-nav-status {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .auto-nav-progress {
+            width: 100%;
+            height: 20px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .auto-nav-progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #28a745, #20c997);
+            transition: width 0.5s ease;
+            border-radius: 10px;
+        }
+
+        .auto-nav-info {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .btn-auto-nav {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            border: 2px solid white;
+        }
+
+        .btn-auto-nav:hover:not(:disabled) {
+            background: linear-gradient(135deg, #2a5298 0%, #1e3c72 100%);
+        }
+
+        .btn-stop {
+            background: #dc3545;
+            border: none;
+        }
+
+        .session-recovery-panel {
+            background: #e8f4fd;
+            border: 2px solid #3498db;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+
+        .session-recovery-panel h4 {
+            margin: 0 0 10px 0;
+            color: #2c3e50;
+        }
+
+        .session-recovery-info {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
         * {
             box-sizing: border-box;
             margin: 0;
@@ -302,6 +386,31 @@
                 <a th:href="@{/logout}" style="color: #666; text-decoration: none; font-size: 14px;">🚪 Logout</a>
             </div>
             
+            <!-- Session Recovery Panel (shown if previous session exists) -->
+            <div class="session-recovery-panel hidden" id="sessionRecoveryPanel">
+                <h4>📂 Previous Session Available</h4>
+                <div class="session-recovery-info" id="sessionRecoveryInfo">
+                    <!-- Populated dynamically -->
+                </div>
+                <button class="btn" id="loadSessionBtn" onclick="loadPreviousSession()">Reload Previous Session</button>
+                <button class="btn btn-secondary" onclick="dismissSessionRecovery()">Start Fresh</button>
+            </div>
+            
+            <!-- Active Auto-Navigation Panel (shown if auto-nav is in progress) -->
+            <div class="auto-nav-panel hidden" id="activeAutoNavPanel">
+                <h3>🚗 Automatic Navigation in Progress</h3>
+                <div class="auto-nav-progress">
+                    <div class="auto-nav-progress-bar" id="activeAutoNavProgressBar" style="width: 0%"></div>
+                </div>
+                <div class="auto-nav-info" id="activeAutoNavInfo">
+                    <!-- Populated dynamically -->
+                </div>
+                <div style="margin-top: 15px;">
+                    <button class="btn btn-stop" onclick="stopActiveAutoNav()">Stop Automatic Navigation</button>
+                    <button class="btn btn-secondary" onclick="viewAutoNavDetails()">View Details</button>
+                </div>
+            </div>
+            
             <!-- Step 1: Upload and Process -->
             <div class="step" id="step1">
                 <div class="step-title">Step 1: Upload Images</div>
@@ -397,6 +506,32 @@
                     Tesla supports up to 8 waypoints per route. If you have more than 8 addresses, they will be grouped automatically.
                 </div>
                 
+                <!-- Auto-Navigation Control Panel -->
+                <div class="auto-nav-panel hidden" id="autoNavControlPanel">
+                    <h3 id="autoNavTitle">🤖 Automatic Navigation</h3>
+                    <div class="auto-nav-progress">
+                        <div class="auto-nav-progress-bar" id="autoNavProgressBar" style="width: 0%"></div>
+                    </div>
+                    <div class="auto-nav-info" id="autoNavStatus">
+                        Ready to start automatic navigation. The system will monitor your vehicle and automatically send the next group of addresses when you complete each destination.
+                    </div>
+                    <div style="margin-top: 15px;" id="autoNavButtons">
+                        <button class="btn btn-auto-nav" id="startAutoNavBtn" onclick="startAutoNavigation()">
+                            🚀 Start Automatic Navigation
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Regular start auto-nav button (shown when panel is hidden) -->
+                <div style="margin-bottom: 20px;" id="autoNavStartSection">
+                    <button class="btn btn-auto-nav" onclick="showAutoNavPanel()">
+                        🤖 Use Automatic Navigation
+                    </button>
+                    <span style="margin-left: 10px; color: #666; font-size: 14px;">
+                        Or send each group manually below
+                    </span>
+                </div>
+                
                 <div id="addressGroups">
                     <!-- Dynamic address groups will be populated here -->
                 </div>
@@ -419,6 +554,9 @@
         let extractedAddresses = [];
         let currentVin = '';
         let selectedFiles = [];
+        let imageHashes = [];
+        let autoNavSessionId = null;
+        let autoNavPollInterval = null;
 
         // Cookie helpers
         function setCookie(name, value, days = 30) {
@@ -437,9 +575,13 @@
             }
             return null;
         }
+        
+        function deleteCookie(name) {
+            document.cookie = name + '=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/';
+        }
 
-        // Load saved values on page load
-        window.addEventListener('DOMContentLoaded', function() {
+        // Load saved values and check for sessions on page load
+        window.addEventListener('DOMContentLoaded', async function() {
             const savedVin = getCookie('lastVin');
             const savedState = getCookie('lastDefaultState');
             if (savedVin) {
@@ -448,6 +590,12 @@
             if (savedState) {
                 document.getElementById('defaultState').value = savedState;
             }
+            
+            // Check for active auto-navigation session
+            await checkActiveAutoNav();
+            
+            // Check for recoverable session
+            await checkSessionRecovery();
         });
 
         // Save values when changed
@@ -587,10 +735,17 @@
                     }
                 }
 
+                // Store image hashes for session recovery
+                imageHashes = selectedFiles.map(f => f.hash);
+                
                 // Show final results
                 if (extractedAddresses.length > 0) {
                     const cacheMsg = cachedCount > 0 ? ` (${cachedCount} from cache)` : '';
                     showStatus(`✅ Found ${extractedAddresses.length} address(es)${cacheMsg}`, 'success', processStatus);
+                    
+                    // Save session for recovery
+                    await saveCurrentSession();
+                    
                     setTimeout(() => {
                         showStep2();
                     }, 1500);
@@ -789,6 +944,362 @@
 
         function hideStatus(statusElement) {
             statusElement.classList.add('hidden');
+        }
+        
+        // ==================================================================================
+        //                           SESSION RECOVERY FUNCTIONS
+        // ==================================================================================
+        
+        async function checkSessionRecovery() {
+            try {
+                const response = await fetch('/route/session/check');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.valid) {
+                        showSessionRecoveryPanel(data);
+                    }
+                }
+            } catch (error) {
+                console.log('No recoverable session found');
+            }
+        }
+        
+        function showSessionRecoveryPanel(sessionInfo) {
+            const panel = document.getElementById('sessionRecoveryPanel');
+            const info = document.getElementById('sessionRecoveryInfo');
+            
+            const hours = Math.floor(sessionInfo.minutesRemaining / 60);
+            const mins = sessionInfo.minutesRemaining % 60;
+            const timeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins} minutes`;
+            
+            info.innerHTML = `
+                <strong>${sessionInfo.addressCount} addresses</strong> from your previous session are available.<br>
+                VIN: ${sessionInfo.vin || 'Not set'} | Expires in: ${timeStr}
+                ${sessionInfo.activeAutoNavSessionId ? '<br><em>⚠️ An automatic navigation session was in progress</em>' : ''}
+            `;
+            
+            panel.classList.remove('hidden');
+        }
+        
+        async function loadPreviousSession() {
+            try {
+                showStatus('Loading previous session...', 'loading', processStatus);
+                
+                const response = await fetch('/route/session/load');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.valid) {
+                        extractedAddresses = data.candidates;
+                        imageHashes = data.imageHashes || [];
+                        currentVin = data.vin || document.getElementById('vin').value;
+                        
+                        if (data.vin) {
+                            document.getElementById('vin').value = data.vin;
+                        }
+                        if (data.defaultState) {
+                            document.getElementById('defaultState').value = data.defaultState;
+                        }
+                        
+                        // Check if there's an active auto-nav session to resume
+                        if (data.activeAutoNavSessionId) {
+                            autoNavSessionId = data.activeAutoNavSessionId;
+                            setCookie('autoNavSessionId', autoNavSessionId);
+                        }
+                        
+                        dismissSessionRecovery();
+                        showStatus(`✅ Loaded ${extractedAddresses.length} addresses from previous session`, 'success', processStatus);
+                        
+                        setTimeout(() => {
+                            showStep2();
+                            if (autoNavSessionId) {
+                                showAutoNavPanel();
+                                startAutoNavPolling();
+                            }
+                        }, 1000);
+                    } else {
+                        showStatus('❌ Session has expired or is invalid', 'error', processStatus);
+                        dismissSessionRecovery();
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading session:', error);
+                showStatus(`Error loading session: ${error.message}`, 'error', processStatus);
+            }
+        }
+        
+        function dismissSessionRecovery() {
+            document.getElementById('sessionRecoveryPanel').classList.add('hidden');
+        }
+        
+        async function saveCurrentSession() {
+            try {
+                const vin = document.getElementById('vin').value;
+                const defaultState = document.getElementById('defaultState').value;
+                
+                const response = await fetch('/route/session/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        candidates: extractedAddresses,
+                        imageHashes: imageHashes,
+                        vin: vin,
+                        defaultState: defaultState
+                    })
+                });
+                
+                if (response.ok) {
+                    console.log('Session saved successfully');
+                }
+            } catch (error) {
+                console.error('Error saving session:', error);
+            }
+        }
+        
+        // ==================================================================================
+        //                           AUTO-NAVIGATION FUNCTIONS
+        // ==================================================================================
+        
+        async function checkActiveAutoNav() {
+            // First check cookie for session ID
+            const savedSessionId = getCookie('autoNavSessionId');
+            
+            try {
+                // Check for active session from server
+                const response = await fetch('/route/auto-navigate/active');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.active && (data.status === 'RUNNING' || data.status === 'CREATED')) {
+                        autoNavSessionId = data.sessionId;
+                        setCookie('autoNavSessionId', autoNavSessionId);
+                        showActiveAutoNavPanel(data);
+                        startAutoNavPolling();
+                        return;
+                    }
+                }
+                
+                // If server didn't return active session but we have a saved ID, check it
+                if (savedSessionId) {
+                    const statusResponse = await fetch(`/route/auto-navigate/status/${savedSessionId}`);
+                    if (statusResponse.ok) {
+                        const statusData = await statusResponse.json();
+                        if (statusData.status === 'RUNNING') {
+                            autoNavSessionId = savedSessionId;
+                            showActiveAutoNavPanel(statusData);
+                            startAutoNavPolling();
+                            return;
+                        }
+                    }
+                    // Session no longer active, clear cookie
+                    deleteCookie('autoNavSessionId');
+                }
+            } catch (error) {
+                console.log('No active auto-nav session:', error);
+            }
+        }
+        
+        function showActiveAutoNavPanel(data) {
+            const panel = document.getElementById('activeAutoNavPanel');
+            const progressBar = document.getElementById('activeAutoNavProgressBar');
+            const info = document.getElementById('activeAutoNavInfo');
+            
+            progressBar.style.width = `${data.progressPercentage}%`;
+            info.innerHTML = `
+                Route ${data.currentGroupIndex + 1} of ${data.totalGroups} | 
+                ${data.completedAddresses} of ${data.totalAddresses} addresses completed (${data.progressPercentage}%)
+                <br>Status: <strong>${data.status}</strong>
+                ${data.lastError ? `<br><span style="color: #ff6b6b;">Error: ${data.lastError}</span>` : ''}
+            `;
+            
+            panel.classList.remove('hidden');
+        }
+        
+        function showAutoNavPanel() {
+            document.getElementById('autoNavControlPanel').classList.remove('hidden');
+            document.getElementById('autoNavStartSection').classList.add('hidden');
+        }
+        
+        function hideAutoNavPanel() {
+            document.getElementById('autoNavControlPanel').classList.add('hidden');
+            document.getElementById('autoNavStartSection').classList.remove('hidden');
+        }
+        
+        async function startAutoNavigation() {
+            if (!currentVin) {
+                showStatus('Error: No VIN selected', 'error', sendStatus);
+                return;
+            }
+            
+            // Filter valid addresses
+            const validAddresses = extractedAddresses.filter(addr => 
+                addr.text && addr.text.trim().length > 0
+            );
+            
+            if (validAddresses.length === 0) {
+                showStatus('No valid addresses to navigate', 'error', sendStatus);
+                return;
+            }
+            
+            const startBtn = document.getElementById('startAutoNavBtn');
+            startBtn.disabled = true;
+            startBtn.textContent = 'Starting...';
+            
+            try {
+                const response = await fetch(`/route/auto-navigate/${currentVin}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ candidates: validAddresses })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    autoNavSessionId = data.sessionId;
+                    
+                    // Save session ID in cookie for recovery
+                    setCookie('autoNavSessionId', autoNavSessionId);
+                    
+                    // Save the session data for recovery
+                    await saveCurrentSession();
+                    
+                    // Update UI
+                    updateAutoNavUI(data);
+                    showStatus('🚀 Automatic navigation started! The first route has been sent.', 'success', sendStatus);
+                    
+                    // Start polling for status updates
+                    startAutoNavPolling();
+                    
+                } else {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to start auto-navigation');
+                }
+            } catch (error) {
+                console.error('Error starting auto-navigation:', error);
+                showStatus(`Error: ${error.message}`, 'error', sendStatus);
+                startBtn.disabled = false;
+                startBtn.textContent = '🚀 Start Automatic Navigation';
+            }
+        }
+        
+        function startAutoNavPolling() {
+            if (autoNavPollInterval) {
+                clearInterval(autoNavPollInterval);
+            }
+            
+            // Poll every 10 seconds
+            autoNavPollInterval = setInterval(pollAutoNavStatus, 10000);
+            
+            // Also poll immediately
+            pollAutoNavStatus();
+        }
+        
+        function stopAutoNavPolling() {
+            if (autoNavPollInterval) {
+                clearInterval(autoNavPollInterval);
+                autoNavPollInterval = null;
+            }
+        }
+        
+        async function pollAutoNavStatus() {
+            if (!autoNavSessionId) return;
+            
+            try {
+                const response = await fetch(`/route/auto-navigate/status/${autoNavSessionId}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    updateAutoNavUI(data);
+                    
+                    // Update the active panel on step 1 if visible
+                    if (!document.getElementById('activeAutoNavPanel').classList.contains('hidden')) {
+                        showActiveAutoNavPanel(data);
+                    }
+                    
+                    // Stop polling if completed or stopped
+                    if (data.status === 'COMPLETED' || data.status === 'STOPPED' || data.status === 'ERROR') {
+                        stopAutoNavPolling();
+                        deleteCookie('autoNavSessionId');
+                        
+                        if (data.status === 'COMPLETED') {
+                            showStatus('🎉 All routes have been sent to your Tesla!', 'success', sendStatus);
+                        } else if (data.status === 'ERROR') {
+                            showStatus(`❌ Auto-navigation error: ${data.lastError}`, 'error', sendStatus);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error polling auto-nav status:', error);
+            }
+        }
+        
+        function updateAutoNavUI(data) {
+            const progressBar = document.getElementById('autoNavProgressBar');
+            const status = document.getElementById('autoNavStatus');
+            const title = document.getElementById('autoNavTitle');
+            const buttons = document.getElementById('autoNavButtons');
+            
+            progressBar.style.width = `${data.progressPercentage}%`;
+            
+            if (data.status === 'RUNNING') {
+                title.textContent = '🚗 Automatic Navigation Active';
+                status.innerHTML = `
+                    <span class="pulse">●</span> Monitoring vehicle...<br>
+                    Route ${data.currentGroupIndex + 1} of ${data.totalGroups} | 
+                    ${data.completedAddresses} of ${data.totalAddresses} addresses completed
+                    ${data.lastError ? `<br><span style="color: #ff6b6b;">Last error: ${data.lastError}</span>` : ''}
+                `;
+                buttons.innerHTML = `
+                    <button class="btn btn-stop" onclick="stopAutoNavigation()">⏹️ Stop Automatic Navigation</button>
+                `;
+            } else if (data.status === 'COMPLETED') {
+                title.textContent = '✅ Navigation Complete';
+                status.innerHTML = `All ${data.totalAddresses} addresses have been sent to your Tesla!`;
+                buttons.innerHTML = `
+                    <button class="btn btn-secondary" onclick="hideAutoNavPanel()">Close</button>
+                `;
+            } else if (data.status === 'STOPPED') {
+                title.textContent = '⏹️ Navigation Stopped';
+                status.innerHTML = `Stopped at ${data.completedAddresses} of ${data.totalAddresses} addresses.`;
+                buttons.innerHTML = `
+                    <button class="btn btn-auto-nav" onclick="startAutoNavigation()">🚀 Restart</button>
+                    <button class="btn btn-secondary" onclick="hideAutoNavPanel()">Close</button>
+                `;
+            } else if (data.status === 'ERROR') {
+                title.textContent = '❌ Navigation Error';
+                status.innerHTML = `Error: ${data.lastError}<br>Completed ${data.completedAddresses} of ${data.totalAddresses} addresses.`;
+                buttons.innerHTML = `
+                    <button class="btn btn-auto-nav" onclick="startAutoNavigation()">🔄 Retry</button>
+                    <button class="btn btn-secondary" onclick="hideAutoNavPanel()">Close</button>
+                `;
+            }
+        }
+        
+        async function stopAutoNavigation() {
+            if (!autoNavSessionId) return;
+            
+            try {
+                const response = await fetch(`/route/auto-navigate/stop/${autoNavSessionId}`, {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    updateAutoNavUI(data);
+                    stopAutoNavPolling();
+                    deleteCookie('autoNavSessionId');
+                    showStatus('⏹️ Automatic navigation stopped', 'success', sendStatus);
+                }
+            } catch (error) {
+                console.error('Error stopping auto-navigation:', error);
+                showStatus(`Error: ${error.message}`, 'error', sendStatus);
+            }
+        }
+        
+        async function stopActiveAutoNav() {
+            await stopAutoNavigation();
+            document.getElementById('activeAutoNavPanel').classList.add('hidden');
+        }
+        
+        function viewAutoNavDetails() {
+            // Load the session data and go to step 2
+            loadPreviousSession();
         }
     </script>
 </body>
