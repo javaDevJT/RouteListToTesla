@@ -29,6 +29,8 @@ public class AutoNavSession {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private LocalDateTime lastPollAt;
+    private LocalDateTime lastRouteSentAt;  // Track when we last sent a route for timing calculations
+    private int lastGroupSize;               // Size of the last group sent (for timing calculations)
     private int completedAddresses;
     
     public AutoNavSession() {
@@ -139,6 +141,22 @@ public class AutoNavSession {
     
     public void setLastPollAt(LocalDateTime lastPollAt) {
         this.lastPollAt = lastPollAt;
+    }
+    
+    public LocalDateTime getLastRouteSentAt() {
+        return lastRouteSentAt;
+    }
+    
+    public void setLastRouteSentAt(LocalDateTime lastRouteSentAt) {
+        this.lastRouteSentAt = lastRouteSentAt;
+    }
+    
+    public int getLastGroupSize() {
+        return lastGroupSize;
+    }
+    
+    public void setLastGroupSize(int lastGroupSize) {
+        this.lastGroupSize = lastGroupSize;
     }
     
     public int getCompletedAddresses() {

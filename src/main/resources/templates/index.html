@@ -952,15 +952,28 @@
         
         async function checkSessionRecovery() {
             try {
+                console.log('Checking for recoverable session...');
                 const response = await fetch('/route/session/check');
                 if (response.ok) {
                     const data = await response.json();
+                    console.log('Session check response:', data);
                     if (data.valid) {
-                        showSessionRecoveryPanel(data);
+                        // Only show session recovery if there's no active auto-nav
+                        // (user can use "View Details" on auto-nav panel instead)
+                        if (!autoNavSessionId) {
+                            showSessionRecoveryPanel(data);
+                            console.log('Showing session recovery panel');
+                        } else {
+                            console.log('Session exists but auto-nav is active, skipping recovery panel');
+                        }
+                    } else {
+                        console.log('No valid session found');
                     }
+                } else {
+                    console.log('Session check failed with status:', response.status);
                 }
             } catch (error) {
-                console.log('No recoverable session found');
+                console.log('Error checking for recoverable session:', error);
             }
         }
         
@@ -1036,6 +1049,8 @@
                 const vin = document.getElementById('vin').value;
                 const defaultState = document.getElementById('defaultState').value;
                 
+                console.log('Saving session with', extractedAddresses.length, 'addresses...');
+
                 const response = await fetch('/route/session/save', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1046,9 +1061,14 @@
                         defaultState: defaultState
                     })
                 });
-                
+
                 if (response.ok) {
-                    console.log('Session saved successfully');
+                    const data = await response.json();
+                    console.log('Session saved successfully:', data);
+                } else {
+                    console.error('Failed to save session, status:', response.status);
+                    const errorText = await response.text();
+                    console.error('Error response:', errorText);
                 }
             } catch (error) {
                 console.error('Error saving session:', error);
@@ -1103,13 +1123,26 @@
             const info = document.getElementById('activeAutoNavInfo');
             
             progressBar.style.width = `${data.progressPercentage}%`;
-            info.innerHTML = `
-                Route ${data.currentGroupIndex + 1} of ${data.totalGroups} | 
-                ${data.completedAddresses} of ${data.totalAddresses} addresses completed (${data.progressPercentage}%)
-                <br>Status: <strong>${data.status}</strong>
-                ${data.lastError ? `<br><span style="color: #ff6b6b;">Error: ${data.lastError}</span>` : ''}
-            `;
-            
+
+            // Build status message with timing info
+            let statusMessage = `Route ${data.currentGroupIndex + 1} of ${data.totalGroups} |
+                ${data.completedAddresses} of ${data.totalAddresses} addresses completed (${data.progressPercentage}%)`;
+
+            // Add timing information if waiting
+            if (data.waitingForMinTime && data.minutesUntilNextCheck > 0) {
+                statusMessage += `<br>⏱️ Waiting ~${data.minutesUntilNextCheck} min before checking for next destination`;
+            } else if (data.lastPollAt) {
+                const pollTime = new Date(data.lastPollAt).toLocaleTimeString();
+                statusMessage += `<br>🔄 Last checked: ${pollTime}`;
+            }
+
+            statusMessage += `<br>Status: <strong>${data.status}</strong>`;
+
+            if (data.lastError) {
+                statusMessage += `<br><span style="color: #ff6b6b;">Error: ${data.lastError}</span>`;
+            }
+
+            info.innerHTML = statusMessage;
             panel.classList.remove('hidden');
         }
         
@@ -1239,12 +1272,30 @@
             
             if (data.status === 'RUNNING') {
                 title.textContent = '🚗 Automatic Navigation Active';
-                status.innerHTML = `
-                    <span class="pulse">●</span> Monitoring vehicle...<br>
-                    Route ${data.currentGroupIndex + 1} of ${data.totalGroups} | 
-                    ${data.completedAddresses} of ${data.totalAddresses} addresses completed
-                    ${data.lastError ? `<br><span style="color: #ff6b6b;">Last error: ${data.lastError}</span>` : ''}
-                `;
+
+                // Build detailed status with timing info
+                let statusHtml = `<span class="pulse">●</span> `;
+
+                if (data.waitingForMinTime && data.minutesUntilNextCheck > 0) {
+                    statusHtml += `Waiting ~${data.minutesUntilNextCheck} min before checking for next destination...<br>`;
+                } else {
+                    statusHtml += `Monitoring vehicle for destination completion...<br>`;
+                }
+
+                statusHtml += `Route ${data.currentGroupIndex + 1} of ${data.totalGroups} |
+                    ${data.completedAddresses} of ${data.totalAddresses} addresses completed`;
+
+                // Show last poll time
+                if (data.lastPollAt) {
+                    const pollTime = new Date(data.lastPollAt).toLocaleTimeString();
+                    statusHtml += `<br>🔄 Last checked: ${pollTime}`;
+                }
+
+                if (data.lastError) {
+                    statusHtml += `<br><span style="color: #ff6b6b;">Last error: ${data.lastError}</span>`;
+                }
+
+                status.innerHTML = statusHtml;
                 buttons.innerHTML = `
                     <button class="btn btn-stop" onclick="stopAutoNavigation()">⏹️ Stop Automatic Navigation</button>
                 `;

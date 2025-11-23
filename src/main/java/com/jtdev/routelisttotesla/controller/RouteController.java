@@ -354,6 +354,24 @@ public class RouteController {
             response.put("updatedAt", session.getUpdatedAt().toString());
         }
         
+        // Add timing information for better UI status display
+        if (session.getLastRouteSentAt() != null) {
+            response.put("lastRouteSentAt", session.getLastRouteSentAt().toString());
+            response.put("lastGroupSize", session.getLastGroupSize());
+            
+            // Calculate minutes until next check (2 min per stop estimate)
+            int lastGroupSize = Math.max(1, session.getLastGroupSize());
+            int minimumMinutes = lastGroupSize * 2; // MINUTES_PER_STOP = 2
+            java.time.LocalDateTime earliestNextCheck = session.getLastRouteSentAt().plusMinutes(minimumMinutes);
+            long secondsRemaining = java.time.Duration.between(java.time.LocalDateTime.now(), earliestNextCheck).getSeconds();
+            long minutesRemaining = Math.max(0, (secondsRemaining + 59) / 60);
+            response.put("minutesUntilNextCheck", minutesRemaining);
+            response.put("waitingForMinTime", secondsRemaining > 0);
+        } else {
+            response.put("minutesUntilNextCheck", 0);
+            response.put("waitingForMinTime", false);
+        }
+        
         return response;
     }
 
