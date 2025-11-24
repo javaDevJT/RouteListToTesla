@@ -1,5 +1,6 @@
 package com.jtdev.routelisttotesla.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -7,6 +8,7 @@ import java.util.List;
  * Represents a user session that stores processed addresses for session recovery.
  * Allows users to reload their previous work within 8 hours without re-uploading images.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class UserSession {
     
     private String userId;

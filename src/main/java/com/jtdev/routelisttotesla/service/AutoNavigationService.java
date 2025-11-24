@@ -38,9 +38,6 @@ public class AutoNavigationService {
     private static final int POLL_INTERVAL_SECONDS = 30;
     private static final int MAX_SESSION_AGE_HOURS = 24;
     
-    // Estimated time per stop in minutes - used to calculate when to check for next route
-    private static final int MINUTES_PER_STOP = 2;
-    
     private final FleetApi fleetApi;
     private final GeocodingClient geocodingClient;
     private final ObjectMapper objectMapper;
@@ -242,37 +239,31 @@ public class AutoNavigationService {
             try {
                 session.setLastPollAt(LocalDateTime.now());
                 
-                // Calculate if enough time has passed since last route was sent
-                // Assume ~2 minutes per stop for deliveries/pickups
-                boolean minTimeElapsed = hasMinimumTimeElapsed(session);
+                // Check if vehicle has completed current navigation (no active waypoints)
+                boolean vehicleReady = isVehicleReadyForNextRoute(session.getVin());
                 
-                if (!minTimeElapsed) {
-                    long minutesRemaining = getMinutesUntilNextCheck(session);
-                    log.debug("Waiting for minimum time to elapse. {} minutes remaining before next check for VIN {}", 
-                            minutesRemaining, session.getVin());
+                if (!vehicleReady) {
+                    log.info("Auto-nav session {}: Vehicle still navigating, waiting...", sessionId);
                     persistSession(session);  // Persist to update lastPollAt for UI
-                } else if (isVehicleReadyForNextRoute(session.getVin())) {
-                    // Vehicle has no active destination and minimum time has passed
-                    log.info("Vehicle {} ready for next route, sending group {}", 
+                } else {
+                    // Vehicle has no active navigation - send the next batch
+                    log.info("Vehicle ready for next route. Sending batch to VIN {}, group {}", 
                             session.getVin(), session.getCurrentGroupIndex() + 1);
                     
                     boolean sent = sendCurrentGroup(session);
                     if (sent) {
-                        int groupSize = session.getCurrentGroup().size();
                         session.setLastRouteSentAt(LocalDateTime.now());
-                        session.setLastGroupSize(groupSize);
+                        session.setLastGroupSize(session.getCurrentGroup().size());
                         session.advanceToNextGroup();
-                        log.info("Sent group {} of {}, {} addresses completed", 
+                        log.info("Sent group {} of {}, {} addresses completed.", 
                                 session.getCurrentGroupIndex(), session.getTotalGroups(),
                                 session.getCompletedAddresses());
                     } else {
                         log.warn("Failed to send group {} for session {}", 
                                 session.getCurrentGroupIndex() + 1, sessionId);
+                        session.setLastError("Failed to send waypoints to vehicle");
                     }
                     persistSession(session);
-                } else {
-                    log.debug("Vehicle {} still navigating, waiting...", session.getVin());
-                    persistSession(session);  // Persist to update lastPollAt for UI
                 }
                 
             } catch (Exception e) {
@@ -289,48 +280,10 @@ public class AutoNavigationService {
     }
     
     /**
-     * Check if enough time has passed since the last route was sent.
-     * We estimate ~2 minutes per stop to allow for deliveries/pickups.
-     */
-    private boolean hasMinimumTimeElapsed(AutoNavSession session) {
-        LocalDateTime lastSent = session.getLastRouteSentAt();
-        
-        // If no route has been sent yet (first group), proceed immediately
-        if (lastSent == null) {
-            return true;
-        }
-        
-        int lastGroupSize = session.getLastGroupSize();
-        if (lastGroupSize == 0) {
-            lastGroupSize = 1; // Minimum 1 stop
-        }
-        
-        // Calculate minimum wait time: lastGroupSize * MINUTES_PER_STOP
-        int minimumMinutes = lastGroupSize * MINUTES_PER_STOP;
-        LocalDateTime earliestNextCheck = lastSent.plusMinutes(minimumMinutes);
-        
-        return LocalDateTime.now().isAfter(earliestNextCheck);
-    }
-    
-    /**
-     * Get the number of minutes remaining until we should check for the next route
-     */
-    private long getMinutesUntilNextCheck(AutoNavSession session) {
-        LocalDateTime lastSent = session.getLastRouteSentAt();
-        if (lastSent == null) {
-            return 0;
-        }
-        
-        int lastGroupSize = Math.max(1, session.getLastGroupSize());
-        int minimumMinutes = lastGroupSize * MINUTES_PER_STOP;
-        LocalDateTime earliestNextCheck = lastSent.plusMinutes(minimumMinutes);
-        
-        long seconds = java.time.Duration.between(LocalDateTime.now(), earliestNextCheck).getSeconds();
-        return Math.max(0, (seconds + 59) / 60); // Round up to nearest minute
-    }
-    
-    /**
-     * Check if the vehicle has no active navigation destination
+     * Check if the vehicle has completed all waypoints from the current batch.
+     * We check the remaining waypoints count to determine if the batch is complete.
+     * This is more reliable than checking active_route_destination which becomes 
+     * empty when stopped at a waypoint.
      */
     private boolean isVehicleReadyForNextRoute(String vin) {
         try {
@@ -347,17 +300,44 @@ public class AutoNavigationService {
                 driveState = root.path("drive_state");
             }
             
-            // Check active_route_destination - if null/empty, vehicle is ready
-            JsonNode activeRoute = driveState.path("active_route_destination");
-            
-            if (activeRoute.isMissingNode() || activeRoute.isNull() || 
-                (activeRoute.isTextual() && activeRoute.asText().isEmpty())) {
-                log.debug("No active route destination for VIN {}", vin);
-                return true;
+            // First check: Are there any remaining waypoints in the route?
+            // active_route_waypoints_count tells us how many waypoints are left
+            JsonNode waypointsRemaining = driveState.path("active_route_waypoints_count");
+            if (!waypointsRemaining.isMissingNode() && waypointsRemaining.isNumber()) {
+                int remaining = waypointsRemaining.asInt();
+                if (remaining > 0) {
+                    log.debug("Vehicle {} has {} waypoints remaining in current route", vin, remaining);
+                    return false;
+                }
+                log.debug("Vehicle {} has completed all waypoints (remaining=0)", vin);
             }
             
-            log.debug("Active route destination for VIN {}: {}", vin, activeRoute.asText());
-            return false;
+            // Second check: Is there an active route with miles remaining?
+            JsonNode milesToArrival = driveState.path("active_route_miles_to_arrival");
+            if (!milesToArrival.isMissingNode() && milesToArrival.isNumber()) {
+                double miles = milesToArrival.asDouble();
+                if (miles > 0.1) { // More than 0.1 miles means still navigating
+                    log.debug("Vehicle {} has {} miles remaining to destination", vin, miles);
+                    return false;
+                }
+            }
+            
+            // Third check: Is there an active destination?
+            JsonNode activeRoute = driveState.path("active_route_destination");
+            if (!activeRoute.isMissingNode() && !activeRoute.isNull() && 
+                activeRoute.isTextual() && !activeRoute.asText().isEmpty()) {
+                // There's a destination set - check traffic delay as indicator of active navigation
+                JsonNode trafficDelay = driveState.path("active_route_traffic_minutes_delay");
+                if (!trafficDelay.isMissingNode() && trafficDelay.isNumber()) {
+                    // If traffic delay is being calculated, navigation is active
+                    log.debug("Vehicle {} still navigating to: {}", vin, activeRoute.asText());
+                    return false;
+                }
+            }
+            
+            // If we get here, vehicle appears ready for next route
+            log.info("Vehicle {} appears ready for next route (no active navigation detected)", vin);
+            return true;
             
         } catch (Exception e) {
             log.warn("Error checking vehicle state for VIN {}: {}", vin, e.getMessage());

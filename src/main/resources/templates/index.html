@@ -62,16 +62,30 @@
         }
 
         .session-recovery-panel {
-            background: #e8f4fd;
-            border: 2px solid #3498db;
-            border-radius: 8px;
-            padding: 15px;
+            background: linear-gradient(135deg, #e8f4fd 0%, #d4edda 100%);
+            border: 3px solid #28a745;
+            border-radius: 12px;
+            padding: 20px;
             margin-bottom: 20px;
+            box-shadow: 0 4px 15px rgba(40, 167, 69, 0.2);
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .session-recovery-panel h4 {
             margin: 0 0 10px 0;
-            color: #2c3e50;
+            color: #155724;
+            font-size: 18px;
         }
 
         .session-recovery-info {
@@ -958,14 +972,10 @@
                     const data = await response.json();
                     console.log('Session check response:', data);
                     if (data.valid) {
-                        // Only show session recovery if there's no active auto-nav
-                        // (user can use "View Details" on auto-nav panel instead)
-                        if (!autoNavSessionId) {
-                            showSessionRecoveryPanel(data);
-                            console.log('Showing session recovery panel');
-                        } else {
-                            console.log('Session exists but auto-nav is active, skipping recovery panel');
-                        }
+                        // Always show session recovery panel if there's a valid session
+                        // Even if auto-nav is active, user might want to see their data
+                        showSessionRecoveryPanel(data);
+                        console.log('Showing session recovery panel');
                     } else {
                         console.log('No valid session found');
                     }
@@ -1124,16 +1134,14 @@
             
             progressBar.style.width = `${data.progressPercentage}%`;
 
-            // Build status message with timing info
+            // Build status message
             let statusMessage = `Route ${data.currentGroupIndex + 1} of ${data.totalGroups} |
                 ${data.completedAddresses} of ${data.totalAddresses} addresses completed (${data.progressPercentage}%)`;
 
-            // Add timing information if waiting
-            if (data.waitingForMinTime && data.minutesUntilNextCheck > 0) {
-                statusMessage += `<br>⏱️ Waiting ~${data.minutesUntilNextCheck} min before checking for next destination`;
-            } else if (data.lastPollAt) {
+            // Add last poll time
+            if (data.lastPollAt) {
                 const pollTime = new Date(data.lastPollAt).toLocaleTimeString();
-                statusMessage += `<br>🔄 Last checked: ${pollTime}`;
+                statusMessage += `<br>🔄 Monitoring vehicle... Last checked: ${pollTime}`;
             }
 
             statusMessage += `<br>Status: <strong>${data.status}</strong>`;
@@ -1273,14 +1281,8 @@
             if (data.status === 'RUNNING') {
                 title.textContent = '🚗 Automatic Navigation Active';
 
-                // Build detailed status with timing info
-                let statusHtml = `<span class="pulse">●</span> `;
-
-                if (data.waitingForMinTime && data.minutesUntilNextCheck > 0) {
-                    statusHtml += `Waiting ~${data.minutesUntilNextCheck} min before checking for next destination...<br>`;
-                } else {
-                    statusHtml += `Monitoring vehicle for destination completion...<br>`;
-                }
+                // Build detailed status
+                let statusHtml = `<span class="pulse">●</span> Monitoring vehicle for destination completion...<br>`;
 
                 statusHtml += `Route ${data.currentGroupIndex + 1} of ${data.totalGroups} |
                     ${data.completedAddresses} of ${data.totalAddresses} addresses completed`;
