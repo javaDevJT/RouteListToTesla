@@ -108,6 +108,70 @@ class RouteControllerTest {
     }
 
     @Test
+    void mergesOverlappingCachedAndFreshScreenshotsWithoutChangingImageCache() throws Exception {
+        PlaceCandidate a = unresolved("101 FIRST RD MI", "first.png", 0);
+        PlaceCandidate b = unresolved("202 SECOND RD MI", "first.png", 1);
+        PlaceCandidate c = new PlaceCandidate("303 THIRD RD MI", "303 THIRD RD MI", "first.png",
+                2, 0, 0, null, 2, true, List.of("partial row"));
+        PlaceCandidate clearC = new PlaceCandidate(c.text(), c.normalized(), "old-name.png",
+                1, 42.1, -83.1, "third-id", 3, false, List.of("complete row"));
+        PlaceCandidate d = resolved("404 FOURTH RD MI", "old-name.png", 2);
+        PlaceCandidate e = unresolved("505 FIFTH RD MI", "third.png", 1);
+        List<PlaceCandidate> cached = List.of(resolved(b.text(), "old-name.png", 0), clearC, d);
+        when(cache.calculateImageHash(any(byte[].class), anyString(), eq("MI"), eq(OWNER)))
+                .thenAnswer(call -> call.getArgument(1, String.class) + "-key");
+        when(cache.getCachedResults(anyString())).thenAnswer(call ->
+                "middle.png-key".equals(call.getArgument(0)) ? cached : null);
+        when(ocr.extractAddressCandidates(any(byte[].class), eq("first.png"), eq("MI")))
+                .thenReturn(List.of(a, b, c));
+        when(ocr.extractAddressCandidates(any(byte[].class), eq("third.png"), eq("MI")))
+                .thenReturn(List.of(unresolved(d.text(), "third.png", 0), e));
+        when(geocoder.batchGeocode(eq(OWNER), anyList())).thenAnswer(call -> {
+            List<PlaceCandidate> values = call.getArgument(1);
+            return values.stream().map(value -> value.withLatLonPid(42.1, -83.1, "shared-building-id")).toList();
+        });
+        mvc.perform(multipart("/route/places").file(image("first.png"))
+                        .file(image("middle.png")).file(image("third.png"))
+                        .param("defaultState", "MI").with(csrf()).with(login()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.candidates.length()").value(5))
+                .andExpect(jsonPath("$.candidates[0].text").value(a.text()))
+                .andExpect(jsonPath("$.candidates[1].text").value(b.text()))
+                .andExpect(jsonPath("$.candidates[2].text").value(c.text()))
+                .andExpect(jsonPath("$.candidates[2].sourceImage").value("middle.png"))
+                .andExpect(jsonPath("$.candidates[2].ocrReviewRequired").value(false))
+                .andExpect(jsonPath("$.candidates[2].ocrAgreement").value(3))
+                .andExpect(jsonPath("$.candidates[3].text").value(d.text()))
+                .andExpect(jsonPath("$.candidates[4].text").value(e.text()))
+                .andExpect(jsonPath("$.imageCandidates.length()").value(3))
+                .andExpect(jsonPath("$.imageCandidates[0].length()").value(3))
+                .andExpect(jsonPath("$.imageCandidates[1].length()").value(3))
+                .andExpect(jsonPath("$.imageCandidates[2].length()").value(2));
+        verify(cache).cacheImageResults(eq("first.png-key"), eq("first.png"),
+                org.mockito.ArgumentMatchers.argThat(values -> values.size() == 3));
+        verify(cache).cacheImageResults(eq("third.png-key"), eq("third.png"),
+                org.mockito.ArgumentMatchers.argThat(values -> values.size() == 2));
+    }
+
+    @Test
+    void overlapMergingKeepsDifferentUnitsAndRepeatedStopsWithinAnImage() throws Exception {
+        PlaceCandidate apartment330 = resolved("120 MAIN ST APT 330 MI", "first.png", 0);
+        PlaceCandidate apartment331 = resolved("120 MAIN ST APT 331 MI", "second.png", 0);
+        when(cache.calculateImageHash(any(byte[].class), anyString(), eq("MI"), eq(OWNER)))
+                .thenAnswer(call -> call.getArgument(1, String.class));
+        when(cache.getCachedResults("first.png")).thenReturn(List.of(apartment330, apartment330));
+        when(cache.getCachedResults("second.png")).thenReturn(List.of(apartment331));
+        when(geocoder.batchGeocode(eq(OWNER), anyList())).thenReturn(List.of());
+        mvc.perform(multipart("/route/places").file(image("first.png")).file(image("second.png"))
+                        .param("defaultState", "MI").with(csrf()).with(login()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.candidates.length()").value(3))
+                .andExpect(jsonPath("$.candidates[0].text").value(apartment330.text()))
+                .andExpect(jsonPath("$.candidates[1].text").value(apartment330.text()))
+                .andExpect(jsonPath("$.candidates[2].text").value(apartment331.text()));
+    }
+
+    @Test
     void placeExtractionRequiresCurrentTapEntitlementBeforeOcrOrGeocoding() throws Exception {
         doThrow(new AccessDeniedException("not entitled")).when(vehicles).requireAccess(IDENTITY);
 

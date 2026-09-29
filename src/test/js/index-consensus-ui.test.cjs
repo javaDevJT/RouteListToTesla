@@ -184,7 +184,8 @@ function createUploadHarness(apiFetch) {
         globalThis.uploadUi = {
             submit: uploadForm.listeners.submit,
             setBusy: setUploadBusy,
-            isBusy: () => uploadBusy
+            isBusy: () => uploadBusy,
+            addresses: () => extractedAddresses
         };
     `).runInContext(context);
     return { context, elements, filePicker, statuses };
@@ -411,4 +412,90 @@ test('manual and automatic route sends stop before API dispatch when any route r
     await autoContext.start();
     assert.equal(apiCalls, 0);
     assert.match(statuses.at(-1).message, /unresolved OCR reading/);
+});
+
+test('merges screenshot seams and contained captures while preserving meaningful repeats', () => {
+    const source = extractBetween('function appendImageCandidates(', 'async function uploadImages(');
+    const cases = [
+        [[['101 First Rd', '202 Second Rd', '303 Third Rd'], ['202 Second Rd', '303 Third Rd', '404 Fourth Rd'], ['404 Fourth Rd', '505 Fifth Rd']],
+            ['101 First Rd', '202 Second Rd', '303 Third Rd', '404 Fourth Rd', '505 Fifth Rd']],
+        [[['101 First Rd', '202 Second Rd', '303 Third Rd', '404 Fourth Rd'], ['202 Second Rd', '303 Third Rd']],
+            ['101 First Rd', '202 Second Rd', '303 Third Rd', '404 Fourth Rd']],
+        [[['101 First Rd', '202 Second Rd', '101 First Rd'], ['101 First Rd', '303 Third Rd']],
+            ['101 First Rd', '202 Second Rd', '101 First Rd', '303 Third Rd']],
+        [[['120 Main St Apt 330'], ['120 Main St Apt 331']], ['120 Main St Apt 330', '120 Main St Apt 331']],
+        [[['12 1/2 Main St'], ['12 Main St']], ['12 1/2 Main St', '12 Main St']],
+        [[['12.5 Main St'], ['12 5 Main St']], ['12.5 Main St', '12 5 Main St']],
+        [[['101 Main St'], ['101A Main St']], ['101 Main St', '101A Main St']],
+        [[['120 MAIN ST, APT. 330 MI'], ['120 main st apt 330, mi']], ['120 MAIN ST, APT. 330 MI']],
+        [[[''], ['']], ['', '']]
+    ];
+    for (const [images, expected] of cases) {
+        const addresses = [];
+        const context = vm.createContext({ extractedAddresses: addresses });
+        new vm.Script(source + '\nglobalThis.append = appendImageCandidates;').runInContext(context);
+        images.forEach((texts, image) => context.append(texts.map(text => ({
+            text, normalized: text, sourceImage: `${image}.png`, pid: 'same-building',
+            ocrAgreement: 3, ocrReviewRequired: false
+        }))));
+        assert.deepEqual(addresses.map(address => address.text), expected);
+    }
+});
+
+test('cached captures followed by a multi-image upload retain each image boundary', async () => {
+    const row = text => ({ text, normalized: text, pid: text, ocrAgreement: 3, ocrReviewRequired: false });
+    const first = ['101 First Rd', '202 Second Rd', '303 Third Rd', '404 Fourth Rd'];
+    const images = [['202 Second Rd', '303 Third Rd'], ['303 Third Rd', '404 Fourth Rd', '505 Fifth Rd']];
+    const harness = createUploadHarness(async (url, options) => ({
+        ok: true,
+        json: async () => url === '/route/cache/check'
+            ? { cached: JSON.parse(options.body).filename === 'first.png', candidates: first.map(row) }
+            : { candidates: ['202 Second Rd', '303 Third Rd', '404 Fourth Rd', '505 Fifth Rd'].map(row),
+                imageCandidates: images.map(image => image.map(row)) }
+    }));
+    harness.context.configureUpload(['first.png', 'image.png', 'image.png'].map((name, index) => ({
+        file: {}, name, hash: String(index)
+    })));
+    await harness.context.uploadUi.submit({ preventDefault() {} });
+    assert.deepEqual(Array.from(harness.context.uploadUi.addresses(), address => address.text),
+        [...first, '505 Fifth Rd']);
+    assert.equal(harness.statuses.at(-1).type, 'success');
+});
+
+test('an overlapping complete reading replaces the partial copy and retains its evidence', () => {
+    const source = extractBetween('function appendImageCandidates(', 'async function uploadImages(');
+    const addresses = [candidate({ ocrReviewRequired: true, sourceImage: 'cropped.png' })];
+    const complete = candidate({ ocrReviewRequired: false, ocrAgreement: 3, sourceImage: 'complete.png' });
+    const context = vm.createContext({ extractedAddresses: addresses });
+    new vm.Script(source + '\nglobalThis.append = appendImageCandidates;').runInContext(context);
+    context.append([complete]);
+    assert.equal(addresses.length, 1);
+    assert.equal(addresses[0], complete);
+    assert.equal(addresses[0].ocrReviewRequired, false);
+});
+
+test('overlap removal spans cached and uploaded screenshot groups in selection order', async () => {
+    const row = text => ({ text, normalized: text, ocrReviewRequired: false, ocrAgreement: 3 });
+    const first = ['101 First Rd', '202 Second Rd', '303 Third Rd'];
+    const fresh = ['202 Second Rd', '303 Third Rd', '404 Fourth Rd'];
+    const last = ['404 Fourth Rd', '505 Fifth Rd'];
+    const harness = createUploadHarness(async (url, options) => ({
+        ok: true,
+        json: async () => {
+            if (url === '/route/cache/check') {
+                const filename = JSON.parse(options.body).filename;
+                return filename === 'new.png' ? { cached: false } : {
+                    cached: true, candidates: (filename === 'first.png' ? first : last).map(row)
+                };
+            }
+            return { candidates: fresh.map(row) };
+        }
+    }));
+    harness.context.configureUpload(['first.png', 'new.png', 'last.png'].map(name => ({
+        file: {}, name, hash: name
+    })));
+    await harness.context.uploadUi.submit({ preventDefault() {} });
+    assert.deepEqual(Array.from(harness.context.uploadUi.addresses(), address => address.text),
+        ['101 First Rd', '202 Second Rd', '303 Third Rd', '404 Fourth Rd', '505 Fifth Rd']);
+    assert.equal(harness.statuses.at(-1).type, 'success');
 });

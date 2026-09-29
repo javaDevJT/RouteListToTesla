@@ -10,6 +10,7 @@ import io
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ENGINES = ("tesseract", "paddleocr", "easyocr")
+# Reserve time under Java's 45-second process deadline for worker cleanup and response generation.
+ENGINE_WORKER_DEADLINE_SECONDS = 37
+ENGINE_WORKER_CLEANUP_SECONDS = 2
 
 
 def canonical(text: str) -> str:
@@ -275,23 +279,136 @@ def normalized_input(path: str):
         yield converted
 
 
+def _stop_workers(workers: dict[str, subprocess.Popen]) -> None:
+    def group_alive(process: subprocess.Popen) -> bool:
+        if os.name != "posix":
+            return process.poll() is None
+        try:
+            os.killpg(process.pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+
+    def signal_worker(process: subprocess.Popen, sig: int) -> None:
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, sig)
+            elif process.poll() is None:
+                process.terminate() if sig == signal.SIGTERM else process.kill()
+        except ProcessLookupError:
+            pass
+
+    for process in workers.values():
+        signal_worker(process, signal.SIGTERM)
+
+    stop_deadline = time.monotonic() + ENGINE_WORKER_CLEANUP_SECONDS
+    for process in workers.values():
+        try:
+            process.wait(timeout=max(0, stop_deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            pass
+    while os.name == "posix" and time.monotonic() < stop_deadline and any(group_alive(process) for process in workers.values()):
+        time.sleep(min(0.05, max(0, stop_deadline - time.monotonic())))
+    for process in workers.values():
+        if os.name == "posix":
+            signal_worker(process, signal.SIGKILL)
+        elif process.poll() is None:
+            process.kill()
+    reap_deadline = time.monotonic() + 1
+    for process in workers.values():
+        if process.poll() is None:
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=max(0, reap_deadline - time.monotonic()))
+
+
+def _run_engine_workers(commands: dict[str, list[str]], timeout: float = ENGINE_WORKER_DEADLINE_SECONDS):
+    if set(commands) != set(ENGINES):
+        raise ValueError("Expected one command per OCR engine")
+    if timeout <= 0:
+        raise subprocess.TimeoutExpired("OCR engine workers", timeout)
+
+    workers: dict[str, subprocess.Popen] = {}
+    results = {}
+    deadline = time.monotonic() + timeout
+    with tempfile.TemporaryDirectory(prefix="ocr-workers-") as directory:
+        result_paths = {engine: Path(directory) / f"{engine}.json" for engine in ENGINES}
+        try:
+            for engine in ENGINES:
+                workers[engine] = subprocess.Popen(
+                    [*commands[engine], str(result_paths[engine])],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    start_new_session=os.name == "posix",
+                )
+
+            for engine in ENGINES:
+                process = workers[engine]
+                process.wait(timeout=max(0, deadline - time.monotonic()))
+                if process.returncode != 0:
+                    raise RuntimeError(f"{engine} worker failed with exit status {process.returncode}")
+
+                payload = json.loads(result_paths[engine].read_text())
+                if not isinstance(payload, dict) or payload.get("engine") != engine:
+                    raise ValueError(f"Invalid response from {engine} worker")
+                raw_lines = payload.get("lines")
+                elapsed = payload.get("engineMilliseconds")
+                if not isinstance(raw_lines, list) or not isinstance(elapsed, int) or elapsed < 0:
+                    raise ValueError(f"Invalid response from {engine} worker")
+                lines = []
+                for raw_line in raw_lines:
+                    if not isinstance(raw_line, dict) or raw_line.get("engine") != engine:
+                        raise ValueError(f"Invalid line from {engine} worker")
+                    lines.append(Line(**raw_line))
+                results[engine] = (lines, elapsed)
+                if time.monotonic() > deadline:
+                    raise subprocess.TimeoutExpired(process.args, timeout)
+            return results
+        except BaseException:
+            _stop_workers(workers)
+            raise
+
+
+def _run_engine_worker(engine: str, path: str, manifest_path: str, result_path: str) -> None:
+    if engine not in ENGINES:
+        raise ValueError("Unknown OCR engine")
+    manifest = json.loads(Path(manifest_path).read_text())
+    recognize = {
+        "tesseract": lambda: tesseract_lines(path),
+        "paddleocr": lambda: paddle_lines(path, manifest),
+        "easyocr": lambda: easy_lines(path, manifest),
+    }[engine]
+    before = time.monotonic()
+    with contextlib.redirect_stdout(sys.stderr):
+        lines = recognize()
+    Path(result_path).write_text(json.dumps({
+        "engine": engine,
+        "engineMilliseconds": round((time.monotonic() - before) * 1000),
+        "lines": [line.__dict__ for line in lines],
+    }, ensure_ascii=False))
+
+
 def main() -> None:
+    deadline = time.monotonic() + ENGINE_WORKER_DEADLINE_SECONDS
+    if len(sys.argv) == 6 and sys.argv[1] == "--engine":
+        _run_engine_worker(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+        return
     if len(sys.argv) < 3 or sys.argv[2] != "stdout":
         raise ValueError("Expected image path and stdout destination")
     original_path = str(Path(sys.argv[1]).resolve(strict=True))
     manifest_path = Path(os.environ.get("OCR_MODEL_MANIFEST", "/app/ocr/models.json"))
-    manifest = json.loads(manifest_path.read_text())
     start = time.monotonic()
     lines = []
     timings = {}
     # Model runtimes sometimes print diagnostics. Keep stdout exclusively the JSON protocol.
     with contextlib.redirect_stdout(sys.stderr), normalized_input(original_path) as path:
-        for name, recognize in [("tesseract", lambda: tesseract_lines(path)),
-                                ("paddleocr", lambda: paddle_lines(path, manifest)),
-                                ("easyocr", lambda: easy_lines(path, manifest))]:
-            before = time.monotonic()
-            lines.extend(recognize())
-            timings[name] = round((time.monotonic() - before) * 1000)
+        commands = {
+            engine: [sys.executable, str(Path(__file__).resolve()), "--engine", engine, path, str(manifest_path)]
+            for engine in ENGINES
+        }
+        worker_results = _run_engine_workers(commands, timeout=deadline - time.monotonic())
+        for name in ENGINES:
+            lines.extend(worker_results[name][0])
+            timings[name] = worker_results[name][1]
     result = consensus(lines)
     result["engineMilliseconds"] = timings
     result["elapsedMilliseconds"] = round((time.monotonic() - start) * 1000)

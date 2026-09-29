@@ -47,8 +47,9 @@ remain proposals and are not implemented.
 ## OCR and data flow
 
 Image cache checks are owner-scoped, use SHA-256, and preserve selected-image ordering. All three OCR
-engines run locally with models installed at build time; no OpenAI key or hosted OCR is used. Review and editing remain
-user-controlled. Google Maps geocoding stays separately configured with the existing `google.api.key` setting.
+engines run concurrently and locally with models installed at build time; no OpenAI key or hosted OCR is used. Review and editing remain
+user-controlled. Overlapping screenshots merge matching consecutive address rows, preserving distinct
+units and repeats within a screenshot. Google Maps geocoding stays separately configured with the existing `google.api.key` setting.
 
 ## Run locally
 
@@ -62,7 +63,11 @@ existing geocoding settings as described in [TAP setup](OAUTH_SETUP.md) and the
 ./mvnw test
 ```
 
-## Current deployment
+## Deployment
+
+The parallel OCR release uses four CPUs and 4 GiB RAM. Its native qualification
+reports and implementation checks are recorded in the development reference.
+The runtime and benchmark details below describe the September 28 release.
 
 Image builds and publication are automated on pushes to `main` using the private
 TrueNAS runner. GHCR receives `latest` and `sha-<full-commit-sha>` tags. See

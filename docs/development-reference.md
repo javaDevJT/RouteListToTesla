@@ -4,6 +4,32 @@ TAP-managed sign-in and stable-subject authorization replace independent Google 
 
 ## Source flow
 
+### September 29 OCR concurrency and screenshot overlap release
+
+Primary owns address merging, deployment limits, integration checks, and release.
+The OCR execution worker owns `ocr/consensus.py`, `ocr/run`, and focused Python
+execution tests. Worker selection is `gpt-6-luna` / `max`, resolved from the live
+native spawn catalog on September 29, 2026; base revision is `2e45af8`.
+Acceptance requires all three engines to execute concurrently within one admitted
+OCR job, native runtime qualification, and overlap removal across screenshots
+without collapsing distinct units or intentional repeated stops within one image.
+The primary reviewed the process orchestration and retained the single-image
+admission limit. All three engine processes launch before collection and return
+in stable engine order. The deadline is 37 seconds from Python entry; termination
+and reap have a three-second allowance inside Java's 45-second limit. No new
+environment grants, dependencies, or cache extraction version are required.
+An independent overlap reviewer uses the same catalog-resolved `gpt-6-luna` / `max`
+selection, owns no implementation files, and checks the Java/browser merge against
+mixed cache/upload batches, numeric/unit identity, ordering, and deliberate repeats.
+The overlap review completed without blocking findings; completion released that
+worker. The 119 Java tests, 11 browser tests, 19 consensus tests, and three release
+configuration checks passed locally. macOS disallows the process-group cleanup
+check, and the host lacks Pillow-HEIF; the native image qualification runs those
+checks before deployment. Per-suite native reports are retained under
+`output/ocr-benchmark/results/20260929-parallel-native-*.runner.json`.
+The execution worker completed its handoff and timeout-test correction; the
+primary owns native qualification and deployment of release `20260929-parallel-ocr`.
+
 The browser preserves the selected image order, calculates each image's SHA-256, and checks the compatible cache before upload. Cache identity includes the extraction version and default state as well as image content; file names remain display metadata. Uncached images are uploaded to the application server.
 
 `AddressOcrService` invokes `ocr/run`, which runs Tesseract, PaddleOCR through RapidOCR, and EasyOCR locally.
@@ -13,6 +39,14 @@ only by explicit legacy tests. The container sets `OCR_TESSERACT_EXECUTABLE=/app
 downloads and hosted OCR are not used. `GeocodingClient` separately resolves addresses with Google Maps.
 
 The UI keeps extracted candidates visible for review, including unresolved candidates and repeated stops. Users can edit or remove extracted entries. There is no from-scratch Add Address control or manual text-list importer.
+
+Screenshot deduplication matches the longest consecutive suffix/prefix overlap
+or a fully contained capture of multiple rows. It retains repeats inside one
+image, meaningful house-number punctuation, and unit numbers; a shared geocoding
+place ID does not establish an identical stop. Matching copies retain the stronger
+OCR evidence. The upload response includes full `imageCandidates` groups so the
+browser can merge fresh batches with cached captures without relying on filenames.
+Each image cache still stores the full capture before route-level deduplication.
 
 | Area | Entry points |
 | --- | --- |
@@ -54,7 +88,7 @@ as UID/GID 10001 and contains neither Maven nor the Java compiler. OCR dependenc
 and checksum-verified models are prepared separately using Python 3.14. The
 runtime needs writable `/app/cache` and `/tmp`; production uses a retained data
 volume and a temporary filesystem with a read-only image filesystem. The release
-configuration and qualification harness use two CPUs and the user-approved 4 GiB
+configuration and qualification harness use four CPUs and the user-approved 4 GiB
 memory limit. The OCR subprocess deadline remains 45 seconds.
 
 Use native amd64 hardware for OCR performance qualification. Running this amd64
@@ -113,7 +147,7 @@ Run decoder tests inside the release image: mount `ocr/` read-only at `/tests`, 
 The EasyOCR detector is bounded to a 1280-pixel longest side and an 800,000-pixel
 working area. It returns boxes in original-image coordinates; Tesseract and
 PaddleOCR retain their existing preprocessing. This leaves memory for Spring
-inside the 2 GiB container. Image input limits and the 45-second OCR deadline
+inside the 4 GiB container. Image input limits and the 45-second OCR deadline
 remain unchanged. Extraction cache version `ocr-consensus-v3` invalidates older
 readings without deleting saved routes. Bare clock fragments such as `10 PM`
 are excluded by the shared address parser; names such as `10 PM ROAD` remain

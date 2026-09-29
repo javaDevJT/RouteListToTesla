@@ -612,6 +612,44 @@
             showStatus(`Reading addresses from ${imageCount} new ${imageLabel}. This may take a minute or more; keep this page open.`, 'loading', processStatus);
         }
 
+        function appendImageCandidates(candidates) {
+            const key = candidate => String(candidate.normalized?.trim() || candidate.text || '')
+                .normalize('NFKC').toUpperCase().replace(/,/g, ' ')
+                .replace(/(?<![0-9])\.|\.(?![0-9])/g, ' ').replace(/\s+/g, ' ').trim();
+            const keys = candidates.map(key);
+            const existing = extractedAddresses.map(key);
+            const matches = (start, size) => keys.slice(0, size).every((value, index) =>
+                value !== '' && value === existing[start + index]);
+            let start = -1;
+            let overlap = 0;
+            // Match screenshot seams or a fully contained capture; keep repeats inside images.
+            if (keys.length > 1) {
+                for (let index = 0; index + keys.length <= existing.length; index++) {
+                    if (matches(index, keys.length)) {
+                        start = index;
+                        overlap = keys.length;
+                        break;
+                    }
+                }
+            }
+            if (start < 0) {
+                for (let size = Math.min(existing.length, keys.length); size > 0; size--) {
+                    if (matches(existing.length - size, size)) {
+                        start = existing.length - size;
+                        overlap = size;
+                        break;
+                    }
+                }
+            }
+            const quality = candidate => (candidate.ocrReviewRequired ? 0 : 4) + (candidate.ocrAgreement || 0);
+            for (let index = 0; index < overlap; index++) {
+                if (quality(candidates[index]) > quality(extractedAddresses[start + index])) {
+                    extractedAddresses[start + index] = candidates[index];
+                }
+            }
+            extractedAddresses.push(...candidates.slice(overlap));
+        }
+
         async function uploadImages(fileInfos, defaultState) {
             if (fileInfos.length === 0) return;
             const formData = new FormData();
@@ -624,7 +662,10 @@
                 throw new Error(problem.error || `HTTP ${response.status}: ${response.statusText}`);
             }
             const result = await response.json();
-            extractedAddresses.push(...(result.candidates || []));
+            // Keep image boundaries when a fresh batch follows cached screenshots.
+            for (const candidates of result.imageCandidates || [result.candidates || []]) {
+                appendImageCandidates(candidates);
+            }
         }
 
         // File input handler
@@ -701,7 +742,7 @@
                                 filesToUpload.length = 0;
                             }
                             // Use cached results
-                            extractedAddresses.push(...cacheResult.candidates);
+                        appendImageCandidates(cacheResult.candidates);
                             cachedCount++;
                             console.log(`Using cached results for ${fileInfo.name}`);
                         } else {

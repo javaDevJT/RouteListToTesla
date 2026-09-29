@@ -16,6 +16,7 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.*;
+import java.text.Normalizer;
 
 @RestController
 @RequestMapping("/route")
@@ -79,13 +80,16 @@ public class RouteController {
 
         List<PlaceCandidate> geocoded = geocoder.batchGeocode(owner, misses);
         List<PlaceCandidate> results = new ArrayList<>();
+        List<List<PlaceCandidate>> imageCandidates = new ArrayList<>();
         for (ImageWork image : work) {
             List<PlaceCandidate> candidates = image.cached() == null
                     ? geocoded.subList(image.start(), image.end()) : image.cached();
             if (image.cached() == null) cacheService.cacheImageResults(image.hash(), image.filename(), candidates);
-            results.addAll(rebindSource(candidates, image.filename()));
+            List<PlaceCandidate> rebound = rebindSource(candidates, image.filename());
+            imageCandidates.add(rebound);
+            appendImageCandidates(results, rebound);
         }
-        return new PlaceCandidatesResponse(results);
+        return new PlaceCandidatesResponse(results, imageCandidates);
     }
 
     @PostMapping(value = "/places/{vin}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -297,6 +301,51 @@ public class RouteController {
         return candidates.stream().map(c -> new PlaceCandidate(c.text(), c.normalized(), filename,
                 c.lineIndex(), c.lat(), c.lon(), c.pid(), c.ocrAgreement(),
                 c.ocrReviewRequired(), c.ocrAlternatives())).toList();
+    }
+
+    private void appendImageCandidates(List<PlaceCandidate> results, List<PlaceCandidate> incoming) {
+        List<String> keys = incoming.stream().map(this::overlapKey).toList();
+        List<String> existing = results.stream().map(this::overlapKey).toList();
+        int start = -1;
+        int overlap = 0;
+        // Only contiguous screenshot overlap is removed; repeats inside an image remain stops.
+        if (keys.size() > 1 && !keys.contains("")) {
+            for (int index = 0; index + keys.size() <= existing.size(); index++) {
+                if (existing.subList(index, index + keys.size()).equals(keys)) {
+                    start = index;
+                    overlap = keys.size();
+                    break;
+                }
+            }
+        }
+        if (start < 0) {
+            for (int size = Math.min(existing.size(), keys.size()); size > 0; size--) {
+                List<String> prefix = keys.subList(0, size);
+                if (!prefix.contains("") && existing.subList(existing.size() - size, existing.size()).equals(prefix)) {
+                    start = existing.size() - size;
+                    overlap = size;
+                    break;
+                }
+            }
+        }
+        for (int index = 0; index < overlap; index++) {
+            PlaceCandidate old = results.get(start + index);
+            PlaceCandidate next = incoming.get(index);
+            if (ocrQuality(next) > ocrQuality(old)) results.set(start + index, next);
+        }
+        results.addAll(incoming.subList(overlap, incoming.size()));
+    }
+
+    private String overlapKey(PlaceCandidate candidate) {
+        String value = candidate.normalized();
+        if (value == null || value.isBlank()) value = Objects.requireNonNullElse(candidate.text(), "");
+        return Normalizer.normalize(value, Normalizer.Form.NFKC).toUpperCase(Locale.ROOT)
+                .replace(',', ' ').replaceAll("(?<![0-9])\\.|\\.(?![0-9])", " ")
+                .replaceAll("\\s+", " ").trim();
+    }
+
+    private int ocrQuality(PlaceCandidate candidate) {
+        return (candidate.ocrReviewRequired() ? 0 : 4) + candidate.ocrAgreement();
     }
 
     private String normalizeState(String state) {
