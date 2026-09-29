@@ -64,6 +64,10 @@ existing geocoding settings as described in [TAP setup](OAUTH_SETUP.md) and the
 
 ## Current deployment
 
+Image builds and publication are automated on pushes to `main` using the private
+TrueNAS runner. GHCR receives `latest` and `sha-<full-commit-sha>` tags. See
+[GitHub Actions publishing](docs/github-actions.md) for the runner and build setup.
+
 **Verified September 28, 2026.** TeslaRouter runs `20260928-jlink`, TrueNAS job
 **212741**, from source commit `0fbb774d0cb2913e7e8151e09f4ed01c04dc861e` and image
 `sha256:a62e3e8ff5390d2665030bd3306b7608c42bb0cde49acaad505e6bfd70df34bd`.

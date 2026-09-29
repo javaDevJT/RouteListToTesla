@@ -1,5 +1,8 @@
 # Documentation
 
+- [GitHub Actions publishing](github-actions.md): main-branch image builds on the
+  private TrueNAS runner and publication to GHCR.
+
 - [Container and dependency modernization (2026-09-28)](container-modernization-2026-09-28.md):
   Java 25, multi-stage jlink image, dependency compatibility, frontend checks, and release evidence.
 
