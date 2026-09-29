@@ -23,6 +23,12 @@ and checkout does not leave its token in the repository configuration.
 
 ## Implementation record — September 29, 2026
 
+The existing private GHCR package grants this repository **Write** under
+**Manage Actions access** in its package settings. This grant is required for
+the workflow's `GITHUB_TOKEN`; registry login alone does not prove package
+access. Run `36563117001` completed image assembly but exposed the missing
+grant, which has now been configured without adding a personal-token secret.
+
 The private runner infrastructure now provides a 32 GiB memory-backed BuildKit
 filesystem per job, with three concurrent worker reservations globally. The
 rootless engine has a 128 GiB aggregate memory limit and zero swap; 32 GiB is
