@@ -134,18 +134,20 @@ and no production data mounted.
 
 Local evidence is retained in the ignored
 `output/ocr-benchmark/results/20260928-jlink-native-*.runner.json` files. The final
-release image was rebuilt with its Git revision and checked against the qualified
-candidate: filesystem layers and runtime configuration matched exactly, with only
-the revision label changed.
+release retains identical base/JRE layers. After a one-line HEIC picker-label
+correction, normalized image comparison verified identical contents and
+permissions for all 28,284 OCR files. Only `templates/index.html` changed inside
+the application JAR; its other 222 entries matched. The final Java 25 build
+again passed 116 executed tests, with one optional standalone-Tesseract skip.
 
 ## Deployed release
 
-- Source commit: `c8267304785c346b502d9ed2890f82e691a9d74b`, pushed to the existing
+- Source commit: `0fbb774d0cb2913e7e8151e09f4ed01c04dc861e`, pushed to the existing
   `feature/automatic-queue-new-routes` branch.
-- Release: `20260928-jlink`; TrueNAS deployment job **212707** succeeded.
+- Release: `20260928-jlink`; TrueNAS deployment job **212741** succeeded.
 - Published and running image:
-  `ghcr.io/javadevjt/routelisttotesla@sha256:33810efdb0d2ad1ad40a40a85726548b87e8c0f4ec08644b82e86b2adc98d29d`.
-  Final image size: 3,301,959,658 bytes; JRE size: 79,317,551 bytes.
+  `ghcr.io/javadevjt/routelisttotesla@sha256:a62e3e8ff5390d2665030bd3306b7608c42bb0cde49acaad505e6bfd70df34bd`.
+  Compressed image archive: 881,419,776 bytes; JRE size: 79,317,551 bytes.
 - Complete saved configuration readback matched the prepared release. The
   application is running as UID/GID 10001 with 4 GiB, two CPUs, and a read-only
   root filesystem. The existing `/app/cache` data volume is retained; no host
@@ -162,6 +164,11 @@ the revision label changed.
 - Physical iPhone hardware and vehicle command delivery were not exercised. No
   personal addresses were sent to geocoding, no route was saved, and no vehicle
   command was issued during this release verification.
+
+The HEIC processing smoke preceded the label-only follow-up. The final image was
+then checked again for the expected registry digest/revision, running TrueNAS
+configuration, public security boundaries, TAP login, corrected picker text,
+and layout at iPhone width.
 
 The unrelated local MCP containers were left running as requested. Native QA
 research completed and its worker was released through normal completion.

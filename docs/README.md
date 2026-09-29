@@ -25,8 +25,8 @@
 
 ## Verified deployment (2026-09-28)
 
-TrueNAS job **212707** deployed `20260928-jlink`, source commit `c826730`, image
-`sha256:33810efdb0d2ad1ad40a40a85726548b87e8c0f4ec08644b82e86b2adc98d29d`.
+TrueNAS job **212741** deployed `20260928-jlink`, source commit `0fbb774`, image
+`sha256:a62e3e8ff5390d2665030bd3306b7608c42bb0cde49acaad505e6bfd70df34bd`.
 The Java 25 jlink application runs as UID 10001 with 4 GiB and two CPUs. Existing
 data remains mounted; the root filesystem is read-only and no host ports are
 published. The native TrueNAS qualification passed all 11 images and 28 expected

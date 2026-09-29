@@ -65,8 +65,8 @@ existing geocoding settings as described in [TAP setup](OAUTH_SETUP.md) and the
 ## Current deployment
 
 **Verified September 28, 2026.** TeslaRouter runs `20260928-jlink`, TrueNAS job
-**212707**, from source commit `c8267304785c346b502d9ed2890f82e691a9d74b` and image
-`sha256:33810efdb0d2ad1ad40a40a85726548b87e8c0f4ec08644b82e86b2adc98d29d`.
+**212741**, from source commit `0fbb774d0cb2913e7e8151e09f4ed01c04dc861e` and image
+`sha256:a62e3e8ff5390d2665030bd3306b7608c42bb0cde49acaad505e6bfd70df34bd`.
 The multi-stage image uses a Java 25 jlink runtime and runs the application as
 UID/GID 10001, with 4 GiB memory, two CPUs, and a read-only root filesystem. The
 existing route-data volume is retained and no host port is published. The JRE is
