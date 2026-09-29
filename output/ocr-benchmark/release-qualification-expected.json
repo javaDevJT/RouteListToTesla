@@ -1,0 +1,37 @@
+{
+  "release-qualification-small-light": [
+    "6 E ORCHARD ST, ALAMEDA",
+    "23 N 3RD AVE, COLUMBUS",
+    "104 S 5TH ST, BILLINGS"
+  ],
+  "release-qualification-small-dark": [
+    "8 W 9TH ST, FORT WORTH",
+    "31 SE 6TH AVE, GRESHAM",
+    "207 N 4TH ST, HARTFORD"
+  ],
+  "release-qualification-units-close-repeats": [
+    "4162 WILLOW RUN DR APT 8A, ARLINGTON TX 76010",
+    "4162 WILLOW RUN DR BUILDING 8, ARLINGTON TX 76010",
+    "4164 WILLOW RUN DR STE 8A, ARLINGTON TX 76010",
+    "4162 WILLOW RUN DR APT 8A, ARLINGTON TX 76010"
+  ],
+  "release-qualification-punctuation-roads": [
+    "22 1/2 EASTRIDGE CT, ALBANY NY",
+    "31-08 46TH RD, JACKSON HEIGHTS NY",
+    "105 COUNTY ROAD 26, WATKINSVILLE GA",
+    "17 STATE ROUTE 9 NORTH, CAPE MAY NJ"
+  ],
+  "release-qualification-iphone-large": [
+    "4162 WILLOW RUN DR APT 330, ARLINGTON TX 76010",
+    "4164 WILLOW RUN DR STE 8A, ARLINGTON TX 76010",
+    "22 1/2 EASTRIDGE CT, ALBANY NY",
+    "4162 WILLOW RUN DR APT 330, ARLINGTON TX 76010"
+  ],
+  "release-qualification-large-ui-negative": [],
+  "release-qualification-square-ui-negative": [],
+  "release-qualification-ui-only-negative": [],
+  "release-qualification-top-cutoff-review": [
+    "9205 COPPER LEAF COURT, DURHAM",
+    "3418 SUNSET HARBOR DRIVE, TACOMA"
+  ]
+}

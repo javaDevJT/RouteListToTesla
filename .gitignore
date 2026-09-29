@@ -1,4 +1,13 @@
 HELP.md
+.DS_Store
+**/.DS_Store
+src/test/resources/Screenshot_*
+artifacts/
+.factory/
+.serena/
+cache/
+.playwright-cli/
+output/private/
 target/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/

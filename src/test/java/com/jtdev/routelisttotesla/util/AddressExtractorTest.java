@@ -74,6 +74,70 @@ public class AddressExtractorTest {
     }
 
     @Test
+    public void testFractionsRangesUnicodeStreetNamesUnitsAndCityZip() {
+        String ocrText = """
+                12 1/2 N MILE RD
+                APT 3B
+                SOUTHFIELD MI 48075
+                123-125 O’BRIEN HIGHWAY
+                DETROIT MI 48201
+                """;
+
+        assertEquals(List.of(
+                "12 1/2 N MILE RD APT 3B, SOUTHFIELD MI 48075",
+                "123-125 O’BRIEN HIGHWAY, DETROIT MI 48201"),
+                AddressExtractor.addressLinesFromPlainJoined(ocrText));
+    }
+
+    @Test
+    public void testAddressCandidatesRepairOcrDecorationAndCompactDirectionalPrefixes() {
+        assertEquals("8 W 8TH AVE", AddressExtractor.addressCandidateText("8 W 8TH AVE"));
+        assertEquals("5½ W GRAND BLVD", AddressExtractor.addressCandidateText("5½ W GRAND BLVD"));
+        assertEquals("51¾ HARBOR ST", AddressExtractor.addressCandidateText("51¾ HARBOR ST"));
+        assertEquals("123 ELM ST", AddressExtractor.addressCandidateText("‘123 ELM ST"));
+        assertEquals("1 N MAIN ST", AddressExtractor.addressCandidateText("1N MAIN ST"));
+        assertEquals("4 W 8 MILE RD", AddressExtractor.addressCandidateText("4W8 MILE RD"));
+        assertEquals("74 W 9 MILE RD", AddressExtractor.addressCandidateText("74W9MILE RD"));
+        assertEquals("58 W 12 MILE RD", AddressExtractor.addressCandidateText("58W12 MILE RD"));
+        assertEquals("51 3/4 HARBOR ST", AddressExtractor.addressCandidateText("‘513/4 HARBOR ST"));
+    }
+
+    @Test
+    public void testAddressCandidatesRejectNumericRouteStatusAndPackageUiText() {
+        assertNull(AddressExtractor.addressCandidateText("Stop 14 completed"));
+        for (String text : List.of("6: 08 M X BM", "6.09 M X LTE 96%",
+                "08 VOLTE4 96 %", "% 0 MPH 96 %", "09 M X BM ITINERARY")) {
+            assertNull(AddressExtractor.addressCandidateText(text), text);
+        }
+        assertEquals("123 MAIN ST", AddressExtractor.addressCandidateText("6. 123 MAIN ST"));
+        assertNull(AddressExtractor.addressCandidateText("12 4 stops remaining"));
+        assertNull(AddressExtractor.addressCandidateText("1234 PACKAGE PICKUP"));
+        assertEquals("1234 PACKAGE RD", AddressExtractor.addressCandidateText("1234 PACKAGE RD"));
+        assertEquals("7 ELM ST", AddressExtractor.addressCandidateText("7 ELM ST"));
+    }
+
+    @Test
+    public void testClockFragmentsAreNotAddressesButStreetNamesRemainValid() {
+        for (String text : List.of("10 PM", "00 PM", "12 AM", "05 a.m.",
+                "Expected by 4 : 10 PM", "5 4 : 00 PM")) {
+            assertNull(AddressExtractor.addressCandidateText(text), text);
+        }
+        assertEquals("10 AM ST", AddressExtractor.addressCandidateText("10 AM ST"));
+        assertEquals("10 PM ROAD", AddressExtractor.addressCandidateText("10 PM ROAD"));
+        assertEquals("1641 PINEWOOD", AddressExtractor.addressCandidateText("1641 PINEWOOD"));
+    }
+
+    @Test
+    public void testHouseNumbersRequireAnObservedDigitWithoutCorrectingCharacters() {
+        assertNull(AddressExtractor.addressCandidateText("yp cmon ooo. ooo eso"));
+        assertNull(AddressExtractor.addressCandidateText("OOO MAIN ST"));
+        assertNull(AddressExtractor.addressCandidateText("II OLD MILL ROAD"));
+        assertEquals("5 OLD MILL ROAD", AddressExtractor.addressCandidateText("5 OLD MILL ROAD"));
+        assertEquals("24O11 CIVIC CENTER DR APT 330",
+                AddressExtractor.addressCandidateText("24O11 CIVIC CENTER DR APT 330"));
+    }
+
+    @Test
     public void testNormalization() {
         String input = "22820 NOTTINGHAM LN UNIT 2315, SOUTHFIELD";
         String normalized = AddressExtractor.normalize(input);
@@ -106,9 +170,11 @@ public class AddressExtractorTest {
         String normalized5 = AddressExtractor.normalize(input5);
         assertEquals("17186 PLAINVIEW AVE DETROIT", normalized5);
         
-        // Test street name/type run together (OCR issue)
+        // Ambiguous terminal suffixes must not split words into false street types.
         String input6 = "25789 CODERD, SOUTHFIELD";
         String normalized6 = AddressExtractor.normalize(input6);
-        assertEquals("25789 CODE RD SOUTHFIELD", normalized6);
+        assertEquals("25789 CODERD SOUTHFIELD", normalized6);
+        assertEquals("25789 FOREST SOUTHFIELD", AddressExtractor.normalize("25789 FOREST, SOUTHFIELD"));
+        assertEquals("25789 FIRST AVE SOUTHFIELD", AddressExtractor.normalize("25789 FIRST AVE, SOUTHFIELD"));
     }
 }
