@@ -1,425 +1,222 @@
 package com.jtdev.routelisttotesla.controller;
 
-
 import com.jtdev.routelisttotesla.model.AutoNavSession;
-import com.jtdev.routelisttotesla.model.FleetApi;
 import com.jtdev.routelisttotesla.model.PlaceCandidate;
 import com.jtdev.routelisttotesla.model.PlaceCandidatesResponse;
 import com.jtdev.routelisttotesla.model.UserSession;
-import com.jtdev.routelisttotesla.service.AddressOcrService;
-import com.jtdev.routelisttotesla.service.AutoNavigationService;
-import com.jtdev.routelisttotesla.service.GeocodingClient;
-import com.jtdev.routelisttotesla.service.ImageCacheService;
-import com.jtdev.routelisttotesla.service.UserSessionService;
-import jakarta.validation.constraints.NotEmpty;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
+import com.jtdev.routelisttotesla.service.*;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.core.user.OAuth2User;
-import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/route")
-@Validated
 public class RouteController {
-    private static final Logger log = LoggerFactory.getLogger(RouteController.class);
-    
     private final AddressOcrService ocr;
     private final GeocodingClient geocoder;
     private final ImageCacheService cacheService;
     private final AutoNavigationService autoNavigationService;
     private final UserSessionService userSessionService;
-
-    @Autowired
-    FleetApi fleetApi;
+    private final TapVehicleClient vehicles;
+    private final TapAccessService tapAccessService;
 
     public RouteController(AddressOcrService ocr, GeocodingClient geocoder, ImageCacheService cacheService,
-                          AutoNavigationService autoNavigationService, UserSessionService userSessionService) {
-        this.ocr = ocr; 
+                           AutoNavigationService autoNavigationService, UserSessionService userSessionService,
+                           TapVehicleClient vehicles, TapAccessService tapAccessService) {
+        this.ocr = ocr;
         this.geocoder = geocoder;
         this.cacheService = cacheService;
         this.autoNavigationService = autoNavigationService;
         this.userSessionService = userSessionService;
+        this.vehicles = vehicles;
+        this.tapAccessService = tapAccessService;
+    }
+
+    @GetMapping("/vehicles")
+    public List<TapVehicleClient.Vehicle> vehicles(@AuthenticationPrincipal OAuth2User principal) {
+        return vehicles.vehicles(grantIdentity(principal));
     }
 
     @PostMapping(value = "/places", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public PlaceCandidatesResponse places(@RequestPart("images") @NotEmpty MultipartFile[] images, @RequestParam(value = "defaultState", defaultValue = "") String defaultState) throws Exception {
-        // EXACTLY replicate the original logic with transparent caching
-        
-        // 1) OCR all images (with cache optimization)
-        List<PlaceCandidate> candidates = new ArrayList<>();
-        images = Arrays.stream(images).sorted(Comparator.comparing(x -> x.getOriginalFilename())).toArray(MultipartFile[]::new);
-        Map<String, List<PlaceCandidate>> imageToCachedResults = new HashMap<>();
-        
-        for (MultipartFile f : images) {
-            String filename = Objects.requireNonNull(f.getOriginalFilename());
-            byte[] imageBytes = f.getBytes();
-            String imageHash = cacheService.calculateImageHash(imageBytes, filename);
-            
-            // Check cache first
-            List<PlaceCandidate> cachedResults = cacheService.getCachedResults(imageHash);
-            if (cachedResults != null) {
-                log.info("Using cached results for image {} (hash: {})", filename, imageHash);
-                // Extract OCR-like candidates from cache (strip geocoding to match original OCR output)
-                List<PlaceCandidate> ocrCandidates = cachedResults.stream()
-                    .map(candidate -> new PlaceCandidate(
-                        candidate.text(), 
-                        candidate.normalized(), 
-                        candidate.sourceImage(), 
-                        candidate.lineIndex(),
-                        0, 0, null  // Strip geocoding to match original OCR
-                    ))
-                    .toList();
-                candidates.addAll(ocrCandidates);
-                imageToCachedResults.put(imageHash, cachedResults);
+    public PlaceCandidatesResponse places(@RequestPart("images") MultipartFile[] images,
+                                          @RequestParam(value = "defaultState", defaultValue = "") String defaultState,
+                                          @AuthenticationPrincipal OAuth2User principal) throws Exception {
+        if (images == null || images.length == 0 || images.length > 30) {
+            throw new IllegalArgumentException("Choose between 1 and 30 images");
+        }
+        TapAccessService.GrantIdentity identity = grantIdentity(principal);
+        vehicles.requireAccess(identity);
+        String owner = identity.ownerSub();
+        String state = normalizeState(defaultState);
+        List<PlaceCandidate> misses = new ArrayList<>();
+        List<ImageWork> work = new ArrayList<>();
+        // Multipart order is the explicit order reviewed in the browser. Repeated stops are intentional.
+        for (MultipartFile file : images) {
+            if (file.isEmpty() || file.getSize() > 12 * 1024 * 1024) {
+                throw new IllegalArgumentException("Each image must be nonempty and no larger than 12 MB");
+            }
+            String filename = Objects.requireNonNullElse(file.getOriginalFilename(), "image");
+            byte[] bytes = file.getBytes();
+            String hash = cacheService.calculateImageHash(bytes, filename, state, owner);
+            List<PlaceCandidate> cached = cacheService.getCachedResults(hash);
+            if (cached == null) {
+                List<PlaceCandidate> extracted = ocr.extractAddressCandidates(bytes, filename, state);
+                int start = misses.size();
+                misses.addAll(extracted);
+                work.add(new ImageWork(filename, hash, null, start, misses.size()));
             } else {
-            log.info("Processing new image {} (hash: {})", filename, imageHash);
-            List<PlaceCandidate> ocrResults = ocr.extractAddressCandidates(imageBytes, filename, defaultState);
-            candidates.addAll(ocrResults);
-            imageToCachedResults.put(imageHash, null);
+                work.add(new ImageWork(filename, hash, cached, 0, 0));
             }
         }
 
-        // 2) Normalize + de-duplicate by normalized text (EXACT original logic)
-        LinkedHashMap<String, PlaceCandidate> uniq = new LinkedHashMap<>();
-        for (PlaceCandidate c : candidates) {
-            uniq.putIfAbsent(c.normalized(), c);
+        List<PlaceCandidate> geocoded = geocoder.batchGeocode(owner, misses);
+        List<PlaceCandidate> results = new ArrayList<>();
+        for (ImageWork image : work) {
+            List<PlaceCandidate> candidates = image.cached() == null
+                    ? geocoded.subList(image.start(), image.end()) : image.cached();
+            if (image.cached() == null) cacheService.cacheImageResults(image.hash(), image.filename(), candidates);
+            results.addAll(rebindSource(candidates, image.filename()));
         }
-
-        // 3) Geocode each unique candidate (with cache optimization)
-        List<PlaceCandidate> uniqueCandidates = new ArrayList<>(uniq.values());
-        List<PlaceCandidate> resolved = new ArrayList<>();
-        
-        for (PlaceCandidate candidate : uniqueCandidates) {
-            // Check if we have cached geocoding for this candidate
-            String imageHash = null;
-            for (MultipartFile f : images) {
-                if (Objects.equals(f.getOriginalFilename(), candidate.sourceImage())) {
-                    imageHash = cacheService.calculateImageHash(f.getBytes(), f.getOriginalFilename());
-                    break;
-                }
-            }
-            
-            List<PlaceCandidate> cachedResults = imageToCachedResults.get(imageHash);
-            if (cachedResults != null) {
-                // Find matching geocoded result from cache
-                PlaceCandidate geocoded = cachedResults.stream()
-                    .filter(c -> c.normalized().equals(candidate.normalized()))
-                    .findFirst()
-                    .orElse(null);
-                if (geocoded != null) {
-                    resolved.add(geocoded);
-                    continue;
-                }
-            }
-            
-            // No cache hit - need to geocode this candidate
-            List<PlaceCandidate> geocodedList = geocoder.batchGeocode(List.of(candidate));
-            if (!geocodedList.isEmpty()) {
-                resolved.add(geocodedList.get(0));
-            }
-        }
-
-        // 4) Cache results for each image that wasn't already cached
-        Map<String, List<PlaceCandidate>> resultsByImage = new HashMap<>();
-        for (PlaceCandidate result : resolved) {
-            resultsByImage.computeIfAbsent(result.sourceImage(), k -> new ArrayList<>()).add(result);
-        }
-        
-        for (MultipartFile f : images) {
-            String filename = f.getOriginalFilename();
-            String imageHash = cacheService.calculateImageHash(f.getBytes(), filename);
-            
-            if (imageToCachedResults.get(imageHash) == null && resultsByImage.containsKey(filename)) {
-                // Cache the geocoded results for this image
-                cacheService.cacheImageResults(imageHash, filename, resultsByImage.get(filename));
-            }
-        }
-
-        return new PlaceCandidatesResponse(resolved);
+        return new PlaceCandidatesResponse(results);
     }
 
     @PostMapping(value = "/places/{vin}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public boolean sendToTesla(@PathVariable String vin, @RequestPart("images") @NotEmpty MultipartFile[] images) throws Exception {
-    PlaceCandidatesResponse response = places(images, "");
-//        var index = 1;
-//        for (PlaceCandidate c : response.candidates()) {
-//            Map<String, Object> requestMap = Map.of("lat", c.lat(), "lon", c.lon(), "order", index++);
-//          fleetApi.commandNavigationGpsRequest(vin, requestMap);
-//            Thread.sleep(5000);
-//        }
-//        return true;
-        return fleetApi.commandNavigationWaypointsRequest(vin, Map.of("waypoints", response.candidates().stream().map(x -> "refId:" + x.pid()).collect(Collectors.joining(",")))).contains("true");
-
+    public void sendToTesla(@PathVariable String vin) {
+        throw new ResponseStatusException(HttpStatus.GONE,
+                "Extract with /route/places, review the addresses, then send with /route/send/{vin}");
     }
 
     @PostMapping(value = "/send/{vin}", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public boolean sendEditedAddressesToTesla(@PathVariable String vin, @RequestBody PlaceCandidatesResponse addressData) throws Exception {
-        List<PlaceCandidate> candidates = addressData.candidates();
-        
-        // Filter out candidates without text
-        candidates = candidates.stream()
-                .filter(c -> c.text() != null && !c.text().trim().isEmpty())
-                .collect(Collectors.toList());
-        
-        if (candidates.isEmpty()) {
-            return false;
+    public ResponseEntity<TapVehicleClient.CommandResult> sendEditedAddressesToTesla(@PathVariable String vin,
+                                              @RequestBody PlaceCandidatesResponse addressData,
+                                              @RequestHeader("Idempotency-Key") String key,
+                                              @AuthenticationPrincipal OAuth2User principal) throws Exception {
+        TapAccessService.GrantIdentity identity = requireCommandAccess(vin, principal);
+        if (key == null || !key.matches("[A-Za-z0-9_-]{32,128}")) {
+            throw new IllegalArgumentException("A stable route command idempotency key is required");
         }
-        
-        // Re-geocode addresses that were manually edited (have no lat/lon or pid)
-        List<PlaceCandidate> toGeocode = candidates.stream()
-                .filter(c -> c.lat() == 0 || c.lon() == 0 || c.pid() == null)
-                .collect(Collectors.toList());
-        
-        if (!toGeocode.isEmpty()) {
-            List<PlaceCandidate> geocoded = geocoder.batchGeocode(toGeocode);
-            
-            // Update the original candidates list with geocoded results
-            Map<String, PlaceCandidate> geocodedMap = geocoded.stream()
-                    .collect(Collectors.toMap(c -> c.text().trim(), c -> c, (a, b) -> a));
-            
-            candidates = candidates.stream()
-                    .map(c -> {
-                        if (c.lat() == 0 || c.lon() == 0 || c.pid() == null) {
-                            return geocodedMap.getOrDefault(c.text().trim(), c);
-                        }
-                        return c;
-                    })
-                    .filter(c -> c.lat() != 0 && c.lon() != 0 && c.pid() != null)
-                    .collect(Collectors.toList());
-        }
-        
-        if (candidates.isEmpty()) {
-            return false;
-        }
-        
-        return fleetApi.commandNavigationWaypointsRequest(vin, 
-            Map.of("waypoints", candidates.stream()
-                .map(x -> "refId:" + x.pid())
-                .collect(Collectors.joining(",")))
-        ).contains("true");
+        List<PlaceCandidate> candidates = resolveReviewed(addressData, 8, identity.ownerSub());
+        TapVehicleClient.CommandResult result = autoNavigationService.sendManualRoute(identity, vin, candidates, key);
+        return ResponseEntity.status("PENDING".equals(result.state()) ? HttpStatus.ACCEPTED : HttpStatus.OK).body(result);
     }
 
     @PostMapping(value = "/cache/check", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<Map<String, Object>> checkImageCache(@RequestBody Map<String, String> request) {
-        String imageHash = request.get("imageHash");
-        String filename = request.get("filename");
-        
-        if (imageHash == null || imageHash.isEmpty()) {
-            return ResponseEntity.badRequest().build();
+    public Map<String, Object> checkImageCache(@RequestBody Map<String, String> request,
+                                              @AuthenticationPrincipal OAuth2User principal) {
+        String contentHash = request.get("imageHash");
+        if (contentHash == null || !contentHash.matches("[a-fA-F0-9]{64}")) {
+            throw new IllegalArgumentException("A SHA-256 image hash is required");
         }
-
-        List<PlaceCandidate> cachedResults = cacheService.getCachedResults(imageHash);
-        
-        Map<String, Object> response = new HashMap<>();
-        response.put("cached", cachedResults != null);
-        response.put("imageHash", imageHash);
+        String filename = Objects.requireNonNullElse(request.get("filename"), "image");
+        String key = cacheService.calculateClientCacheKey(contentHash.toLowerCase(Locale.ROOT),
+                normalizeState(request.get("defaultState")), getUserId(principal));
+        List<PlaceCandidate> cached = cacheService.getCachedResults(key);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("cached", cached != null);
+        response.put("imageHash", contentHash);
         response.put("filename", filename);
-        
-        if (cachedResults != null) {
-            response.put("candidates", cachedResults);
-        }
-        
-        return ResponseEntity.ok(response);
+        if (cached != null) response.put("candidates", rebindSource(cached, filename));
+        return response;
     }
 
-    // ==================================================================================
-    //                           AUTO-NAVIGATION ENDPOINTS
-    // ==================================================================================
-
-    /**
-     * Start automatic navigation - creates a session and begins monitoring the vehicle
-     */
     @PostMapping(value = "/auto-navigate/{vin}", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<Map<String, Object>> startAutoNavigation(
-            @PathVariable String vin,
-            @RequestBody PlaceCandidatesResponse addressData,
-            @AuthenticationPrincipal OAuth2User principal) {
-        
-        String userId = getUserId(principal);
-        List<PlaceCandidate> candidates = addressData.candidates();
-        
-        // Filter out empty addresses
-        candidates = candidates.stream()
-                .filter(c -> c.text() != null && !c.text().trim().isEmpty())
-                .collect(Collectors.toList());
-        
-        if (candidates.isEmpty()) {
-            return ResponseEntity.badRequest().body(Map.of("error", "No valid addresses provided"));
-        }
-        
-        try {
-            // Create and start the session
-            AutoNavSession session = autoNavigationService.createSession(vin, userId, candidates);
-            autoNavigationService.startSession(session.getSessionId());
-            
-            // Store the session ID in user session for recovery
-            userSessionService.setActiveAutoNavSession(userId, session.getSessionId());
-            
-            Map<String, Object> response = buildSessionStatusResponse(session);
-            return ResponseEntity.ok(response);
-            
-        } catch (Exception e) {
-            log.error("Failed to start auto-navigation: {}", e.getMessage());
-            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
-        }
+    public Map<String, Object> startAutoNavigation(@PathVariable String vin,
+                                                  @RequestBody PlaceCandidatesResponse addressData,
+                                                  @AuthenticationPrincipal OAuth2User principal) throws Exception {
+        TapAccessService.GrantIdentity identity = requireCommandAccess(vin, principal);
+        String owner = identity.ownerSub();
+        List<PlaceCandidate> candidates = resolveReviewed(addressData, 500, owner);
+        AutoNavSession session = autoNavigationService.createSession(vin, identity, candidates);
+        autoNavigationService.startSession(session.getSessionId(), identity);
+        userSessionService.setActiveAutoNavSession(owner, session.getSessionId());
+        return buildSessionStatusResponse(session);
     }
 
-    /**
-     * Get the status of an auto-navigation session
-     */
     @GetMapping("/auto-navigate/status/{sessionId}")
-    public ResponseEntity<Map<String, Object>> getAutoNavStatus(@PathVariable String sessionId) {
-        AutoNavSession session = autoNavigationService.getSession(sessionId);
-        
-        if (session == null) {
-            return ResponseEntity.notFound().build();
-        }
-        
-        Map<String, Object> response = buildSessionStatusResponse(session);
-        return ResponseEntity.ok(response);
+    public Map<String, Object> getAutoNavStatus(@PathVariable String sessionId,
+                                                @AuthenticationPrincipal OAuth2User principal) {
+        return buildSessionStatusResponse(requireOwnedSession(sessionId, grantIdentity(principal)));
     }
 
-    /**
-     * Get any active auto-navigation session for the current user
-     */
     @GetMapping("/auto-navigate/active")
-    public ResponseEntity<Map<String, Object>> getActiveAutoNavSession(@AuthenticationPrincipal OAuth2User principal) {
-        String userId = getUserId(principal);
-        AutoNavSession session = autoNavigationService.getActiveSessionForUser(userId);
-        
-        if (session == null) {
-            return ResponseEntity.ok(Map.of("active", false));
-        }
-        
+    public Map<String, Object> getActiveAutoNavSession(@AuthenticationPrincipal OAuth2User principal) {
+        TapAccessService.GrantIdentity identity = grantIdentity(principal);
+        AutoNavSession session = autoNavigationService.getActiveSessionForUser(identity);
+        if (session == null) return Map.of("active", false);
         Map<String, Object> response = buildSessionStatusResponse(session);
         response.put("active", true);
-        return ResponseEntity.ok(response);
+        return response;
     }
 
-    /**
-     * Stop an auto-navigation session
-     */
     @PostMapping("/auto-navigate/stop/{sessionId}")
-    public ResponseEntity<Map<String, Object>> stopAutoNavigation(
-            @PathVariable String sessionId,
-            @AuthenticationPrincipal OAuth2User principal) {
-        
-        String userId = getUserId(principal);
-        
-        try {
-            AutoNavSession session = autoNavigationService.stopSession(sessionId);
-            
-            // Clear the active session from user session
-            userSessionService.clearActiveAutoNavSession(userId);
-            
-            Map<String, Object> response = buildSessionStatusResponse(session);
-            return ResponseEntity.ok(response);
-            
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.notFound().build();
-        } catch (Exception e) {
-            log.error("Failed to stop auto-navigation: {}", e.getMessage());
-            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
-        }
+    public Map<String, Object> stopAutoNavigation(@PathVariable String sessionId,
+                                                 @AuthenticationPrincipal OAuth2User principal) {
+        TapAccessService.GrantIdentity identity = grantIdentity(principal);
+        String owner = identity.ownerSub();
+        requireOwnedSession(sessionId, identity);
+        AutoNavSession session = autoNavigationService.stopSession(sessionId, identity);
+        userSessionService.clearActiveAutoNavSession(owner);
+        return buildSessionStatusResponse(session);
     }
 
-    /**
-     * Build a standardized response for session status
-     */
+    private AutoNavSession requireOwnedSession(String id, TapAccessService.GrantIdentity identity) {
+        AutoNavSession session = autoNavigationService.getSession(id, identity);
+        if (session == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+        return session;
+    }
+
     private Map<String, Object> buildSessionStatusResponse(AutoNavSession session) {
-        Map<String, Object> response = new HashMap<>();
+        Map<String, Object> response = new LinkedHashMap<>();
         response.put("sessionId", session.getSessionId());
         response.put("vin", session.getVin());
         response.put("status", session.getStatus().name());
         response.put("currentGroupIndex", session.getCurrentGroupIndex());
+        response.put("currentWaypointIndex", session.getCurrentWaypointIndex());
+        response.put("commandState", session.getCommandState() == null ? "UNKNOWN" : session.getCommandState().name());
         response.put("totalGroups", session.getTotalGroups());
         response.put("completedAddresses", session.getCompletedAddresses());
         response.put("totalAddresses", session.getAllAddresses().size());
         response.put("progressPercentage", session.getProgressPercentage());
         response.put("lastError", session.getLastError());
-        
-        if (session.getLastPollAt() != null) {
-            response.put("lastPollAt", session.getLastPollAt().toString());
-        }
-        if (session.getUpdatedAt() != null) {
-            response.put("updatedAt", session.getUpdatedAt().toString());
-        }
-        
-        // Add last route sent info for tracking
+        if (session.getLastPollAt() != null) response.put("lastPollAt", session.getLastPollAt().toString());
+        if (session.getUpdatedAt() != null) response.put("updatedAt", session.getUpdatedAt().toString());
         if (session.getLastRouteSentAt() != null) {
             response.put("lastRouteSentAt", session.getLastRouteSentAt().toString());
             response.put("lastGroupSize", session.getLastGroupSize());
         }
-        
         return response;
     }
 
-    // ==================================================================================
-    //                           SESSION RECOVERY ENDPOINTS
-    // ==================================================================================
-
-    /**
-     * Save the current session data for later recovery
-     */
     @PostMapping(value = "/session/save", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<Map<String, Object>> saveSession(
-            @RequestBody Map<String, Object> sessionData,
-            @AuthenticationPrincipal OAuth2User principal) {
-        
-        String userId = getUserId(principal);
-        
-        try {
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> candidatesData = (List<Map<String, Object>>) sessionData.get("candidates");
-            @SuppressWarnings("unchecked")
-            List<String> imageHashes = (List<String>) sessionData.get("imageHashes");
-            String vin = (String) sessionData.get("vin");
-            String defaultState = (String) sessionData.get("defaultState");
-            
-            // Convert candidates data to PlaceCandidate objects
-            List<PlaceCandidate> candidates = candidatesData.stream()
-                    .map(this::mapToPlaceCandidate)
-                    .collect(Collectors.toList());
-            
-            UserSession session = new UserSession(userId, vin, defaultState, candidates, imageHashes);
-            userSessionService.saveSession(session);
-            
-            Map<String, Object> response = new HashMap<>();
-            response.put("saved", true);
-            response.put("addressCount", candidates.size());
-            response.put("expiresIn", session.getMinutesUntilExpiration() + " minutes");
-            
-            return ResponseEntity.ok(response);
-            
-        } catch (Exception e) {
-            log.error("Failed to save session: {}", e.getMessage());
-            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+    public Map<String, Object> saveSession(@RequestBody SessionRequest request,
+                                           @AuthenticationPrincipal OAuth2User principal) {
+        if (request.candidates() == null || request.candidates().size() > 500
+                || request.candidates().stream().anyMatch(Objects::isNull)) {
+            throw new IllegalArgumentException("A session must contain at most 500 addresses");
         }
+        if (request.imageHashes() != null && (request.imageHashes().size() > 30
+                || request.imageHashes().stream().anyMatch(h -> h == null || !h.matches("[a-fA-F0-9]{64}")))) {
+            throw new IllegalArgumentException("Invalid session image hashes");
+        }
+        UserSession session = new UserSession(getUserId(principal), request.vin(), normalizeState(request.defaultState()),
+                request.candidates(), request.imageHashes() == null ? List.of() : request.imageHashes());
+        userSessionService.saveSession(session);
+        return Map.of("saved", true, "addressCount", request.candidates().size(), "expiresIn", session.getMinutesUntilExpiration() + " minutes");
     }
 
-    /**
-     * Load a previously saved session
-     */
     @GetMapping("/session/load")
-    public ResponseEntity<Map<String, Object>> loadSession(@AuthenticationPrincipal OAuth2User principal) {
-        String userId = getUserId(principal);
-        
-        UserSession session = userSessionService.loadSession(userId);
-        
-        if (session == null || !session.isValid()) {
-            return ResponseEntity.ok(Map.of("valid", false));
-        }
-        
-        Map<String, Object> response = new HashMap<>();
+    public Map<String, Object> loadSession(@AuthenticationPrincipal OAuth2User principal) {
+        UserSession session = userSessionService.loadSession(getUserId(principal));
+        if (session == null || !session.isValid()) return Map.of("valid", false);
+        Map<String, Object> response = new LinkedHashMap<>();
         response.put("valid", true);
         response.put("vin", session.getVin());
         response.put("defaultState", session.getDefaultState());
@@ -427,56 +224,107 @@ public class RouteController {
         response.put("imageHashes", session.getImageHashes());
         response.put("minutesRemaining", session.getMinutesUntilExpiration());
         response.put("activeAutoNavSessionId", session.getActiveAutoNavSessionId());
-        
-        return ResponseEntity.ok(response);
+        return response;
     }
 
-    /**
-     * Check if a valid session exists (lightweight check)
-     */
     @GetMapping("/session/check")
-    public ResponseEntity<Map<String, Object>> checkSession(@AuthenticationPrincipal OAuth2User principal) {
-        String userId = getUserId(principal);
-        Map<String, Object> info = userSessionService.getSessionInfo(userId);
-        return ResponseEntity.ok(info);
+    public Map<String, Object> checkSession(@AuthenticationPrincipal OAuth2User principal) {
+        return userSessionService.getSessionInfo(getUserId(principal));
     }
 
-    /**
-     * Delete the current session
-     */
     @DeleteMapping("/session")
-    public ResponseEntity<Map<String, Object>> deleteSession(@AuthenticationPrincipal OAuth2User principal) {
-        String userId = getUserId(principal);
-        boolean deleted = userSessionService.deleteSession(userId);
-        return ResponseEntity.ok(Map.of("deleted", deleted));
+    public Map<String, Object> deleteSession(@AuthenticationPrincipal OAuth2User principal) {
+        return Map.of("deleted", userSessionService.deleteSession(getUserId(principal)));
     }
 
-    /**
-     * Helper to convert map to PlaceCandidate
-     */
-    private PlaceCandidate mapToPlaceCandidate(Map<String, Object> data) {
-        String text = (String) data.get("text");
-        String normalized = (String) data.get("normalized");
-        String sourceImage = (String) data.get("sourceImage");
-        int lineIndex = data.get("lineIndex") != null ? ((Number) data.get("lineIndex")).intValue() : 0;
-        double lat = data.get("lat") != null ? ((Number) data.get("lat")).doubleValue() : 0;
-        double lon = data.get("lon") != null ? ((Number) data.get("lon")).doubleValue() : 0;
-        String pid = (String) data.get("pid");
-        
-        return new PlaceCandidate(text, normalized, sourceImage, lineIndex, lat, lon, pid);
+    private List<PlaceCandidate> resolveReviewed(PlaceCandidatesResponse request, int maximum, String owner) {
+        if (request == null || request.candidates() == null || request.candidates().isEmpty()
+                || request.candidates().size() > maximum) throw new IllegalArgumentException("Choose 1 to " + maximum + " reviewed addresses");
+        List<PlaceCandidate> resolved = new ArrayList<>(request.candidates());
+        List<PlaceCandidate> pending = new ArrayList<>();
+        List<Integer> pendingIndexes = new ArrayList<>();
+        for (int index = 0; index < request.candidates().size(); index++) {
+            PlaceCandidate candidate = request.candidates().get(index);
+            if (candidate == null || candidate.text() == null || candidate.text().isBlank() || candidate.text().length() > 1000) {
+                throw new IllegalArgumentException("Every stop must have address text");
+            }
+            if (candidate.ocrReviewRequired()) {
+                throw new IllegalArgumentException("Confirm or edit every unresolved OCR reading before sending a route");
+            }
+            if (!hasCoordinates(candidate) || candidate.pid() == null || candidate.pid().isBlank()) {
+                pending.add(candidate);
+                pendingIndexes.add(index);
+            }
+        }
+        List<PlaceCandidate> geocoded = geocoder.batchGeocode(owner, pending);
+        for (int i = 0; i < pendingIndexes.size(); i++) {
+            resolved.set(pendingIndexes.get(i), geocoded.get(i));
+        }
+        for (PlaceCandidate candidate : resolved) {
+            if (!hasCoordinates(candidate) || candidate.pid() == null || !candidate.pid().matches("[A-Za-z0-9_-]{1,512}")) {
+                throw new IllegalArgumentException("Every stop needs valid coordinates and a Google place ID; unresolved stops cannot be skipped");
+            }
+        }
+        return List.copyOf(resolved);
     }
 
-    /**
-     * Get user ID from OAuth principal
-     */
+    private boolean hasCoordinates(PlaceCandidate candidate) {
+        return Double.isFinite(candidate.lat()) && Double.isFinite(candidate.lon())
+                && Math.abs(candidate.lat()) <= 90 && Math.abs(candidate.lon()) <= 180
+                && !(candidate.lat() == 0 && candidate.lon() == 0);
+    }
+
+    private void validateVin(String vin) {
+        if (vin == null || !vin.matches("[A-Z0-9]{17}")) throw new IllegalArgumentException("An uppercase 17-character VIN is required");
+    }
+
+    private TapAccessService.GrantIdentity requireCommandAccess(String vin, OAuth2User principal) {
+        validateVin(vin);
+        TapAccessService.GrantIdentity identity = grantIdentity(principal);
+        vehicles.requireAccess(identity);
+        boolean allowed = vehicles.vehicles(identity).stream()
+                .anyMatch(vehicle -> vin.equalsIgnoreCase(vehicle.vin()) && vehicle.command());
+        if (!allowed) throw new AccessDeniedException("Command access to the selected vehicle is required");
+        return identity;
+    }
+
+    private TapAccessService.GrantIdentity grantIdentity(OAuth2User principal) {
+        if (principal == null) throw new AccessDeniedException("Sign in first");
+        return tapAccessService.grantIdentity(principal);
+    }
+
+    private List<PlaceCandidate> rebindSource(List<PlaceCandidate> candidates, String filename) {
+        return candidates.stream().map(c -> new PlaceCandidate(c.text(), c.normalized(), filename,
+                c.lineIndex(), c.lat(), c.lon(), c.pid(), c.ocrAgreement(),
+                c.ocrReviewRequired(), c.ocrAlternatives())).toList();
+    }
+
+    private String normalizeState(String state) {
+        String normalized = state == null ? "" : state.trim().toUpperCase(Locale.ROOT);
+        if (!normalized.isEmpty() && !normalized.matches("[A-Z]{2}")) throw new IllegalArgumentException("Use a two-letter default state");
+        return normalized;
+    }
+
     private String getUserId(OAuth2User principal) {
-        if (principal == null) {
-            throw new IllegalStateException("User not authenticated");
+        if (principal == null) throw new AccessDeniedException("Sign in first");
+        String subject = principal.getName();
+        if (subject == null || !subject.matches("[A-Za-z0-9_-]{1,128}")) {
+            throw new AccessDeniedException("A TAP account identity is required");
         }
-        String email = principal.getAttribute("email");
-        if (email == null) {
-            email = principal.getName();
-        }
-        return email;
+        return subject;
     }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, String>> invalid(IllegalArgumentException exception) {
+        return ResponseEntity.badRequest().body(Map.of("error", exception.getMessage()));
+    }
+
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<Map<String, String>> unavailable(IllegalStateException exception) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("error", exception.getMessage()));
+    }
+
+    private record ImageWork(String filename, String hash, List<PlaceCandidate> cached, int start, int end) { }
+
+    public record SessionRequest(List<PlaceCandidate> candidates, List<String> imageHashes, String vin, String defaultState) { }
 }

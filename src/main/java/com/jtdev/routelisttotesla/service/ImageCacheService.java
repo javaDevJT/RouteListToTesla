@@ -1,13 +1,17 @@
 package com.jtdev.routelisttotesla.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.jtdev.routelisttotesla.model.PlaceCandidate;
 import org.slf4j.Logger;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -16,7 +20,9 @@ import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -29,7 +35,9 @@ public class ImageCacheService {
     private static final String CACHE_DIR = "cache/images";
     private static final String CACHE_INDEX_FILE = "cache/image_cache_index.json";
     private static final Logger log = org.slf4j.LoggerFactory.getLogger(ImageCacheService.class);
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = JsonMapper.builderWithJackson2Defaults().build();
+    @Value("${ocr.language:eng}")
+    private String ocrLanguage = "eng";
 
     public ImageCacheService() {
         initializeCacheDirectory();
@@ -61,12 +69,42 @@ public class ImageCacheService {
                 hexString.append(hex);
             }
 
-            // Include filename in hash to handle cases where same content has different names
+            // Kept for compatibility; the SHA-256 digest already fills all 64 characters.
             String combined = hexString.toString() + "_" + filename.replaceAll("[^a-zA-Z0-9._-]", "_");
             return combined.substring(0, Math.min(64, combined.length())); // Limit length
         } catch (NoSuchAlgorithmException e) {
             log.error("SHA-256 algorithm not available", e);
             return "fallback_" + System.currentTimeMillis() + "_" + filename.hashCode();
+        }
+    }
+
+    public String calculateImageHash(byte[] imageBytes, String filename, String defaultState, String ownerSub) {
+        return calculateClientCacheKey(calculateImageHash(imageBytes, filename), defaultState, ownerSub);
+    }
+
+    public String calculateClientCacheKey(String contentHash, String defaultState, String ownerSub) {
+        if (contentHash == null || !contentHash.matches("[0-9a-fA-F]{64}")) {
+            throw new IllegalArgumentException("Content hash must be a SHA-256 hex digest");
+        }
+        if (ownerSub == null || ownerSub.isBlank()) {
+            throw new IllegalArgumentException("An account owner is required for image caching");
+        }
+
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update(AddressOcrService.EXTRACTION_VERSION.getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            String language = ocrLanguage == null || ocrLanguage.isBlank() ? "eng" : ocrLanguage.trim();
+            digest.update(language.getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            digest.update((defaultState == null ? "" : defaultState).getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            digest.update(ownerSub.getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            digest.update(contentHash.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 algorithm is unavailable", e);
         }
     }
 
@@ -92,7 +130,7 @@ public class ImageCacheService {
             log.info("Cached results for image {} (hash: {}) with {} candidates",
                     originalFilename, imageHash, candidates.size());
 
-        } catch (IOException e) {
+        } catch (JacksonException e) {
             log.warn("Failed to cache image results for {}: {}", originalFilename, e.getMessage());
         }
     }
@@ -113,7 +151,7 @@ public class ImageCacheService {
 
             return entry.candidates;
 
-        } catch (IOException e) {
+        } catch (JacksonException e) {
             log.warn("Failed to read cached results for hash {}: {}", imageHash, e.getMessage());
             return null;
         }
@@ -143,7 +181,7 @@ public class ImageCacheService {
 
             objectMapper.writeValue(new File(CACHE_INDEX_FILE), index);
 
-        } catch (IOException e) {
+        } catch (JacksonException e) {
             log.warn("Failed to update cache index: {}", e.getMessage());
         }
     }
@@ -158,7 +196,7 @@ public class ImageCacheService {
                 return objectMapper.readValue(indexFile, new TypeReference<>() {
                 });
             }
-        } catch (IOException e) {
+        } catch (JacksonException e) {
             log.warn("Failed to load cache index: {}", e.getMessage());
         }
         return new HashMap<>();
@@ -201,7 +239,7 @@ public class ImageCacheService {
 
         try {
             objectMapper.writeValue(new File(CACHE_INDEX_FILE), index);
-        } catch (IOException e) {
+        } catch (JacksonException e) {
             log.warn("Failed to save updated cache index: {}", e.getMessage());
         }
     }

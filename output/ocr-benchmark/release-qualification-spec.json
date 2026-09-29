@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "release-qualification-small-light",
+      "rows": [
+        { "street": "6 E ORCHARD ST", "city": "ALAMEDA", "packages": 1 },
+        { "street": "23 N 3RD AVE", "city": "COLUMBUS", "packages": 2 },
+        { "street": "104 S 5TH ST", "city": "BILLINGS", "packages": 1 }
+      ],
+      "profile": { "width": 600, "height": 800, "theme": "light", "fontScale": 0.65, "textTransform": "uppercase", "scrollTop": 0 }
+    },
+    {
+      "id": "release-qualification-small-dark",
+      "rows": [
+        { "street": "8 W 9TH ST", "city": "FORT WORTH", "packages": 1 },
+        { "street": "31 SE 6TH AVE", "city": "GRESHAM", "packages": 2 },
+        { "street": "207 N 4TH ST", "city": "HARTFORD", "packages": 1 }
+      ],
+      "profile": { "width": 600, "height": 800, "theme": "dark", "fontScale": 0.65, "textTransform": "uppercase", "scrollTop": 0 }
+    },
+    {
+      "id": "release-qualification-units-close-repeats",
+      "rows": [
+        { "street": "4162 WILLOW RUN DR APT 8A", "city": "ARLINGTON TX 76010", "packages": 1 },
+        { "street": "4162 WILLOW RUN DR BUILDING 8", "city": "ARLINGTON TX 76010", "packages": 2 },
+        { "street": "4164 WILLOW RUN DR STE 8A", "city": "ARLINGTON TX 76010", "packages": 1 },
+        { "street": "4162 WILLOW RUN DR APT 8A", "city": "ARLINGTON TX 76010", "packages": 3 }
+      ],
+      "profile": { "width": 600, "height": 950, "theme": "dark", "fontScale": 1, "textTransform": "uppercase", "scrollTop": 0 }
+    },
+    {
+      "id": "release-qualification-punctuation-roads",
+      "rows": [
+        { "street": "22 1/2 EASTRIDGE CT", "city": "ALBANY NY", "packages": 1 },
+        { "street": "31-08 46TH RD", "city": "JACKSON HEIGHTS NY", "packages": 2 },
+        { "street": "105 COUNTY ROAD 26", "city": "WATKINSVILLE GA", "packages": 1 },
+        { "street": "17 STATE ROUTE 9 NORTH", "city": "CAPE MAY NJ", "packages": 2 }
+      ],
+      "profile": { "width": 600, "height": 950, "theme": "dark", "fontScale": 1, "textTransform": "uppercase", "scrollTop": 0 }
+    },
+    {
+      "id": "release-qualification-ui-only-negative",
+      "rows": [
+        { "distractor": "Route 31  Stop 6", "delivery": "4 packages ready" },
+        { "distractor": "Scheduled 11:20 AM", "delivery": "Gate 4826" },
+        { "distractor": "6:30 - 9:30 PM", "delivery": "1 package" }
+      ],
+      "profile": { "width": 600, "height": 800, "theme": "dark", "fontScale": 1, "textTransform": "uppercase", "scrollTop": 0 }
+    },
+    {
+      "id": "release-qualification-top-cutoff-review",
+      "rows": [
+        { "street": "6821 BLUEBONNET PARKWAY", "city": "CORPUS CHRISTI", "packages": 1 },
+        { "street": "9205 COPPER LEAF COURT", "city": "DURHAM", "packages": 2 },
+        { "street": "3418 SUNSET HARBOR DRIVE", "city": "TACOMA", "packages": 1 }
+      ],
+      "profile": { "width": 600, "height": 800, "theme": "dark", "fontScale": 1, "textTransform": "uppercase", "scrollTop": 100 }
+    }
+    ,{"id":"release-qualification-iphone-large","rows":[{"street":"4162 WILLOW RUN DR APT 330","city":"ARLINGTON TX 76010","packages":1},{"street":"4164 WILLOW RUN DR STE 8A","city":"ARLINGTON TX 76010","packages":2},{"street":"22 1/2 EASTRIDGE CT","city":"ALBANY NY","packages":1},{"street":"4162 WILLOW RUN DR APT 330","city":"ARLINGTON TX 76010","packages":3}],"profile":{"width":1260,"height":2736,"theme":"dark","fontScale":1,"textTransform":"uppercase","scrollTop":0}}
+    ,{"id":"release-qualification-large-ui-negative","rows":[{"distractor":"Route 31 stops","delivery":"Deliver 6 packages"},{"distractor":"4 completed stops","delivery":"Scheduled 11:20 AM"}],"profile":{"width":1260,"height":2736,"theme":"light","fontScale":1,"textTransform":"uppercase","scrollTop":0}}
+    ,{"id":"release-qualification-square-ui-negative","rows":[{"distractor":"Route 31 stops","delivery":"Deliver 6 packages"},{"distractor":"4 completed stops","delivery":"Scheduled 11:20 AM"}],"profile":{"width":1600,"height":1600,"theme":"light","fontScale":1,"textTransform":"uppercase","scrollTop":0}}
+  ]
+}

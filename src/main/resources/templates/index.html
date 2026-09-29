@@ -3,416 +3,57 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Route List to Tesla</title>
-    <style>
-        /* Auto-nav specific styles */
-        .auto-nav-panel {
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 20px;
-            color: white;
-        }
-
-        .auto-nav-panel h3 {
-            margin: 0 0 15px 0;
-            font-size: 18px;
-        }
-
-        .auto-nav-status {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-        }
-
-        .auto-nav-progress {
-            width: 100%;
-            height: 20px;
-            background: rgba(255,255,255,0.2);
-            border-radius: 10px;
-            overflow: hidden;
-            margin-bottom: 10px;
-        }
-
-        .auto-nav-progress-bar {
-            height: 100%;
-            background: linear-gradient(90deg, #28a745, #20c997);
-            transition: width 0.5s ease;
-            border-radius: 10px;
-        }
-
-        .auto-nav-info {
-            font-size: 14px;
-            opacity: 0.9;
-        }
-
-        .btn-auto-nav {
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-            border: 2px solid white;
-        }
-
-        .btn-auto-nav:hover:not(:disabled) {
-            background: linear-gradient(135deg, #2a5298 0%, #1e3c72 100%);
-        }
-
-        .btn-stop {
-            background: #dc3545;
-            border: none;
-        }
-
-        .session-recovery-panel {
-            background: linear-gradient(135deg, #e8f4fd 0%, #d4edda 100%);
-            border: 3px solid #28a745;
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 15px rgba(40, 167, 69, 0.2);
-            animation: slideIn 0.3s ease-out;
-        }
-
-        @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateY(-20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .session-recovery-panel h4 {
-            margin: 0 0 10px 0;
-            color: #155724;
-            font-size: 18px;
-        }
-
-        .session-recovery-info {
-            font-size: 14px;
-            color: #666;
-            margin-bottom: 10px;
-        }
-
-        .pulse {
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
-        }
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-            color: #333;
-        }
-        
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-            overflow: hidden;
-        }
-        
-        .header {
-            background: #2c3e50;
-            color: white;
-            padding: 30px 20px;
-            text-align: center;
-        }
-        
-        .header h1 {
-            font-size: 24px;
-            font-weight: 600;
-        }
-        
-        .content {
-            padding: 30px 20px;
-        }
-        
-        .step {
-            margin-bottom: 30px;
-        }
-        
-        .step-title {
-            font-size: 18px;
-            font-weight: 600;
-            color: #2c3e50;
-            margin-bottom: 15px;
-            padding-bottom: 8px;
-            border-bottom: 2px solid #e1e8ed;
-        }
-        
-        .form-group {
-            margin-bottom: 20px;
-        }
-        
-        label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 500;
-            color: #555;
-        }
-        
-        input, select, textarea {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e1e8ed;
-            border-radius: 8px;
-            font-size: 16px;
-            transition: border-color 0.3s;
-        }
-        
-        input:focus, select:focus, textarea:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        
-        .file-input-wrapper {
-            position: relative;
-            display: inline-block;
-            width: 100%;
-        }
-        
-        .file-input {
-            width: 100%;
-            padding: 12px;
-            border: 2px dashed #e1e8ed;
-            border-radius: 8px;
-            background: #f8f9fa;
-            cursor: pointer;
-            text-align: center;
-            transition: all 0.3s;
-        }
-        
-        .file-input:hover {
-            border-color: #667eea;
-            background: #f0f2ff;
-        }
-        
-        .file-input input[type="file"] {
-            position: absolute;
-            left: -9999px;
-        }
-        
-        .file-list {
-            margin-top: 10px;
-            font-size: 14px;
-            color: #666;
-        }
-        
-        .btn {
-            padding: 15px 30px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.2s;
-            margin-right: 10px;
-        }
-        
-        .btn:hover:not(:disabled) {
-            transform: translateY(-2px);
-        }
-        
-        .btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-        
-        .btn-secondary {
-            background: #6c757d;
-        }
-        
-        .btn-danger {
-            background: #dc3545;
-        }
-        
-        .status {
-            margin-top: 20px;
-            padding: 15px;
-            border-radius: 8px;
-            text-align: center;
-            font-weight: 500;
-        }
-        
-        .status.success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        
-        .status.error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        
-        .status.loading {
-            background: #d1ecf1;
-            color: #0c5460;
-            border: 1px solid #bee5eb;
-        }
-        
-        .hidden {
-            display: none;
-        }
-        
-        .address-list {
-            border: 1px solid #e1e8ed;
-            border-radius: 8px;
-            padding: 15px;
-            background: #f8f9fa;
-        }
-        
-        .address-group {
-            border: 2px solid #dee2e6;
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 20px;
-            background: #f8f9fa;
-        }
-        
-        .group-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid #dee2e6;
-        }
-        
-        .group-title {
-            font-weight: 600;
-            color: #2c3e50;
-            margin: 0;
-        }
-        
-        .group-send-btn {
-            padding: 8px 16px;
-            background: #28a745;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-size: 14px;
-            cursor: pointer;
-        }
-        
-        .group-send-btn:hover:not(:disabled) {
-            background: #218838;
-        }
-        
-        .group-send-btn:disabled {
-            background: #6c757d;
-            cursor: not-allowed;
-        }
-        
-        .address-item {
-            background: white;
-            border: 1px solid #dee2e6;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
-            position: relative;
-        }
-        
-        .address-item:last-child {
-            margin-bottom: 0;
-        }
-        
-        .address-meta {
-            font-size: 12px;
-            color: #6c757d;
-            margin-bottom: 8px;
-        }
-        
-        .address-input {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ced4da;
-            border-radius: 6px;
-            font-size: 14px;
-        }
-        
-        .remove-address {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            background: #dc3545;
-            color: white;
-            border: none;
-            border-radius: 50%;
-            width: 24px;
-            height: 24px;
-            cursor: pointer;
-            font-size: 12px;
-        }
-        
-        .add-address {
-            background: #28a745;
-            color: white;
-            border: none;
-            padding: 10px 15px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-        }
-        
-        @media (max-width: 480px) {
-            body {
-                padding: 10px;
-            }
-            
-            .content {
-                padding: 20px 15px;
-            }
-            
-            .container {
-                max-width: 100%;
-            }
-        }
-    </style>
+    <meta name="apple-mobile-web-app-title" content="TeslaRouter">
+    <meta name="application-release" th:content="${@environment.getProperty('APP_RELEASE', 'development')}">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <title>TeslaRouter · TAP</title>
+    <link rel="stylesheet" href="/css/tap-theme.css">
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🚗 Route List to Tesla</h1>
+<a class="skip-link" href="#main-content">Skip to route planner</a>
+<div class="dashboard-shell">
+    <aside class="sidebar" aria-label="TAP tools">
+        <div class="sidebar-heading">
+            <a class="brand-mark" href="https://tap.javadevjt.tech/dashboard" aria-label="TAP dashboard">T</a>
+            <h2>TAP-V2</h2>
+            <button class="nav-toggle btn btn-secondary" type="button" id="toolNavToggle" aria-expanded="false" aria-controls="tool-navigation">Menu</button>
         </div>
-        
-        <div class="content">
-            <!-- Logout Button -->
-            <div style="text-align: right; margin-bottom: 20px;">
-                <a th:href="@{/logout}" style="color: #666; text-decoration: none; font-size: 14px;">🚪 Logout</a>
-            </div>
+        <p class="supporting">Precision preconditioning console</p>
+        <nav id="tool-navigation" aria-label="Tools navigation">
+            <a class="nav-link" href="https://tap.javadevjt.tech/dashboard">TAP Dashboard</a>
+            <a class="nav-link" href="https://tap.javadevjt.tech/dashboard/tools">Other Tools</a>
+            <a class="nav-link nav-link-active" href="/" aria-current="page">TeslaRouter</a>
+        </nav>
+        <div class="sidebar-footer">
+            <p>Access managed by TAP</p>
+            <form action="/logout" method="post">
+                <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                <button class="signout" type="submit">Sign out of TeslaRouter</button>
+            </form>
+        </div>
+    </aside>
+    <main class="dashboard-main" id="main-content">
+        <header class="surface page-header">
+            <p class="eyebrow">Other Tools / TeslaRouter</p>
+            <h1>Your stops. Ready to drive.</h1>
+            <p class="supporting">Turn route screenshots into an ordered list of stops. Review the addresses, then send your route to your Tesla.</p>
+        </header>
+        <div class="content surface">
             
             <!-- Session Recovery Panel (shown if previous session exists) -->
             <div class="session-recovery-panel hidden" id="sessionRecoveryPanel">
-                <h4>📂 Previous Session Available</h4>
+                <h4>Previous session available</h4>
                 <div class="session-recovery-info" id="sessionRecoveryInfo">
                     <!-- Populated dynamically -->
                 </div>
-                <button class="btn" id="loadSessionBtn" onclick="loadPreviousSession()">Reload Previous Session</button>
-                <button class="btn btn-secondary" onclick="dismissSessionRecovery()">Start Fresh</button>
+                <button class="btn" id="loadSessionBtn" data-action="loadPreviousSession">Reload Previous Session</button>
+                <button class="btn btn-secondary" data-action="dismissSessionRecovery">Start Fresh</button>
             </div>
             
             <!-- Active Auto-Navigation Panel (shown if auto-nav is in progress) -->
             <div class="auto-nav-panel hidden" id="activeAutoNavPanel">
-                <h3>🚗 Automatic Navigation in Progress</h3>
+                <h3>Automatic navigation in progress</h3>
                 <div class="auto-nav-progress">
                     <div class="auto-nav-progress-bar" id="activeAutoNavProgressBar" style="width: 0%"></div>
                 </div>
@@ -420,27 +61,26 @@
                     <!-- Populated dynamically -->
                 </div>
                 <div style="margin-top: 15px;">
-                    <button class="btn btn-stop" onclick="stopActiveAutoNav()">Stop Automatic Navigation</button>
-                    <button class="btn btn-secondary" onclick="viewAutoNavDetails()">View Details</button>
+                    <button class="btn btn-stop" data-action="stopActiveAutoNav">Stop Automatic Navigation</button>
+                    <button class="btn btn-secondary" data-action="viewAutoNavDetails">View Details</button>
                 </div>
             </div>
             
             <!-- Step 1: Upload and Process -->
             <div class="step" id="step1">
-                <div class="step-title">Step 1: Upload Images</div>
+                <h2 class="step-title"><span class="step-number">01</span>Import your stops</h2>
                 
                 <form id="uploadForm">
                     <div class="form-group">
-                    <label for="vin">Select Tesla VIN</label>
-                    <select id="vin" required>
-                    <option value="">Choose VIN...</option>
-                    <option value="5YJXCBE27GF010886">5YJXCBE27GF010886</option>
-                    <option value="7G2CEHEE8SA071432">7G2CEHEE8SA071432</option>
-                    </select>
+                        <label for="vin">Vehicle</label>
+                        <select id="vin" required>
+                            <option value="">Loading authorized vehicles...</option>
+                        </select>
+                        <div id="vehicleStatus" class="status hidden" role="status"></div>
                     </div>
 
                     <div class="form-group">
-                        <label for="defaultState">Default State (for addresses without state)</label>
+                        <label for="defaultState">Default state (when missing from an address)</label>
                         <select id="defaultState">
                             <option value="">None</option>
                             <option value="AL">Alabama</option>
@@ -497,32 +137,35 @@
                     </div>
                     
                     <div class="form-group">
-                        <label>Upload Images</label>
+                        <label for="images">Route screenshots</label>
                         <div class="file-input-wrapper">
-                            <div class="file-input" onclick="document.getElementById('images').click()">
-                                <span>📸 Tap to select images</span>
-                                <input type="file" id="images" multiple accept="image/*" required>
+                            <div class="file-input" role="button" tabindex="0" data-action="selectImages">
+                                <span class="upload-title">Choose route screenshots</span>
+                                <span class="upload-hint">From Photos or Files · PNG and JPEG</span>
+                            <input type="file" id="images" multiple accept="image/*,.heic,.heif" required>
                             </div>
                             <div id="fileList" class="file-list"></div>
                         </div>
                     </div>
                     
-                    <button type="submit" class="btn" id="processBtn">Process Images</button>
+                    <button type="submit" class="btn" id="processBtn">Read addresses</button>
+                    <p class="upload-disclosure">On iPhone, choose Photo Library or Browse/Choose Files. PNG, JPEG, and HEIC images work directly; HEIC is converted automatically.</p>
+                    <p class="upload-disclosure">Images are processed on the RouteListToTesla server by three local OCR engines: Tesseract, PaddleOCR, and EasyOCR. They are not uploaded to an AI provider. Review or edit extracted addresses before sending the route to your Tesla.</p>
                     
-                    <div id="processStatus" class="status hidden"></div>
+                <div id="processStatus" class="status hidden" role="status" aria-live="polite" aria-atomic="true"></div>
                 </form>
             </div>
             
             <!-- Step 2: Review and Edit Addresses -->
             <div class="step hidden" id="step2">
-                <div class="step-title">Step 2: Review and Edit Addresses</div>
+                <h2 class="step-title"><span class="step-number">02</span>Review &amp; send</h2>
                 <div style="margin-bottom: 15px; color: #666; font-size: 14px;">
                     Tesla supports up to 8 waypoints per route. If you have more than 8 addresses, they will be grouped automatically.
                 </div>
                 
                 <!-- Auto-Navigation Control Panel -->
                 <div class="auto-nav-panel hidden" id="autoNavControlPanel">
-                    <h3 id="autoNavTitle">🤖 Automatic Navigation</h3>
+                    <h3 id="autoNavTitle">Automatic navigation</h3>
                     <div class="auto-nav-progress">
                         <div class="auto-nav-progress-bar" id="autoNavProgressBar" style="width: 0%"></div>
                     </div>
@@ -530,16 +173,16 @@
                         Ready to start automatic navigation. The system will monitor your vehicle and automatically send the next group of addresses when you complete each destination.
                     </div>
                     <div style="margin-top: 15px;" id="autoNavButtons">
-                        <button class="btn btn-auto-nav" id="startAutoNavBtn" onclick="startAutoNavigation()">
-                            🚀 Start Automatic Navigation
+                        <button class="btn btn-auto-nav" id="startAutoNavBtn" data-command-start="auto-nav" data-action="startAutoNavigation">
+                            Start automatic navigation
                         </button>
                     </div>
                 </div>
                 
                 <!-- Regular start auto-nav button (shown when panel is hidden) -->
                 <div style="margin-bottom: 20px;" id="autoNavStartSection">
-                    <button class="btn btn-auto-nav" onclick="showAutoNavPanel()">
-                        🤖 Use Automatic Navigation
+                    <button class="btn btn-auto-nav" data-action="showAutoNavPanel">
+                        Use automatic navigation
                     </button>
                     <span style="margin-left: 10px; color: #666; font-size: 14px;">
                         Or send each group manually below
@@ -550,27 +193,274 @@
                     <!-- Dynamic address groups will be populated here -->
                 </div>
                 
-                <div style="margin-top: 15px;">
-                    <button class="add-address" onclick="addNewAddress()">+ Add Address</button>
-                </div>
                 
                 <div style="margin-top: 20px;">
-                    <button class="btn btn-secondary" onclick="goBackToStep1()">Back</button>
+                    <button class="btn btn-secondary" data-action="goBackToStep1">Back</button>
                 </div>
                 
                 <div id="sendStatus" class="status hidden"></div>
             </div>
         </div>
-    </div>
+    </main>
+</div>
 
-    <script>
+    <script th:attr="nonce=${cspNonce}">
+        const toolNavToggle = document.getElementById('toolNavToggle');
+        const toolNavigation = document.getElementById('tool-navigation');
+        function setToolNavigation(open) {
+            toolNavToggle.setAttribute('aria-expanded', String(open));
+            toolNavToggle.textContent = open ? 'Close' : 'Menu';
+            toolNavigation.classList.toggle('nav-open', open);
+        }
+        toolNavToggle.addEventListener('click', () => setToolNavigation(toolNavToggle.getAttribute('aria-expanded') !== 'true'));
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape' && toolNavToggle.getAttribute('aria-expanded') === 'true') {
+                setToolNavigation(false);
+                toolNavToggle.focus();
+            }
+        });
+
+        const actions = {
+            loadPreviousSession, dismissSessionRecovery, stopActiveAutoNav, viewAutoNavDetails,
+            startAutoNavigation, showAutoNavPanel, goBackToStep1,
+            selectImages: () => {
+                if (!uploadBusy) document.getElementById('images').click();
+            }
+        };
+        document.querySelectorAll('[data-action]').forEach(element => {
+            element.addEventListener('click', actions[element.dataset.action]);
+            if (element.getAttribute('role') === 'button') {
+                element.addEventListener('keydown', event => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        actions[element.dataset.action]();
+                    }
+                });
+            }
+        });
         // Global state
         let extractedAddresses = [];
         let currentVin = '';
         let selectedFiles = [];
+        let uploadBusy = false;
+        let uploadControlDisabledState = null;
         let imageHashes = [];
         let autoNavSessionId = null;
         let autoNavPollInterval = null;
+        let availableVehicles = [];
+        const MANUAL_COMMAND_HOLD_PREFIX = 'route-list-to-tesla:manual-command-hold:';
+        const manualCommandHolds = new Map();
+        const manualCommandInFlight = new Set();
+
+        function apiFetch(url, options = {}) {
+            const method = (options.method || 'GET').toUpperCase();
+            if (!['GET', 'HEAD', 'OPTIONS', 'TRACE'].includes(method)) {
+                const token = document.querySelector('meta[name="_csrf"]')?.content;
+                const header = document.querySelector('meta[name="_csrf_header"]')?.content;
+                if (!token || !header) throw new Error('CSRF token is missing. Reload the page.');
+                const headers = new Headers(options.headers || {});
+                headers.set(header, token);
+                options = { ...options, headers };
+            }
+            return fetch(url, options);
+        }
+
+        function manualCommandHoldStorageKey(vin) {
+            return `${MANUAL_COMMAND_HOLD_PREFIX}${encodeURIComponent(vin)}`;
+        }
+
+        function getManualCommandHold(vin) {
+            if (!vin) return null;
+            let stored;
+            try {
+                stored = sessionStorage.getItem(manualCommandHoldStorageKey(vin));
+            } catch (error) {
+                return manualCommandHolds.get(vin) || {
+                    vin,
+                    state: 'STORAGE_UNAVAILABLE',
+                    idempotencyKey: 'unavailable',
+                    persistenceFailed: true
+                };
+            }
+            if (stored !== null) {
+                try {
+                    const hold = JSON.parse(stored);
+                    if (hold && hold.vin === vin) {
+                        manualCommandHolds.set(vin, hold);
+                        return hold;
+                    }
+                } catch (error) {
+                    // A damaged hold record must continue blocking commands until the user reconciles it.
+                }
+                return { vin, state: 'UNKNOWN', idempotencyKey: 'unavailable', corrupt: true };
+            }
+            return manualCommandHolds.get(vin) || null;
+        }
+
+        function persistManualCommandHold(vin, details) {
+            const hold = {
+                vin,
+                idempotencyKey: details.idempotencyKey,
+                state: details.state || 'UNKNOWN',
+                routeNumber: details.routeNumber,
+                createdAt: new Date().toISOString()
+            };
+            if (details.message) hold.message = details.message;
+
+            try {
+                sessionStorage.setItem(manualCommandHoldStorageKey(vin), JSON.stringify(hold));
+            } catch (error) {
+                hold.persistenceFailed = true;
+            }
+            manualCommandHolds.set(vin, hold);
+            return hold;
+        }
+
+        function clearManualCommandHold(vin, statusElement) {
+            try {
+                sessionStorage.removeItem(manualCommandHoldStorageKey(vin));
+            } catch (error) {
+                const hold = getManualCommandHold(vin) || { vin, state: 'UNKNOWN', idempotencyKey: 'unavailable' };
+                hold.clearFailed = true;
+                showManualCommandHold(vin, hold, statusElement);
+                return;
+            }
+
+            manualCommandHolds.delete(vin);
+            if (vin === currentVin) updateManualCommandHoldControls(vin);
+            document.querySelectorAll('[data-manual-command-hold="true"]').forEach(element => {
+                if (element.dataset.manualCommandHoldVin === vin) clearManualCommandHoldNotice(element);
+            });
+            showStatus(`Vehicle command hold cleared for VIN ${vin}.`, 'success', statusElement);
+        }
+
+        function showManualCommandHold(vin, hold, statusElement) {
+            if (!statusElement) return;
+            statusElement.replaceChildren();
+            statusElement.className = 'status error';
+            statusElement.classList.remove('hidden');
+            statusElement.dataset.manualCommandHold = 'true';
+            statusElement.dataset.manualCommandHoldVin = vin;
+
+            const message = document.createElement('span');
+            message.textContent = `An earlier route command for VIN ${vin} has an unconfirmed outcome. All route and automatic-navigation sends to this vehicle are paused. Check and reconcile the vehicle before clearing this hold.`;
+            const diagnostic = document.createElement('small');
+            diagnostic.textContent = `State: ${hold.state || 'UNKNOWN'} · Idempotency key: ${hold.idempotencyKey || 'unavailable'}`;
+            const clearButton = document.createElement('button');
+            clearButton.type = 'button';
+            clearButton.className = 'btn btn-secondary';
+            clearButton.textContent = 'I checked the vehicle; clear hold';
+            clearButton.addEventListener('click', () => clearManualCommandHold(vin, statusElement));
+
+            statusElement.append(message, document.createElement('br'), diagnostic);
+            if (hold.persistenceFailed) {
+                const warning = document.createElement('small');
+                warning.textContent = ' This tab could not persist the hold; keep it open until you reconcile the command.';
+                statusElement.append(document.createElement('br'), warning);
+            }
+            if (hold.clearFailed) {
+                const warning = document.createElement('small');
+                warning.textContent = ' The hold could not be cleared because browser storage is unavailable.';
+                statusElement.append(document.createElement('br'), warning);
+            }
+            statusElement.append(document.createElement('br'), clearButton);
+        }
+
+        function clearManualCommandHoldNotice(statusElement) {
+            if (statusElement?.dataset.manualCommandHold !== 'true') return;
+            delete statusElement.dataset.manualCommandHold;
+            delete statusElement.dataset.manualCommandHoldVin;
+            statusElement.replaceChildren();
+            statusElement.className = 'status hidden';
+        }
+
+        function updateManualCommandHoldControls(vin, statusElement) {
+            const hold = getManualCommandHold(vin);
+            const inFlight = manualCommandInFlight.has(vin);
+            const blocked = Boolean(hold) || inFlight;
+
+            if (vin === currentVin) {
+                document.querySelectorAll('.group-send-btn').forEach(button => {
+                    if (blocked) {
+                        button.disabled = true;
+                        const activeRequest = inFlight && button.textContent === 'Sending...';
+                        if (button.dataset.sendCompleted !== 'true' && !activeRequest) {
+                            button.dataset.commandBlocked = 'true';
+                            button.textContent = hold ? 'Vehicle sends paused — reconcile first' : 'Another route command is in progress';
+                        }
+                    } else if (button.dataset.commandBlocked === 'true') {
+                        delete button.dataset.commandBlocked;
+                        if (button.dataset.sendCompleted !== 'true') {
+                            button.disabled = false;
+                            button.textContent = button.dataset.defaultLabel;
+                        }
+                    }
+                });
+
+                document.querySelectorAll('[data-command-start="auto-nav"]').forEach(button => {
+                    if (blocked) {
+                        button.disabled = true;
+                        button.dataset.commandBlocked = 'true';
+                    } else if (button.dataset.commandBlocked === 'true') {
+                        delete button.dataset.commandBlocked;
+                        button.disabled = false;
+                    }
+                });
+            }
+
+            if (hold && statusElement) showManualCommandHold(vin, hold, statusElement);
+            else if (statusElement) clearManualCommandHoldNotice(statusElement);
+            return hold;
+        }
+
+        async function loadVehicles(savedVin) {
+            const select = document.getElementById('vin');
+            const status = document.getElementById('vehicleStatus');
+            const processButton = document.getElementById('processBtn');
+            select.disabled = true;
+            status.classList.add('hidden');
+
+            try {
+                const response = await apiFetch('/route/vehicles');
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({}));
+                    throw new Error(error.error || `HTTP ${response.status}`);
+                }
+                const vehicles = await response.json();
+                if (!Array.isArray(vehicles)) throw new Error('Unexpected vehicle list response.');
+
+                availableVehicles = vehicles.filter(vehicle => vehicle && vehicle.vin);
+                select.replaceChildren(new Option('Choose a Tesla...', ''));
+                for (const vehicle of availableVehicles) {
+                    const option = document.createElement('option');
+                    option.value = vehicle.vin;
+                    option.textContent = `${vehicle.displayName || vehicle.vin} (${vehicle.vin})${vehicle.read ? '' : ' · read unavailable'}${vehicle.command ? '' : ' · command unavailable'}`;
+                    select.appendChild(option);
+                }
+                if (savedVin && availableVehicles.some(vehicle => vehicle.vin === savedVin)) {
+                    select.value = savedVin;
+                    currentVin = savedVin;
+                } else if (savedVin) {
+                    deleteCookie('lastVin');
+                }
+                select.disabled = availableVehicles.length === 0;
+                processButton.disabled = availableVehicles.length === 0;
+                if (availableVehicles.length === 0) {
+                    showStatus('No authorized Tesla vehicles are available.', 'error', status);
+                }
+                const hold = getManualCommandHold(savedVin);
+                if (hold) {
+                    showManualCommandHold(savedVin, hold, status);
+                    updateManualCommandHoldControls(savedVin);
+                }
+            } catch (error) {
+                availableVehicles = [];
+                select.replaceChildren(new Option('Could not load authorized vehicles', ''));
+                select.disabled = true;
+                processButton.disabled = true;
+                showStatus(`Could not load Tesla vehicles: ${error.message}`, 'error', status);
+            }
+        }
 
         // Cookie helpers
         function setCookie(name, value, days = 30) {
@@ -598,9 +488,7 @@
         window.addEventListener('DOMContentLoaded', async function() {
             const savedVin = getCookie('lastVin');
             const savedState = getCookie('lastDefaultState');
-            if (savedVin) {
-                document.getElementById('vin').value = savedVin;
-            }
+            await loadVehicles(savedVin);
             if (savedState) {
                 document.getElementById('defaultState').value = savedState;
             }
@@ -615,6 +503,10 @@
         // Save values when changed
         document.getElementById('vin').addEventListener('change', function() {
             setCookie('lastVin', this.value);
+            const hold = getManualCommandHold(this.value);
+            const status = document.getElementById('vehicleStatus');
+            if (hold) showManualCommandHold(this.value, hold, status);
+            else clearManualCommandHoldNotice(status);
         });
         document.getElementById('defaultState').addEventListener('change', function() {
             setCookie('lastDefaultState', this.value);
@@ -623,25 +515,116 @@
         // DOM elements
         const uploadForm = document.getElementById('uploadForm');
         const processBtn = document.getElementById('processBtn');
+        const processButtonLabel = processBtn.textContent;
         const sendBtn = document.getElementById('sendBtn');
         const processStatus = document.getElementById('processStatus');
         const sendStatus = document.getElementById('sendStatus');
         const fileInput = document.getElementById('images');
         const fileList = document.getElementById('fileList');
+        const filePicker = document.querySelector('.file-input');
+        const vinSelect = document.getElementById('vin');
+        const defaultStateSelect = document.getElementById('defaultState');
         const step1 = document.getElementById('step1');
         const step2 = document.getElementById('step2');
         const addressGroups = document.getElementById('addressGroups');
 
-        // SHA-256 calculation function
+        // SHA-256 of file bytes; the server adds the OCR version and default state to the cache key.
         async function calculateSHA256(file) {
             const arrayBuffer = await file.arrayBuffer();
             const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
             const hashArray = Array.from(new Uint8Array(hashBuffer));
-            const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-            
-            // Include filename in hash similar to backend
-            const combined = hashHex + "_" + file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-            return combined.substring(0, Math.min(64, combined.length));
+            return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        function renderSelectedFiles() {
+            fileList.replaceChildren();
+            if (selectedFiles.length === 0) return;
+
+            const heading = document.createElement('strong');
+            const noun = selectedFiles.length === 1 ? 'image' : 'images';
+            heading.textContent = `${selectedFiles.length} ${noun} selected. Use the arrows to set route order:`;
+            fileList.appendChild(heading);
+
+            selectedFiles.forEach((fileInfo, index) => {
+                const row = document.createElement('div');
+                row.className = 'selected-file';
+                const name = document.createElement('span');
+                name.className = 'selected-file-name';
+                name.textContent = `${index + 1}. ${fileInfo.name}`;
+                row.appendChild(name);
+
+                const controls = document.createElement('div');
+                controls.className = 'file-order-controls';
+            for (const control of [{ delta: -1, label: 'Move up' }, { delta: 1, label: 'Move down' }]) {
+                const { delta, label } = control;
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.textContent = delta < 0 ? '↑' : '↓';
+                    button.setAttribute('aria-label', `${label}: ${fileInfo.name}`);
+                    button.disabled = index + delta < 0 || index + delta >= selectedFiles.length;
+                    button.addEventListener('click', () => moveSelectedFile(index, delta));
+                    controls.appendChild(button);
+                }
+                row.appendChild(controls);
+                fileList.appendChild(row);
+            });
+        }
+
+        function moveSelectedFile(index, delta) {
+            if (uploadBusy) return;
+            const target = index + delta;
+            if (target < 0 || target >= selectedFiles.length) return;
+            [selectedFiles[index], selectedFiles[target]] = [selectedFiles[target], selectedFiles[index]];
+            renderSelectedFiles();
+        }
+
+        function setUploadBusy(busy) {
+            if (busy === uploadBusy) return;
+            if (busy) {
+                uploadControlDisabledState = {
+                    fileInput: fileInput.disabled,
+                    vinSelect: vinSelect.disabled,
+                    defaultStateSelect: defaultStateSelect.disabled
+                };
+            }
+            uploadBusy = busy;
+            uploadForm.setAttribute('aria-busy', String(busy));
+            filePicker.setAttribute('aria-disabled', String(busy));
+            filePicker.classList.toggle('is-busy', busy);
+            if (busy) {
+                fileInput.disabled = true;
+                vinSelect.disabled = true;
+                defaultStateSelect.disabled = true;
+                fileList.querySelectorAll('button').forEach(button => { button.disabled = true; });
+            } else {
+                if (uploadControlDisabledState) {
+                    fileInput.disabled = uploadControlDisabledState.fileInput;
+                    vinSelect.disabled = uploadControlDisabledState.vinSelect;
+                    defaultStateSelect.disabled = uploadControlDisabledState.defaultStateSelect;
+                }
+                uploadControlDisabledState = null;
+                renderSelectedFiles();
+            }
+        }
+
+        function showImageProcessingStatus(imageCount) {
+            const imageLabel = imageCount === 1 ? 'image' : 'images';
+            showStatus(`Reading addresses from ${imageCount} new ${imageLabel}. This may take a minute or more; keep this page open.`, 'loading', processStatus);
+        }
+
+        async function uploadImages(fileInfos, defaultState) {
+            if (fileInfos.length === 0) return;
+            const formData = new FormData();
+            for (const fileInfo of fileInfos) formData.append('images', fileInfo.file, fileInfo.name);
+            formData.append('defaultState', defaultState);
+
+            const response = await apiFetch('/route/places', { method: 'POST', body: formData });
+            if (!response.ok) {
+                const problem = await response.json().catch(() => ({}));
+                throw new Error(problem.error || `HTTP ${response.status}: ${response.statusText}`);
+            }
+            const result = await response.json();
+            extractedAddresses.push(...(result.candidates || []));
         }
 
         // File input handler
@@ -650,7 +633,6 @@
             selectedFiles = [];
             
             if (files.length > 0) {
-                let fileNames = '';
                 showStatus('Calculating file hashes...', 'loading', processStatus);
                 
                 for (let i = 0; i < files.length; i++) {
@@ -661,54 +643,63 @@
                         hash: hash,
                         name: file.name
                     });
-                    fileNames += `📄 ${file.name} (${hash.substring(0, 8)}...)<br>`;
                 }
-                
-                fileList.innerHTML = `<strong>${files.length} file(s) selected:</strong><br>${fileNames}`;
+                renderSelectedFiles();
                 hideStatus(processStatus);
             } else {
-                fileList.innerHTML = '';
-                selectedFiles = [];
+                renderSelectedFiles();
             }
         });
 
         // Step 1: Process images form handler
         uploadForm.addEventListener('submit', async function(e) {
             e.preventDefault();
+            if (uploadBusy) return;
 
             const vin = document.getElementById('vin').value;
 
-            if (!vin || selectedFiles.length === 0) {
+            if (vinSelect.disabled || !vin || selectedFiles.length === 0) {
                 showStatus('Please select a VIN and upload at least one image', 'error', processStatus);
                 return;
             }
 
             currentVin = vin;
+            updateManualCommandHoldControls(currentVin, sendStatus);
             processBtn.disabled = true;
+            processBtn.textContent = 'Processing images…';
+            setUploadBusy(true);
             
             try {
                 extractedAddresses = [];
                 const filesToUpload = [];
                 let cachedCount = 0;
+                const defaultState = document.getElementById('defaultState').value;
 
-                showStatus('Checking cache for existing processed images...', 'loading', processStatus);
-                selectedFiles.sort((a, b) => a.name.localeCompare(b.name));
-                // Check cache for each file
+                // Check saved results before reading images that need processing.
+                let checkedCount = 0;
                 for (let fileInfo of selectedFiles) {
-                    const cacheResponse = await fetch('/route/cache/check', {
+                    checkedCount++;
+                    showStatus(`Checking saved results (${checkedCount} of ${selectedFiles.length})…`, 'loading', processStatus);
+                    const cacheResponse = await apiFetch('/route/cache/check', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'
                         },
                         body: JSON.stringify({
                             imageHash: fileInfo.hash,
-                            filename: fileInfo.name
+                            filename: fileInfo.name,
+                            defaultState
                         })
                     });
 
                     if (cacheResponse.ok) {
                         const cacheResult = await cacheResponse.json();
-                        if (cacheResult.cached && cacheResult.candidates) {
+                    if (cacheResult.cached && cacheResult.candidates) {
+                        if (filesToUpload.length > 0) {
+                            showImageProcessingStatus(filesToUpload.length);
+                            await uploadImages(filesToUpload, defaultState);
+                                filesToUpload.length = 0;
+                            }
                             // Use cached results
                             extractedAddresses.push(...cacheResult.candidates);
                             cachedCount++;
@@ -725,28 +716,14 @@
 
                 // Update status with cache results
                 if (cachedCount > 0) {
-                    showStatus(`Found ${cachedCount} cached image(s). Processing ${filesToUpload.length} new image(s)...`, 'loading', processStatus);
+                    const savedLabel = cachedCount === 1 ? 'image' : 'images';
+                    showStatus(`Using saved results for ${cachedCount} ${savedLabel}.`, 'loading', processStatus);
                 }
 
-                // Process new images if any
+                // Process the final consecutive group of uncached images.
                 if (filesToUpload.length > 0) {
-                    const formData = new FormData();
-                    for (let fileInfo of filesToUpload) {
-                        formData.append('images', fileInfo.file);
-                    }
-                    formData.append('defaultState', document.getElementById('defaultState').value);
-
-                    const response = await fetch('/route/places', {
-                        method: 'POST',
-                        body: formData
-                    });
-
-                    if (response.ok) {
-                        const result = await response.json();
-                        extractedAddresses.push(...(result.candidates || []));
-                    } else {
-                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                    }
+                    showImageProcessingStatus(filesToUpload.length);
+                    await uploadImages(filesToUpload, defaultState);
                 }
 
                 // Store image hashes for session recovery
@@ -771,7 +748,9 @@
                 console.error('Error:', error);
                 showStatus(`Error: ${error.message}`, 'error', processStatus);
             } finally {
-                processBtn.disabled = false;
+                setUploadBusy(false);
+                processBtn.disabled = availableVehicles.length === 0;
+                processBtn.textContent = processButtonLabel;
             }
         });
 
@@ -785,6 +764,8 @@
             step2.classList.add('hidden');
             step1.classList.remove('hidden');
             hideStatus(sendStatus);
+            const hold = getManualCommandHold(currentVin);
+            if (hold) showManualCommandHold(currentVin, hold, document.getElementById('vehicleStatus'));
         }
 
         function populateAddressList() {
@@ -797,6 +778,7 @@
                 const groupDiv = createAddressGroup(group, Math.floor(i / groupSize), i);
                 addressGroups.appendChild(groupDiv);
             }
+            updateManualCommandHoldControls(currentVin, sendStatus);
         }
 
         function createAddressGroup(addresses, groupIndex, startIndex) {
@@ -814,6 +796,7 @@
             const sendButton = document.createElement('button');
             sendButton.className = 'group-send-btn';
             sendButton.textContent = `Send Route ${groupIndex + 1} to Tesla`;
+            sendButton.dataset.defaultLabel = sendButton.textContent;
             sendButton.onclick = () => sendGroupToTesla(groupIndex, startIndex, addresses.length);
             
             groupHeader.appendChild(groupTitle);
@@ -837,18 +820,73 @@
         function createAddressItem(address, index) {
             const div = document.createElement('div');
             div.className = 'address-item';
-            
-            const displayText = address.normalized;
-            
-            div.innerHTML = `
-                <button class="remove-address" onclick="removeAddress(${index})" title="Remove address">×</button>
-                <div class="address-meta">
-                    Source: ${address.sourceImage || 'Unknown'} | 
-                    Line: ${(address.lineIndex || 0) + 1} |
-                    Coords: ${address.lat?.toFixed(4)}, ${address.lon?.toFixed(4)}
-                </div>
-                <textarea class="address-input" rows="2" placeholder="Enter address..." onchange="updateAddress(${index}, this.value)">${displayText}</textarea>
-            `;
+
+            const removeButton = document.createElement('button');
+            removeButton.className = 'remove-address';
+            removeButton.title = 'Remove address';
+            removeButton.textContent = '×';
+            removeButton.addEventListener('click', () => removeAddress(index));
+
+            const metadata = document.createElement('div');
+            metadata.className = 'address-meta';
+            const latitude = Number.isFinite(address.lat) ? address.lat.toFixed(4) : 'N/A';
+            const longitude = Number.isFinite(address.lon) ? address.lon.toFixed(4) : 'N/A';
+            metadata.textContent = `Source: ${address.sourceImage || 'Unknown'} | Line: ${(address.lineIndex || 0) + 1} | Coords: ${latitude}, ${longitude}`;
+
+            const input = document.createElement('textarea');
+            input.className = 'address-input';
+            input.rows = 2;
+            input.placeholder = 'Enter address...';
+            input.value = address.normalized || address.text || '';
+            input.addEventListener('change', () => {
+                updateAddress(index, input.value);
+                div.querySelector('.ocr-review')?.remove();
+            });
+
+            div.append(removeButton, metadata, input);
+            const agreement = Number.isInteger(address.ocrAgreement) ? address.ocrAgreement : 0;
+            if (agreement > 0) {
+                const agreementLabel = document.createElement('small');
+                agreementLabel.className = 'ocr-agreement';
+                agreementLabel.textContent = `OCR agreement: ${agreement}/3 engines`;
+                div.appendChild(agreementLabel);
+            }
+            if (address.ocrReviewRequired === true) {
+                const review = document.createElement('div');
+                review.className = 'ocr-review';
+
+                const reviewLabel = document.createElement('strong');
+                reviewLabel.className = 'ocr-review-label';
+                reviewLabel.textContent = 'No majority reading. Compare the engine readings and confirm or edit this address.';
+                review.appendChild(reviewLabel);
+
+                const alternatives = Array.isArray(address.ocrAlternatives) ? address.ocrAlternatives : [];
+                if (alternatives.length > 0) {
+                    const readings = document.createElement('ul');
+                    readings.className = 'ocr-alternatives';
+                    alternatives.forEach(reading => {
+                        const item = document.createElement('li');
+                        item.textContent = typeof reading === 'string' ? reading : '';
+                        readings.appendChild(item);
+                    });
+                    review.appendChild(readings);
+                }
+
+                const confirmButton = document.createElement('button');
+                confirmButton.type = 'button';
+                confirmButton.className = 'btn btn-secondary ocr-confirm-button';
+                confirmButton.dataset.action = 'confirmOcrReading';
+                confirmButton.textContent = 'Confirm current reading';
+                confirmButton.addEventListener('click', () => confirmOcrReading(index, div));
+                review.appendChild(confirmButton);
+                div.appendChild(review);
+            }
+            if (/\b(?:APT|APARTMENT|UNIT|STE|SUITE)\b|#\s*[A-Z0-9]/i.test(input.value)) {
+                const note = document.createElement('small');
+                note.className = 'address-meta';
+                note.textContent = 'Check the apartment or suite number against the screenshot; OCR can confuse digits.';
+                div.appendChild(note);
+            }
             return div;
         }
 
@@ -870,9 +908,22 @@
             return formatted;
         }
 
+        function confirmOcrReading(index, row) {
+            const address = extractedAddresses[index];
+            if (!address || address.ocrReviewRequired !== true) return;
+
+            address.ocrReviewRequired = false;
+            row?.querySelector('.ocr-review')?.remove();
+            showStatus('Current OCR reading confirmed. You can still edit it before sending.', 'success', sendStatus);
+        }
+
         function updateAddress(index, newText) {
             if (extractedAddresses[index]) {
                 extractedAddresses[index].text = newText;
+                extractedAddresses[index].ocrReviewRequired = false;
+                extractedAddresses[index].lat = 0;
+                extractedAddresses[index].lon = 0;
+                extractedAddresses[index].pid = null;
             }
         }
 
@@ -881,18 +932,6 @@
             populateAddressList();
         }
 
-        function addNewAddress() {
-            const newAddress = {
-                text: '',
-                sourceImage: 'Manual Entry',
-                lineIndex: 0,
-                lat: null,
-                lon: null,
-                pid: null
-            };
-            extractedAddresses.push(newAddress);
-            populateAddressList();
-        }
 
         async function sendGroupToTesla(groupIndex, startIndex, groupSize) {
             if (!currentVin) {
@@ -900,8 +939,30 @@
                 return;
             }
 
+            const commandVin = currentVin;
+            const existingHold = getManualCommandHold(commandVin);
+            if (existingHold) {
+                updateManualCommandHoldControls(commandVin, sendStatus);
+                return;
+            }
+            if (manualCommandInFlight.has(commandVin)) {
+                showStatus('A route command is already in progress for this vehicle. Wait for its result before sending another route.', 'error', sendStatus);
+                return;
+            }
+
+            const vehicle = availableVehicles.find(item => item.vin === commandVin);
+            if (!vehicle?.command) {
+                showStatus('This Tesla is not authorized to receive navigation commands.', 'error', sendStatus);
+                return;
+            }
+
             // Get addresses for this specific group
             const groupAddresses = extractedAddresses.slice(startIndex, startIndex + groupSize);
+
+            if (groupAddresses.some(address => address.ocrReviewRequired === true)) {
+                showStatus('Review or edit every unresolved OCR reading in this route before sending.', 'error', sendStatus);
+                return;
+            }
             
             // Filter out empty addresses
             const validAddresses = groupAddresses.filter(addr => addr.text && addr.text.trim().length > 0);
@@ -912,41 +973,90 @@
             }
 
             const sendButton = document.querySelector(`#group-${groupIndex} .group-send-btn`);
+            const originalLabel = sendButton.textContent;
+            const idempotencyKey = crypto.randomUUID();
             sendButton.disabled = true;
             sendButton.textContent = 'Sending...';
             showStatus(`Sending Route ${groupIndex + 1} (${validAddresses.length} addresses) to Tesla...`, 'loading', sendStatus);
+            manualCommandInFlight.add(commandVin);
+            updateManualCommandHoldControls(commandVin);
 
+            let requestDispatched = false;
+            let keepDisabled = false;
             try {
                 // Send the group addresses to the backend
-                const response = await fetch(`/route/send/${currentVin}`, {
+                const request = apiFetch(`/route/send/${commandVin}`, {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'Idempotency-Key': idempotencyKey
                     },
                     body: JSON.stringify({
                         candidates: validAddresses
                     })
                 });
+                requestDispatched = true;
+                const response = await request;
 
-                if (response.ok) {
-                    const result = await response.text();
-                    if (result === 'true') {
-                        showStatus(`✅ Route ${groupIndex + 1} successfully sent to Tesla!`, 'success', sendStatus);
-                        sendButton.textContent = '✅ Sent';
-                        sendButton.style.background = '#28a745';
-                    } else {
-                        throw new Error('Tesla API returned false');
-                    }
+                if (!response.ok) {
+                    keepDisabled = true;
+                    persistManualCommandHold(commandVin, {
+                        idempotencyKey,
+                        state: `HTTP_${response.status}`,
+                        routeNumber: groupIndex + 1,
+                        message: 'The request returned a non-success response after dispatch.'
+                    });
+                    updateManualCommandHoldControls(commandVin, sendStatus);
+                    return;
+                }
+
+                const result = await response.json();
+                if (result.accepted === true) {
+                    keepDisabled = true;
+                    sendButton.dataset.sendCompleted = 'true';
+                    showStatus(`✅ Route ${groupIndex + 1} successfully sent to Tesla!`, 'success', sendStatus);
+                    sendButton.textContent = '✅ Sent';
+                sendButton.style.background = 'var(--success)';
+                } else if (result.accepted === false) {
+                    showStatus(`Route rejected: ${result.message || 'The vehicle did not accept this route.'} Review the addresses before trying again.`, 'error', sendStatus);
                 } else {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    keepDisabled = true;
+                    const state = result.state || 'pending or unknown';
+                    const message = result.message || 'Check the vehicle and stop or reconcile this route before starting another.';
+                    persistManualCommandHold(commandVin, {
+                        idempotencyKey,
+                        state,
+                        routeNumber: groupIndex + 1,
+                        message
+                    });
+                    updateManualCommandHoldControls(commandVin, sendStatus);
                 }
 
             } catch (error) {
                 console.error('Error:', error);
-                showStatus(`Error sending Route ${groupIndex + 1}: ${error.message}`, 'error', sendStatus);
-                sendButton.textContent = `Send Route ${groupIndex + 1} to Tesla`;
+                const message = requestDispatched
+                    ? 'Outcome unconfirmed. Check the vehicle and stop or reconcile this route before starting another.'
+                    : 'Send blocked because the security token is missing. Reload the page.';
+                if (requestDispatched) {
+                    keepDisabled = true;
+                    persistManualCommandHold(commandVin, {
+                        idempotencyKey,
+                        state: 'NETWORK_OR_RESPONSE_ERROR',
+                        routeNumber: groupIndex + 1,
+                        message
+                    });
+                    updateManualCommandHoldControls(commandVin, sendStatus);
+                }
+                if (!requestDispatched) showStatus(message, 'error', sendStatus);
             } finally {
-                sendButton.disabled = false;
+                manualCommandInFlight.delete(commandVin);
+                if (!keepDisabled) {
+                    sendButton.disabled = false;
+                    sendButton.textContent = originalLabel;
+                } else {
+                    sendButton.disabled = true;
+                }
+                updateManualCommandHoldControls(commandVin, sendStatus);
             }
         }
 
@@ -994,12 +1104,20 @@
             const hours = Math.floor(sessionInfo.minutesRemaining / 60);
             const mins = sessionInfo.minutesRemaining % 60;
             const timeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins} minutes`;
-            
-            info.innerHTML = `
-                <strong>${sessionInfo.addressCount} addresses</strong> from your previous session are available.<br>
-                VIN: ${sessionInfo.vin || 'Not set'} | Expires in: ${timeStr}
-                ${sessionInfo.activeAutoNavSessionId ? '<br><em>⚠️ An automatic navigation session was in progress</em>' : ''}
-            `;
+
+            const addressCount = document.createElement('strong');
+            addressCount.textContent = `${sessionInfo.addressCount} addresses`;
+            info.replaceChildren(
+                addressCount,
+                document.createTextNode(' from your previous session are available.'),
+                document.createElement('br'),
+                document.createTextNode(`VIN: ${sessionInfo.vin || 'Not set'} | Expires in: ${timeStr}`)
+            );
+            if (sessionInfo.activeAutoNavSessionId) {
+                const warning = document.createElement('em');
+                warning.textContent = '⚠️ An automatic navigation session was in progress';
+                info.append(document.createElement('br'), warning);
+            }
             
             panel.classList.remove('hidden');
         }
@@ -1061,7 +1179,7 @@
                 
                 console.log('Saving session with', extractedAddresses.length, 'addresses...');
 
-                const response = await fetch('/route/session/save', {
+                const response = await apiFetch('/route/session/save', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -1098,11 +1216,11 @@
                 const response = await fetch('/route/auto-navigate/active');
                 if (response.ok) {
                     const data = await response.json();
-                    if (data.active && (data.status === 'RUNNING' || data.status === 'CREATED')) {
+                    if (data.sessionId && ['CREATED', 'RUNNING', 'PAUSED', 'ERROR'].includes(data.status)) {
                         autoNavSessionId = data.sessionId;
                         setCookie('autoNavSessionId', autoNavSessionId);
                         showActiveAutoNavPanel(data);
-                        startAutoNavPolling();
+                        if (data.status === 'CREATED' || data.status === 'RUNNING') startAutoNavPolling();
                         return;
                     }
                 }
@@ -1112,10 +1230,10 @@
                     const statusResponse = await fetch(`/route/auto-navigate/status/${savedSessionId}`);
                     if (statusResponse.ok) {
                         const statusData = await statusResponse.json();
-                        if (statusData.status === 'RUNNING') {
+                        if (['CREATED', 'RUNNING', 'PAUSED', 'ERROR'].includes(statusData.status)) {
                             autoNavSessionId = savedSessionId;
                             showActiveAutoNavPanel(statusData);
-                            startAutoNavPolling();
+                            if (statusData.status === 'CREATED' || statusData.status === 'RUNNING') startAutoNavPolling();
                             return;
                         }
                     }
@@ -1131,26 +1249,46 @@
             const panel = document.getElementById('activeAutoNavPanel');
             const progressBar = document.getElementById('activeAutoNavProgressBar');
             const info = document.getElementById('activeAutoNavInfo');
-            
-            progressBar.style.width = `${data.progressPercentage}%`;
+            const heading = panel.querySelector('h3');
 
-            // Build status message
-            let statusMessage = `Route ${data.currentGroupIndex + 1} of ${data.totalGroups} |
-                ${data.completedAddresses} of ${data.totalAddresses} addresses completed (${data.progressPercentage}%)`;
+            if (heading) {
+                const headings = {
+                    CREATED: '🚗 Automatic Navigation Created',
+                    RUNNING: '🚗 Automatic Navigation in Progress',
+                    PAUSED: '⏸️ Automatic Navigation Paused',
+                    ERROR: '❌ Automatic Navigation Error'
+                };
+                heading.textContent = headings[data.status] || '🚗 Automatic Navigation';
+            }
 
-            // Add last poll time
+            progressBar.style.width = `${clampPercentage(data.progressPercentage)}%`;
+            info.replaceChildren(document.createTextNode(
+                `Route ${data.currentGroupIndex + 1} of ${data.totalGroups} | ${data.completedAddresses} of ${data.totalAddresses} addresses completed (${data.progressPercentage}%)`
+            ));
+
             if (data.lastPollAt) {
                 const pollTime = new Date(data.lastPollAt).toLocaleTimeString();
-                statusMessage += `<br>🔄 Monitoring vehicle... Last checked: ${pollTime}`;
+                info.append(document.createElement('br'), document.createTextNode(`🔄 Monitoring vehicle... Last checked: ${pollTime}`));
             }
 
-            statusMessage += `<br>Status: <strong>${data.status}</strong>`;
+            const status = document.createElement('strong');
+            status.textContent = data.status || 'Unknown';
+            info.append(document.createElement('br'), document.createTextNode('Status: '), status);
+
+            if (Number.isInteger(data.currentWaypointIndex) && data.currentWaypointIndex >= 0) {
+                info.append(document.createElement('br'), document.createTextNode(`Current waypoint: ${data.currentWaypointIndex + 1}`));
+            }
+            if (data.commandState) {
+                info.append(document.createElement('br'), document.createTextNode(`Command state: ${data.commandState}`));
+            }
 
             if (data.lastError) {
-                statusMessage += `<br><span style="color: #ff6b6b;">Error: ${data.lastError}</span>`;
+                const error = document.createElement('span');
+            error.style.color = '#8b201b';
+                error.textContent = `Error: ${data.lastError}`;
+                info.append(document.createElement('br'), error);
             }
 
-            info.innerHTML = statusMessage;
             panel.classList.remove('hidden');
         }
         
@@ -1169,7 +1307,22 @@
                 showStatus('Error: No VIN selected', 'error', sendStatus);
                 return;
             }
-            
+
+            const existingHold = getManualCommandHold(currentVin);
+            if (existingHold) {
+                updateManualCommandHoldControls(currentVin, sendStatus);
+                return;
+            }
+            if (manualCommandInFlight.has(currentVin)) {
+                showStatus('A route command is already in progress for this vehicle. Wait for its result before starting automatic navigation.', 'error', sendStatus);
+                return;
+            }
+
+            if (extractedAddresses.some(address => address.ocrReviewRequired === true)) {
+                showStatus('Review or edit every unresolved OCR reading before starting automatic navigation.', 'error', sendStatus);
+                return;
+            }
+
             // Filter valid addresses
             const validAddresses = extractedAddresses.filter(addr => 
                 addr.text && addr.text.trim().length > 0
@@ -1185,7 +1338,7 @@
             startBtn.textContent = 'Starting...';
             
             try {
-                const response = await fetch(`/route/auto-navigate/${currentVin}`, {
+                const response = await apiFetch(`/route/auto-navigate/${currentVin}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ candidates: validAddresses })
@@ -1216,7 +1369,7 @@
                 console.error('Error starting auto-navigation:', error);
                 showStatus(`Error: ${error.message}`, 'error', sendStatus);
                 startBtn.disabled = false;
-                startBtn.textContent = '🚀 Start Automatic Navigation';
+                startBtn.textContent = 'Start automatic navigation';
             }
         }
         
@@ -1238,6 +1391,27 @@
                 autoNavPollInterval = null;
             }
         }
+
+        function clampPercentage(value) {
+            const percentage = Number(value);
+            return Number.isFinite(percentage) ? Math.max(0, Math.min(100, percentage)) : 0;
+        }
+
+        function createAutoNavButton(label, className, action) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = className;
+            button.textContent = label;
+            button.addEventListener('click', action);
+            if (action === startAutoNavigation) {
+                button.dataset.commandStart = 'auto-nav';
+                if (getManualCommandHold(currentVin) || manualCommandInFlight.has(currentVin)) {
+                    button.disabled = true;
+                    button.dataset.commandBlocked = 'true';
+                }
+            }
+            return button;
+        }
         
         async function pollAutoNavStatus() {
             if (!autoNavSessionId) return;
@@ -1254,14 +1428,16 @@
                     }
                     
                     // Stop polling if completed or stopped
-                    if (data.status === 'COMPLETED' || data.status === 'STOPPED' || data.status === 'ERROR') {
+                    if (['COMPLETED', 'STOPPED', 'PAUSED', 'ERROR'].includes(data.status)) {
                         stopAutoNavPolling();
-                        deleteCookie('autoNavSessionId');
                         
                         if (data.status === 'COMPLETED') {
-                            showStatus('🎉 All routes have been sent to your Tesla!', 'success', sendStatus);
-                        } else if (data.status === 'ERROR') {
-                            showStatus(`❌ Auto-navigation error: ${data.lastError}`, 'error', sendStatus);
+                            deleteCookie('autoNavSessionId');
+                            autoNavSessionId = null;
+                            showStatus('🎉 All route stops have been confirmed as arrived at the vehicle.', 'success', sendStatus);
+                        } else if (data.status === 'STOPPED') {
+                            deleteCookie('autoNavSessionId');
+                            autoNavSessionId = null;
                         }
                     }
                 }
@@ -1276,51 +1452,67 @@
             const title = document.getElementById('autoNavTitle');
             const buttons = document.getElementById('autoNavButtons');
             
-            progressBar.style.width = `${data.progressPercentage}%`;
+            progressBar.style.width = `${clampPercentage(data.progressPercentage)}%`;
             
             if (data.status === 'RUNNING') {
                 title.textContent = '🚗 Automatic Navigation Active';
 
-                // Build detailed status
-                let statusHtml = `<span class="pulse">●</span> Monitoring vehicle for destination completion...<br>`;
+                const pulse = document.createElement('span');
+                pulse.className = 'pulse';
+                pulse.textContent = '●';
+                status.replaceChildren(
+                    pulse,
+                    document.createTextNode(' Monitoring vehicle for destination completion...'),
+                    document.createElement('br'),
+                    document.createTextNode(`Route ${data.currentGroupIndex + 1} of ${data.totalGroups} | ${data.completedAddresses} of ${data.totalAddresses} addresses completed`)
+                );
 
-                statusHtml += `Route ${data.currentGroupIndex + 1} of ${data.totalGroups} |
-                    ${data.completedAddresses} of ${data.totalAddresses} addresses completed`;
+                if (Number.isInteger(data.currentWaypointIndex) && data.currentWaypointIndex >= 0) {
+                    status.append(document.createElement('br'), document.createTextNode(`Current waypoint: ${data.currentWaypointIndex + 1}`));
+                }
+                if (data.commandState) {
+                    status.append(document.createElement('br'), document.createTextNode(`Command state: ${data.commandState}`));
+                }
 
                 // Show last poll time
                 if (data.lastPollAt) {
                     const pollTime = new Date(data.lastPollAt).toLocaleTimeString();
-                    statusHtml += `<br>🔄 Last checked: ${pollTime}`;
+                    status.append(document.createElement('br'), document.createTextNode(`🔄 Last checked: ${pollTime}`));
                 }
 
                 if (data.lastError) {
-                    statusHtml += `<br><span style="color: #ff6b6b;">Last error: ${data.lastError}</span>`;
+                    const error = document.createElement('span');
+                error.style.color = '#8b201b';
+                    error.textContent = `Last error: ${data.lastError}`;
+                    status.append(document.createElement('br'), error);
                 }
 
-                status.innerHTML = statusHtml;
-                buttons.innerHTML = `
-                    <button class="btn btn-stop" onclick="stopAutoNavigation()">⏹️ Stop Automatic Navigation</button>
-                `;
+                buttons.replaceChildren(createAutoNavButton('⏹️ Stop Automatic Navigation', 'btn btn-stop', stopAutoNavigation));
             } else if (data.status === 'COMPLETED') {
                 title.textContent = '✅ Navigation Complete';
-                status.innerHTML = `All ${data.totalAddresses} addresses have been sent to your Tesla!`;
-                buttons.innerHTML = `
-                    <button class="btn btn-secondary" onclick="hideAutoNavPanel()">Close</button>
-                `;
+                status.textContent = 'All route stops have been confirmed as arrived at the vehicle.';
+                buttons.replaceChildren(createAutoNavButton('Close', 'btn btn-secondary', hideAutoNavPanel));
             } else if (data.status === 'STOPPED') {
                 title.textContent = '⏹️ Navigation Stopped';
-                status.innerHTML = `Stopped at ${data.completedAddresses} of ${data.totalAddresses} addresses.`;
-                buttons.innerHTML = `
-                    <button class="btn btn-auto-nav" onclick="startAutoNavigation()">🚀 Restart</button>
-                    <button class="btn btn-secondary" onclick="hideAutoNavPanel()">Close</button>
-                `;
-            } else if (data.status === 'ERROR') {
-                title.textContent = '❌ Navigation Error';
-                status.innerHTML = `Error: ${data.lastError}<br>Completed ${data.completedAddresses} of ${data.totalAddresses} addresses.`;
-                buttons.innerHTML = `
-                    <button class="btn btn-auto-nav" onclick="startAutoNavigation()">🔄 Retry</button>
-                    <button class="btn btn-secondary" onclick="hideAutoNavPanel()">Close</button>
-                `;
+                status.textContent = `Stopped at ${data.completedAddresses} of ${data.totalAddresses} addresses.`;
+                buttons.replaceChildren(
+                    createAutoNavButton('🚀 Restart', 'btn btn-auto-nav', startAutoNavigation),
+                    createAutoNavButton('Close', 'btn btn-secondary', hideAutoNavPanel)
+                );
+            } else if (data.status === 'PAUSED' || data.status === 'ERROR') {
+                title.textContent = data.status === 'PAUSED' ? '⏸️ Navigation Paused' : '❌ Navigation Error';
+                const message = document.createElement('span');
+                message.style.color = '#8b201b';
+                message.textContent = data.lastError || 'This session still holds the vehicle route queue.';
+                status.replaceChildren(
+                    message,
+                    document.createElement('br'),
+                    document.createTextNode(`Completed ${data.completedAddresses} of ${data.totalAddresses} addresses. Stop this session to reconcile and release the vehicle.`)
+                );
+                if (data.commandState) {
+                    status.append(document.createElement('br'), document.createTextNode(`Command state: ${data.commandState}`));
+                }
+                buttons.replaceChildren(createAutoNavButton('⏹️ Stop and reconcile session', 'btn btn-stop', stopAutoNavigation));
             }
         }
         
@@ -1328,16 +1520,21 @@
             if (!autoNavSessionId) return;
             
             try {
-                const response = await fetch(`/route/auto-navigate/stop/${autoNavSessionId}`, {
+                const response = await apiFetch(`/route/auto-navigate/stop/${autoNavSessionId}`, {
                     method: 'POST'
                 });
                 
                 if (response.ok) {
                     const data = await response.json();
                     updateAutoNavUI(data);
-                    stopAutoNavPolling();
-                    deleteCookie('autoNavSessionId');
-                    showStatus('⏹️ Automatic navigation stopped', 'success', sendStatus);
+                    if (data.status === 'STOPPED' || data.status === 'COMPLETED') {
+                        stopAutoNavPolling();
+                        deleteCookie('autoNavSessionId');
+                        autoNavSessionId = null;
+                        showStatus('⏹️ Automatic navigation stopped and reconciled', 'success', sendStatus);
+                    } else {
+                        showStatus('This session still holds the vehicle. Keep its identifier and stop it before sending another route.', 'error', sendStatus);
+                    }
                 }
             } catch (error) {
                 console.error('Error stopping auto-navigation:', error);
@@ -1347,7 +1544,7 @@
         
         async function stopActiveAutoNav() {
             await stopAutoNavigation();
-            document.getElementById('activeAutoNavPanel').classList.add('hidden');
+            if (!autoNavSessionId) document.getElementById('activeAutoNavPanel').classList.add('hidden');
         }
         
         function viewAutoNavDetails() {

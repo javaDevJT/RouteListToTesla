@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "target": {
+    "os": "linux",
+    "architecture": "x86_64",
+    "python": "3.14"
+  },
+  "package_versions": {
+    "rapidocr": "3.9.2",
+    "onnxruntime": "1.30.0",
+    "easyocr": "1.7.2",
+    "torch": "2.14.0+cpu",
+    "torchvision": "0.29.0+cpu"
+  },
+  "package_artifacts": {
+    "rapidocr": {
+      "url": "https://files.pythonhosted.org/packages/55/ed/0ee9b9281986974be9d2406ae0134c8d7c91d2fc613f16ffda9701eeda6f/rapidocr-3.9.2-py3-none-any.whl",
+      "sha256": "04d6b8d151f823d930bd91910555f57bea897c0c44fa6794267b94cf9c1ef9a0",
+      "bytes": 27275208
+    },
+    "easyocr": {
+      "url": "https://files.pythonhosted.org/packages/bb/84/4a2cab0e6adde6a85e7ba543862e5fc0250c51f3ac721a078a55cdcff250/easyocr-1.7.2-py3-none-any.whl",
+      "sha256": "5be12f9b0e595d443c9c3d10b0542074b50f0ec2d98b141a109cd961fd1c177c",
+      "bytes": 2870178
+    },
+    "torch": {
+      "url": "https://download-r2.pytorch.org/whl/cpu/torch-2.14.0%2Bcpu-cp314-cp314-manylinux_2_28_x86_64.whl",
+      "sha256": "f152f41dc5dc462afe0de780e451ebb47ea8b4451f8f919f9537aa8e2cbe1d7e"
+    },
+    "torchvision": {
+      "url": "https://download-r2.pytorch.org/whl/cpu/torchvision-0.29.0%2Bcpu-cp314-cp314-manylinux_2_28_x86_64.whl",
+      "sha256": "dd735995faf5d19ebf7dc729138bc39764044f62c31edc687036757e744005b7"
+    }
+  },
+  "model_artifacts": {
+    "rapidocr": [
+      {
+        "stage": "Det",
+        "filename": "PP-OCRv6_det_small.onnx",
+        "package_path": "models/PP-OCRv6_det_small.onnx",
+        "relative_path": "rapidocr/PP-OCRv6_det_small.onnx",
+        "source_package": "rapidocr==3.9.2",
+        "sha256": "090f04abcd9d9a7498bc4ebf677e4cb9bdce1fe4197ddb7e529f1ef44e1ff94f",
+        "bytes": 9929594
+      },
+      {
+        "stage": "Cls",
+        "filename": "ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+        "package_path": "models/ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+        "relative_path": "rapidocr/ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+        "source_package": "rapidocr==3.9.2",
+        "sha256": "e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c",
+        "bytes": 585532
+      },
+      {
+        "stage": "Rec",
+        "filename": "PP-OCRv6_rec_small.onnx",
+        "package_path": "models/PP-OCRv6_rec_small.onnx",
+        "relative_path": "rapidocr/PP-OCRv6_rec_small.onnx",
+        "source_package": "rapidocr==3.9.2",
+        "sha256": "6f327246b50388f3c176ae304bd95767ea6dc0c9ae92153ef8cbe210b3c14884",
+        "bytes": 21234383
+      }
+    ],
+    "easyocr": [
+      {
+        "filename": "craft_mlt_25k.pth",
+        "relative_path": "easyocr/craft_mlt_25k.pth",
+        "source_url": "https://github.com/JaidedAI/EasyOCR/releases/download/pre-v1.1.6/craft_mlt_25k.zip",
+        "archive_member": "craft_mlt_25k.pth",
+        "md5": "2f8227d2def4037cdb3b34389dcf9ec1",
+        "sha256": "4a5efbfb48b4081100544e75e1e2b57f8de3d84f213004b14b85fd4b3748db17",
+        "bytes": 83152330
+      },
+      {
+        "filename": "english_g2.pth",
+        "relative_path": "easyocr/english_g2.pth",
+        "source_url": "https://github.com/JaidedAI/EasyOCR/releases/download/v1.3/english_g2.zip",
+        "archive_member": "english_g2.pth",
+        "md5": "5864788e1821be9e454ec108d61b887d",
+        "sha256": "e2272681d9d67a04e2dff396b6e95077bc19001f8f6d3593c307b9852e1c29e8",
+        "bytes": 15143997
+      }
+    ]
+  },
+  "rapidocr_params": {
+    "Global.model_root_dir": "/app/ocr/models/rapidocr",
+    "EngineConfig.onnxruntime.intra_op_num_threads": 1,
+    "EngineConfig.onnxruntime.inter_op_num_threads": 1,
+    "EngineConfig.onnxruntime.use_cuda": false,
+    "Det.model_path": "/app/ocr/models/rapidocr/PP-OCRv6_det_small.onnx",
+    "Cls.model_path": "/app/ocr/models/rapidocr/ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+    "Rec.model_path": "/app/ocr/models/rapidocr/PP-OCRv6_rec_small.onnx"
+  },
+  "easyocr_languages": ["en"],
+  "easyocr_model_directory": "/app/ocr/models/easyocr",
+  "easyocr_user_network_directory": "/app/ocr/models/easyocr/user_network",
+  "easyocr_english_g2_contains_u00bd": false
+}

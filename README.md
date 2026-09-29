@@ -1,164 +1,102 @@
 # RouteListToTesla
 
-RouteListToTesla converts photographed route lists into Tesla-ready navigation waypoints. The Spring Boot 3.5.5 service ingests 1..N annotated screenshots, extracts and normalizes street addresses with Tesseract 5, geocodes the candidates through Google Maps, lets drivers review or edit the list in groups of eight, and finally publishes the confirmed waypoints to Tesla Fleet / Teslemetry APIs.
+RouteListToTesla turns ordered address screenshots into reviewed Tesla routes. The browser uploads selected
+images to the application server, where Tesseract, PaddleOCR, and EasyOCR independently read them and
+produce a majority transcription with literal alternatives for review.
+Google Maps geocoding is a separate service.
 
-## Feature Highlights
-- **High-accuracy OCR pipeline** – Upscaling, grayscale, unsharp masking, and heuristics repair common street-spacing issues before parsing.
-- **Default-state enrichment** – When dispatch sheets omit the state, the caller can supply a default state code that is appended during extraction.
-- **SHA-256 image cache** – Frontend computes the hash, backend stores resolved candidates under `cache/` so duplicate screenshots never re-run OCR/geocoding.
-- **Editable review UI** – Users can add, remove, or edit addresses in an eight-address grid before transmitting them to the vehicle.
-- **Tesla Fleet integration** – Supports both the legacy `commandNavigationGpsRequest` and the newer batch waypoint API with retry-aware HTTP client.
-- **Secured by Google OAuth2** – Only allow-listed Google accounts can access the UI; OAuth tokens are never stored server-side.
+The container builds from source in separate Java and OCR stages. Production uses
+a stripped Java 25 `jlink` runtime as non-root UID/GID 10001, with no JDK or Maven
+in the final image. Build and validation commands are in the
+[development reference](docs/development-reference.md).
 
-## End-to-End Flow
-1. User drags 1..N route screenshots into the browser.
-2. Frontend computes SHA-256 hashes and calls `/route/cache/check` to skip known images.
-3. Only cache misses are uploaded to `/route/places` with an optional `defaultState` parameter.
-4. Tesseract OCR emits line candidates; `AddressExtractor` merges overlapping lines and normalizes tokens.
-5. Google Geocoding API resolves each unique candidate to `lat/lon/place_id` (US-biased results by default).
-6. Cached or freshly resolved candidates are merged and grouped by eight for user review.
-7. Users edit addresses inline; edited rows are re-geocoded before send.
-8. `/route/send/{vin}` pushes the final, ordered waypoint list to Tesla Fleet / Teslemetry.
-9. The backend stores successful geocoded blobs per image hash for subsequent replays.
+## Current source workflow
 
-## Architecture at a Glance
-- **Controller layer** (`RouteController`) – REST endpoints for OCR, Tesla dispatch, and cache checks.
-- **OCR layer** (`AddressOcrService`) – ByteDeco Tesseract bindings with preprocessing filters and address repair logic.
-- **Address parsing utilities** (`AddressExtractor`) – US-focused heuristics that normalize spacing, merge HOCR overlaps, and append default states.
-- **Geocoding client** (`GeocodingClient`) – Apache HttpClient 5 + Jackson for robust Google API calls with pacing.
-- **Cache service** (`ImageCacheService`) – File-based store that maps SHA-256 hashes to JSON payloads under `cache/images/`.
-- **Tesla client** (`FleetApi`) – Consolidates Fleet API + Teslemetry calls including waypoint submission.
+1. In TAP, open **Other Tools → TeslaRouter**, or open [TeslaRouter](https://teslarouter.javadevjt.tech)
+   directly, then tap **Continue with TAP**.
+2. Sign in with TAP and approve RouteList access in TAP. TAP controls identity, billing, the `routelist`
+   entitlement, and per-subject vehicle grants.
+3. In **Import your stops**, select an authorized **Vehicle**. Set **Default state**
+   only when a screenshot omits its state.
+4. Tap **Choose route screenshots**. On iPhone, choose **Photo Library** and select multiple screenshots. Reorder
+   them in the selected-file list before tapping **Read addresses**; their order determines route-stop order.
+5. In **Review & send**, check the OCR candidates, correct text, and remove unwanted
+   addresses. Confirm or edit flagged readings before sending. The page does not support creating a new
+   address by typing or importing a text list.
+6. Send a route group with **Send Route 1 to Tesla**; the number changes for each group. Tesla routes are
+   grouped to respect the eight-waypoint limit. Automatic navigation is optional: select **Use Automatic
+   Navigation**, then **Start Automatic Navigation**.
 
-## Technology
-- Java 21, Spring Boot 3.5.5, Maven wrapper
-- Spring MVC, Validation, Security, OAuth2 Client, Thymeleaf
-- ByteDeco Tesseract 5.5.1 + Leptonica 1.85.0
-- Apache HttpClient 5, Jackson, Lombok (optional)
-- Tesla Fleet API / Teslemetry HTTP integrations
+TAP grants last up to eight hours, have no refresh token, and are held in memory. Expiry or an application
+restart requires signing in with TAP again. TAP checks current entitlements and vehicle grants; revoked access
+blocks browser and navigation requests. RouteList uses the stable TAP subject (`sub`) as identity. TAP email is
+unverified profile data and is not an authorization key.
 
-## Prerequisites
-- Java 21+ and Maven 3.6+ (wrapper included)
-- Google Cloud project with OAuth2 Client + Geocoding API enabled
-- Tesla Fleet / Teslemetry API key with access to the target VIN
-- `eng.traineddata` already ships under `src/main/resources`
+## iPhone
 
-## Required Environment
-```bash
-export google.oauth.client-id="your-google-client-id"
-export google.oauth.client-secret="your-google-client-secret"
-export google.api.key="your-google-maps-api-key"
-export allowed.user1="authorized-user@example.com"   # allow-list entry (email)
-export teslemetry.api.key="teslemetry-or-tesla-fleet-token"
-```
+TeslaRouter shares TAP's design and links back to **TAP Dashboard** and **Other Tools**.
+On narrow screens, open **Menu** to find these links. See the
+[design and deployment record](docs/tap-design-integration-2026-09-27.md).
 
-## Local Development
-```bash
-# Install dependencies & run API locally on :10088
+Use Safari and its native Photos picker as the primary flow; the site does not read the Photos library in the
+background. For an iOS 26+ Home Screen shortcut that opens in the browser, leave **Open as Web App** off.
+Standalone mode remains optional and unverified on a physical iPhone. See
+[iPhone setup guide](docs/ios-setup.md) for the steps. Shortcuts, share-sheet import, and a native iPhone app
+remain proposals and are not implemented.
+
+## OCR and data flow
+
+Image cache checks are owner-scoped, use SHA-256, and preserve selected-image ordering. All three OCR
+engines run locally with models installed at build time; no OpenAI key or hosted OCR is used. Review and editing remain
+user-controlled. Google Maps geocoding stays separately configured with the existing `google.api.key` setting.
+
+## Run locally
+
+Use Java 25 and the Maven wrapper. Real OCR requires the three-engine wrapper and its offline models;
+the Dockerfile installs them. Plain Tesseract TSV is accepted only by explicit legacy tests. Configure TAP delegated login and
+existing geocoding settings as described in [TAP setup](OAUTH_SETUP.md) and the
+[development reference](docs/development-reference.md) .
+
+```sh
 ./mvnw spring-boot:run
-
-# Package an executable jar
-./mvnw clean package
-```
-The UI lives at `http://localhost:10088/` and automatically redirects to Google OAuth. When testing locally, configure the Google callback to `http://localhost:10088/login/oauth2/code/google`.
-
-## Quality & Tests
-```bash
 ./mvnw test
 ```
-Unit and integration tests live under `src/test/java` and cover the OCR pipeline (`AddressOcrServiceTest`), address extraction utilities, and cache integration.
 
-## API Surface
-| Method | Path | Description |
-| ------ | ---- | ----------- |
-| `POST` | `/route/places` | Accepts multipart images (and optional `defaultState`) and returns unique, geocoded candidates. |
-| `POST` | `/route/places/{vin}` | Legacy endpoint that processes images and immediately sends the resulting route to the Tesla VIN. |
-| `POST` | `/route/send/{vin}` | Accepts edited JSON payload of candidates and sends validated waypoints to the Tesla VIN. |
-| `POST` | `/route/cache/check` | Accepts `{imageHash, filename}` and returns cached candidates (if present). |
+## Current deployment
 
-### `/route/places`
-```bash
-curl -X POST "http://localhost:10088/route/places" \
-  -H "Authorization: Bearer <oauth-cookie>" \
-  -F defaultState=MI \
-  -F images=@/path/to/route1.png \
-  -F images=@/path/to/route2.png
-```
-Response snippet:
-```json
-{
-  "candidates": [
-    {
-      "text": "123 Main St, Ann Arbor MI",
-      "normalized": "123 main st ann arbor mi",
-      "sourceImage": "route1.png",
-      "lineIndex": 0,
-      "lat": 42.2808,
-      "lon": -83.7430,
-      "pid": "ChIJ..."
-    }
-  ]
-}
-```
+**Verified September 27, 2026.** TeslaRouter runs `20260927-heic`, TrueNAS job
+**209049**, immutable image `sha256:191f711504cbb02290aa666493f6bfacb54f6a76a576b3059b6982e226ef414c`.
+The existing route-data volume is retained and no host port is published.
 
-### `/route/send/{vin}`
-```bash
-curl -X POST "http://localhost:10088/route/send/5YJ3E1EA7JF000000" \
-  -H "Content-Type: application/json" \
-  -d '{
-        "candidates": [
-          {"text":"123 Main St, Ann Arbor MI", "normalized":"123 main st ann arbor mi", "lat":42.2808, "lon":-83.7430, "pid":"ChIJ..."}
-        ]
-      }'
-```
+**iPhone HEIC/HEIF uploads convert automatically on the server.** Select images
+from Safari's Photo Library or Files picker; no manual conversion or Shortcut is
+needed. Conversion stays local, handles orientation, and runs before the three
+OCR engines. The 12 MiB / 20 megapixel limits, authenticated upload, and CSRF
+protection remain in place. OCR subprocess environments exclude application
+credentials.
 
-### `/route/cache/check`
-```bash
-curl -X POST "http://localhost:10088/route/cache/check" \
-  -H "Content-Type: application/json" \
-  -d '{"imageHash":"a1b2...","filename":"route1.png"}'
-```
+Both original supplied HEIC files passed the final container's Java-to-OCR path:
+eight exact ordered address rows, all three engines agreeing, in 36.3 and 31.4
+seconds. Network access was disabled; peak memory was 1.593 GB under the 2 GiB
+limit, with no leftover job directories. Nine strict screenshot regressions
+passed with 20 correct rows and no missing or extra rows. Checks passed:
+116 Java tests, 24 Python tests, and seven JavaScript/deployment tests.
 
-## Image Cache & Data Retention
-- Cached responses are stored under `cache/image_cache_index.json` plus `cache/images/<hash>.json`.
-- Each cache entry contains the geocoded candidates for a single screenshot and can be safely deleted when rolling deployments.
-- The `cache/` directory is ignored by Git; scrub it before publishing if you previously processed customer data.
+Fresh TAP consent loaded three vehicles. A public authenticated upload of two
+uncached raw HEIC fixtures returned HTTP 200 in 69.9 seconds; malformed HEIC
+returned HTTP 400. The saved session was unchanged during the smoke test.
+No personal addresses were geocoded and no vehicle command was sent.
+Physical iPhone hardware remains untested; both original iPhone files and the
+public raw-HEIC multipart upload path were verified.
 
-## Security
-- Google OAuth2 login (Spring Security) protects every endpoint except `/route/cache/check`.
-- Requests are restricted to `allowed.user1` (add more env vars for additional accounts).
-- Tesla/Teslemetry access tokens are injected via environment variables and never persisted to disk.
+See [release evidence](docs/tap-design-integration-2026-09-27.md),
+[machine-readable verification](output/heic-release-verification.json), and
+[iPhone setup](docs/ios-setup.md).
 
-## Project Layout
-```
-src/main/java/com/jtdev/routelisttotesla/
-├── controller/RouteController.java
-├── service/
-│   ├── AddressOcrService.java
-│   ├── GeocodingClient.java
-│   └── ImageCacheService.java
-├── model/
-│   ├── FleetApi.java
-│   ├── PlaceCandidate.java
-│   └── PlaceCandidatesResponse.java
-├── util/AddressExtractor.java
-└── config/
-    ├── SecurityConfig.java
-    └── FleetApiClientConfig.java
-```
+## Documentation
 
-## Container Image
-```bash
-./mvnw clean package
-podman build --arch amd64 -t routelisttotesla:amd64-latest .
-podman build --arch arm64 -t routelisttotesla:arm64-latest .
-podman manifest create routelisttotesla:latest
-podman manifest add routelisttotesla:latest routelisttotesla:amd64-latest
-podman manifest add routelisttotesla:latest routelisttotesla:arm64-latest
-podman manifest push routelisttotesla:latest
-```
-
-## Planned Enhancements
-- Multi-language OCR packs and deskew/denoise preprocessing.
-- Batch geocoding via Google Maps Advanced Routes for even tighter QPS. 
-- Redis-based cache for distributed deployments.
-- Mobile-ready UI with live Tesla route progress.
+- [Documentation index](docs/README.md)
+- [TAP delegated login setup](OAUTH_SETUP.md)
+- [Development reference](docs/development-reference.md)
+- [iPhone setup](docs/ios-setup.md)
+- [Modernization audit](docs/modernization-2026-09-26.md)

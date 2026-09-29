@@ -1,8 +1,9 @@
 package com.jtdev.routelisttotesla.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.cfg.DateTimeFeature;
+import tools.jackson.databind.json.JsonMapper;
 import com.jtdev.routelisttotesla.model.UserSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,6 +14,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
@@ -25,20 +27,25 @@ import java.util.Map;
 public class UserSessionService {
     
     private static final Logger log = LoggerFactory.getLogger(UserSessionService.class);
-    private static final String SESSIONS_DIR = "cache/user-sessions";
+    private final Path sessionsDirectory;
     
     private final ObjectMapper objectMapper;
     
     public UserSessionService() {
-        this.objectMapper = new ObjectMapper();
-        this.objectMapper.registerModule(new JavaTimeModule());
-        this.objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        this(Paths.get("cache/user-sessions"));
+    }
+
+    UserSessionService(Path sessionsDirectory) {
+        this.sessionsDirectory = sessionsDirectory;
+        this.objectMapper = JsonMapper.builderWithJackson2Defaults()
+                .disable(DateTimeFeature.WRITE_DATES_AS_TIMESTAMPS)
+                .build();
         initializeSessionsDirectory();
     }
     
     private void initializeSessionsDirectory() {
         try {
-            Files.createDirectories(Paths.get(SESSIONS_DIR));
+            Files.createDirectories(sessionsDirectory);
         } catch (IOException e) {
             log.warn("Failed to create user sessions directory: {}", e.getMessage());
         }
@@ -55,20 +62,41 @@ public class UserSessionService {
      * Get the session file path for a user
      */
     private Path getSessionFilePath(String userId) {
-        return Paths.get(SESSIONS_DIR, sanitizeUserId(userId) + ".json");
+        return sessionsDirectory.resolve(sanitizeUserId(userId) + ".json");
     }
     
     /**
      * Save or update a user session
      */
-    public void saveSession(UserSession session) {
+    public synchronized void saveSession(UserSession session) {
         try {
             Path sessionFile = getSessionFilePath(session.getUserId());
             objectMapper.writeValue(sessionFile.toFile(), session);
             log.info("Saved session for user {} with {} addresses", 
                     session.getUserId(), session.getAddresses().size());
-        } catch (IOException e) {
+        } catch (JacksonException e) {
             log.warn("Failed to save session for user {}: {}", session.getUserId(), e.getMessage());
+        }
+    }
+
+    /** Called only for an operator-bound legacy owner after that exact TAP subject signs in. */
+    public synchronized void migrateOwner(String legacyEmail, String subject) {
+        Path legacy = getSessionFilePath(legacyEmail);
+        Path target = getSessionFilePath(subject);
+        if (!Files.exists(legacy) || Files.exists(target) || legacy.equals(target)) return;
+        Path temporary = null;
+        try {
+            UserSession session = objectMapper.readValue(legacy.toFile(), UserSession.class);
+            if (!legacyEmail.equals(session.getUserId()) || session.isExpired()) return;
+            session.setUserId(subject);
+            temporary = Files.createTempFile(target.getParent(), "migration-", ".tmp");
+            objectMapper.writeValue(temporary.toFile(), session);
+            // Keep the original as a rollback copy; never overwrite an existing TAP-owned session.
+            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException | JacksonException e) {
+            throw new IllegalStateException("Could not preserve the existing saved route during TAP migration", e);
+        } finally {
+            if (temporary != null) try { Files.deleteIfExists(temporary); } catch (IOException ignored) { }
         }
     }
     
@@ -96,7 +124,7 @@ public class UserSessionService {
             
             return session;
             
-        } catch (IOException e) {
+        } catch (JacksonException e) {
             log.warn("Failed to load session for user {}: {}", userId, e.getMessage());
             return null;
         }
@@ -190,7 +218,7 @@ public class UserSessionService {
      */
     public void cleanupExpiredSessions() {
         try {
-            File sessionsDir = new File(SESSIONS_DIR);
+        File sessionsDir = sessionsDirectory.toFile();
             File[] files = sessionsDir.listFiles((dir, name) -> name.endsWith(".json"));
             
             if (files != null) {
@@ -203,7 +231,7 @@ public class UserSessionService {
                                 deleted++;
                             }
                         }
-                    } catch (IOException e) {
+                    } catch (JacksonException e) {
                         log.warn("Failed to check session file {}: {}", file.getName(), e.getMessage());
                     }
                 }

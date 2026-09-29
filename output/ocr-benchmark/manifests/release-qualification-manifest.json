@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "release-qualification-small-light",
+      "image": "../fixtures/release-qualification/release-qualification-small-light.png",
+      "defaultState": "",
+      "family": "small-light-numeric-text",
+      "action": "accept",
+      "expectedWarnings": []
+    },
+    {
+      "id": "release-qualification-small-dark",
+      "image": "../fixtures/release-qualification/release-qualification-small-dark.png",
+      "defaultState": "",
+      "family": "small-dark-numeric-text",
+      "action": "accept",
+      "expectedWarnings": []
+    },
+    {
+      "id": "release-qualification-units-close-repeats",
+      "image": "../fixtures/release-qualification/release-qualification-units-close-repeats.png",
+      "defaultState": "",
+      "family": "mixed-unit-building-close-repeated-addresses",
+      "action": "accept",
+      "expectedWarnings": []
+    },
+    {
+      "id": "release-qualification-punctuation-roads",
+      "image": "../fixtures/release-qualification/release-qualification-punctuation-roads.png",
+      "defaultState": "",
+      "family": "fractions-punctuation-numbered-road-ordering",
+      "action": "accept",
+      "expectedWarnings": []
+    },
+    {
+      "id": "release-qualification-ui-only-negative",
+      "image": "../fixtures/release-qualification/release-qualification-ui-only-negative.png",
+      "defaultState": "",
+      "family": "numeric-ui-distractors-without-addresses",
+      "action": "reject",
+      "expectedWarnings": []
+    },
+    {
+      "id": "release-qualification-top-cutoff-review",
+      "image": "../fixtures/release-qualification/release-qualification-top-cutoff-review.png",
+      "defaultState": "",
+      "family": "incomplete-address-at-top-edge",
+      "action": "review",
+      "expectedWarnings": ["top-row-cropped-incomplete"]
+    }
+    ,{"id":"release-qualification-iphone-large","image":"../fixtures/release-qualification/release-qualification-iphone-large.png","defaultState":"","family":"iphone-resolution-units-repeated-stops","action":"accept","expectedWarnings":[]}
+    ,{"id":"release-qualification-large-ui-negative","image":"../fixtures/release-qualification/release-qualification-large-ui-negative.png","defaultState":"","family":"iphone-resolution-non-address-ui","action":"reject","expectedWarnings":[]}
+    ,{"id":"release-qualification-square-ui-negative","image":"../fixtures/release-qualification/release-qualification-square-ui-negative.png","defaultState":"","family":"large-square-non-address-ui","action":"reject","expectedWarnings":[]}
+  ]
+}

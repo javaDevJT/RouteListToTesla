@@ -1,0 +1,23 @@
+# Keep reproducible public checks; personal OCR runs and browser captures stay local.
+*
+!.gitignore
+!truenas-release-config.mjs
+!truenas-release-config.test.mjs
+!verify-runtime-image.py
+!verify-tap-design-release.py
+!ocr-benchmark/
+ocr-benchmark/*
+!ocr-benchmark/README.md
+!ocr-benchmark/benchmark.py
+!ocr-benchmark/self_check.py
+!ocr-benchmark/validate-final-image.py
+!ocr-benchmark/render_fixtures.js
+!ocr-benchmark/release-qualification-expected.json
+!ocr-benchmark/release-qualification-spec.json
+!ocr-benchmark/manifests/
+ocr-benchmark/manifests/*
+!ocr-benchmark/manifests/release-qualification-manifest.json
+!ocr-benchmark/fixtures/
+ocr-benchmark/fixtures/*
+!ocr-benchmark/fixtures/release-qualification/
+!ocr-benchmark/fixtures/release-qualification/*.png
