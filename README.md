@@ -64,33 +64,33 @@ existing geocoding settings as described in [TAP setup](OAUTH_SETUP.md) and the
 
 ## Current deployment
 
-**Verified September 27, 2026.** TeslaRouter runs `20260927-heic`, TrueNAS job
-**209049**, immutable image `sha256:191f711504cbb02290aa666493f6bfacb54f6a76a576b3059b6982e226ef414c`.
-The existing route-data volume is retained and no host port is published.
+**Verified September 28, 2026.** TeslaRouter runs `20260928-jlink`, TrueNAS job
+**212707**, from source commit `c8267304785c346b502d9ed2890f82e691a9d74b` and image
+`sha256:33810efdb0d2ad1ad40a40a85726548b87e8c0f4ec08644b82e86b2adc98d29d`.
+The multi-stage image uses a Java 25 jlink runtime and runs the application as
+UID/GID 10001, with 4 GiB memory, two CPUs, and a read-only root filesystem. The
+existing route-data volume is retained and no host port is published. The JRE is
+52% smaller; OCR dependencies and offline models still dominate image size.
 
 **iPhone HEIC/HEIF uploads convert automatically on the server.** Select images
 from Safari's Photo Library or Files picker; no manual conversion or Shortcut is
-needed. Conversion stays local, handles orientation, and runs before the three
-OCR engines. The 12 MiB / 20 megapixel limits, authenticated upload, and CSRF
-protection remain in place. OCR subprocess environments exclude application
-credentials.
+needed. Local conversion handles orientation before three local OCR engines run.
+The 12 MiB / 20 megapixel limits, TAP authorization, and CSRF protection remain in
+place. OCR subprocess environments exclude application credentials.
 
-Both original supplied HEIC files passed the final container's Java-to-OCR path:
-eight exact ordered address rows, all three engines agreeing, in 36.3 and 31.4
-seconds. Network access was disabled; peak memory was 1.593 GB under the 2 GiB
-limit, with no leftover job directories. Nine strict screenshot regressions
-passed with 20 correct rows and no missing or extra rows. Checks passed:
-116 Java tests, 24 Python tests, and seven JavaScript/deployment tests.
+Native AMD TrueNAS qualification passed all nine synthetic cases (20 exact
+ordered rows) and both original HEICs (eight exact ordered rows). Every original
+row had majority support without unresolved disagreements. Peak memory was
+1.12 GiB, with no OOM events or leftover jobs. Emulated amd64 timings from the
+Apple Silicon development machine are not used as production evidence.
 
-Fresh TAP consent loaded three vehicles. A public authenticated upload of two
-uncached raw HEIC fixtures returned HTTP 200 in 69.9 seconds; malformed HEIC
-returned HTTP 400. The saved session was unchanged during the smoke test.
-No personal addresses were geocoded and no vehicle command was sent.
-Physical iPhone hardware remains untested; both original iPhone files and the
-public raw-HEIC multipart upload path were verified.
+The deployed browser flow at iPhone width passed a two-file uncached raw-HEIC
+upload (HTTP 200, 63.5 seconds), malformed-HEIC rejection (HTTP 400), busy-control
+restoration, duplicate-submit protection, and saved-session preservation. TAP
+consent loaded three authorized vehicles. No personal addresses were geocoded or
+vehicle commands sent. Physical iPhone hardware remains untested.
 
-See [release evidence](docs/tap-design-integration-2026-09-27.md),
-[machine-readable verification](output/heic-release-verification.json), and
+See [release evidence](docs/container-modernization-2026-09-28.md) and
 [iPhone setup](docs/ios-setup.md).
 
 ## Documentation

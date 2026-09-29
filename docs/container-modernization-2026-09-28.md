@@ -134,5 +134,34 @@ and no production data mounted.
 
 Local evidence is retained in the ignored
 `output/ocr-benchmark/results/20260928-jlink-native-*.runner.json` files. The final
-release image will be rebuilt with its Git revision and checked against the
-qualified candidate's filesystem layers before deployment.
+release image was rebuilt with its Git revision and checked against the qualified
+candidate: filesystem layers and runtime configuration matched exactly, with only
+the revision label changed.
+
+## Deployed release
+
+- Source commit: `c8267304785c346b502d9ed2890f82e691a9d74b`, pushed to the existing
+  `feature/automatic-queue-new-routes` branch.
+- Release: `20260928-jlink`; TrueNAS deployment job **212707** succeeded.
+- Published and running image:
+  `ghcr.io/javadevjt/routelisttotesla@sha256:33810efdb0d2ad1ad40a40a85726548b87e8c0f4ec08644b82e86b2adc98d29d`.
+  Final image size: 3,301,959,658 bytes; JRE size: 79,317,551 bytes.
+- Complete saved configuration readback matched the prepared release. The
+  application is running as UID/GID 10001 with 4 GiB, two CPUs, and a read-only
+  root filesystem. The existing `/app/cache` data volume is retained; no host
+  ports are published. The scoped cache-permissions initializer completed.
+- Public `/login` returned HTTP 200 with the expected release. Served CSS and all
+  three fonts matched source bytes. Unauthenticated vehicle/session requests
+  remained protected; a POST without CSRF returned HTTP 403.
+- Existing TAP browser sign-in completed delegation and loaded three authorized
+  vehicles. At 390 by 844 pixels, the page had no horizontal overflow. Two
+  uncached raw-HEIC negative fixtures processed successfully in **63.515 seconds**
+  (HTTP 200, no candidate addresses). A malformed HEIC returned HTTP 400. Upload
+  controls were disabled during processing and restored afterward; a duplicate
+  submit produced only one processing request. Saved-session data was unchanged.
+- Physical iPhone hardware and vehicle command delivery were not exercised. No
+  personal addresses were sent to geocoding, no route was saved, and no vehicle
+  command was issued during this release verification.
+
+The unrelated local MCP containers were left running as requested. Native QA
+research completed and its worker was released through normal completion.

@@ -23,7 +23,22 @@
 - [Local OCR benchmark](../output/ocr-benchmark/README.md) : image and OCR row-matching records, including the
   Linux application-image check.
 
-## Verified deployment (2026-09-27)
+## Verified deployment (2026-09-28)
+
+TrueNAS job **212707** deployed `20260928-jlink`, source commit `c826730`, image
+`sha256:33810efdb0d2ad1ad40a40a85726548b87e8c0f4ec08644b82e86b2adc98d29d`.
+The Java 25 jlink application runs as UID 10001 with 4 GiB and two CPUs. Existing
+data remains mounted; the root filesystem is read-only and no host ports are
+published. The native TrueNAS qualification passed all 11 images and 28 expected
+rows, including both original HEICs, at a maximum 1.12 GiB memory peak.
+
+The public browser smoke at iPhone width passed two uncached raw HEICs in 63.5
+seconds, malformed input rejection, upload control restoration, duplicate-submit
+protection, TAP delegation, and unchanged saved-session data. No geocoding of
+personal addresses or vehicle commands occurred. See the
+[complete release evidence](container-modernization-2026-09-28.md).
+
+## Historical deployment (2026-09-27)
 
 TrueNAS job **209049** deployed `20260927-heic`, image
 `sha256:191f711504cbb02290aa666493f6bfacb54f6a76a576b3059b6982e226ef414c`. HEIC/HEIF uploads now
