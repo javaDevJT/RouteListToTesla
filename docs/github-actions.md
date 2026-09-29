@@ -23,6 +23,31 @@ and checkout does not leave its token in the repository configuration.
 
 ## Implementation record — September 29, 2026
 
+The private runner infrastructure now provides a 32 GiB memory-backed BuildKit
+filesystem per job, with three concurrent worker reservations globally. The
+rootless engine has a 128 GiB aggregate memory limit and zero swap; 32 GiB is
+build filesystem capacity, not a per-runner RSS limit. These limits are owned
+by the runner infrastructure, not configured by this workflow.
+
+The initial push run `36560101649` passed the Java tests (117 reported, zero
+failures/errors, one skip), Python dependency checks, and OCR model verification,
+then exhausted the former 16 GiB BuildKit filesystem during image assembly.
+The infrastructure agent deployed source hash `473476747ee95995` through TrueNAS
+job `213919` and verified a multi-stage build using 27.04 GiB, the three-worker
+cap, resumed admissions, and complete ephemeral-worker cleanup.
+
+- Follow-up storage investigator: read-only ownership of the private builder's
+  disk limits and safe configuration options after run `36560101649` exhausted
+  storage. Primary consumes the recommendation and owns any change. Selection:
+  `gpt-6-luna` / `max`, verified against the live native spawn catalog. Base:
+  `3c2bdbe`. Release after a source-backed handoff; no infrastructure mutation
+  or unrelated cleanup is authorized for this worker.
+- `/root/ci_builder_storage` completed its read-only handoff and was released
+  through normal completion. It identified the 16 GiB per-job BuildKit tmpfs
+  limit and the global four-runner cap. The primary sent the findings and the
+  user's request for approximately 32 GiB and three concurrent runners to the
+  existing GitHub Actions infrastructure task, which owns the deployment fix.
+
 - Primary owns workflow, documentation, validation, commit, and push to `main`.
 - Runner-pattern investigator owns a read-only comparison with the owner's other
   repositories and runner configuration. Its handoff supplies the runner labels,
