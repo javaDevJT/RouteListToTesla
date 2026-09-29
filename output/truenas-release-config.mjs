@@ -109,7 +109,8 @@ export function buildReleaseConfig(currentConfig, { image, release, authEnvironm
   config.services.router.image = image;
   delete config.services.router.ports;
   config.services.router.user = '10001:10001';
-  config.services.router.mem_limit = '4g';
+    config.services.router.mem_limit = '4g';
+    config.services.router.cpus = 4;
   config.services.router.read_only = true;
   config.services.router.tmpfs = ['/tmp:rw,nosuid,nodev,size=256m,mode=1777'];
   config.services.router.cap_drop = ['ALL'];
@@ -141,7 +142,7 @@ export function buildReleaseConfig(currentConfig, { image, release, authEnvironm
 
   const comparison = structuredClone(config);
   comparison.services.router.image = currentRouter.image;
-  for (const name of ['ports', 'user', 'mem_limit', 'read_only', 'tmpfs', 'cap_drop', 'security_opt', 'networks', 'depends_on']) {
+    for (const name of ['ports', 'user', 'mem_limit', 'cpus', 'read_only', 'tmpfs', 'cap_drop', 'security_opt', 'networks', 'depends_on']) {
     if (Object.hasOwn(currentRouter, name)) comparison.services.router[name] = currentRouter[name];
     else delete comparison.services.router[name];
   }

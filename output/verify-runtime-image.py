@@ -78,7 +78,7 @@ result = subprocess.check_output([
     "docker", "run", "--rm", "--network=none", "--read-only",
     "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=128m,mode=1777",
     "--tmpfs", "/app/cache:rw,nosuid,nodev,noexec,size=16m,uid=10001,gid=10001",
-    "--cpus=2", "--memory=4g", "--entrypoint=/opt/ocr/bin/python",
+    "--cpus=4", "--memory=4g", "--entrypoint=/opt/ocr/bin/python",
     args.image, "-c", check,
 ], text=True)
 report = json.loads(result)
