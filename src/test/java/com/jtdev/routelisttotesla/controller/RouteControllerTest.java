@@ -206,6 +206,63 @@ class RouteControllerTest {
     }
 
     @Test
+    void validClientCoordinatesAndPlaceIdAreReGeocodedBeforeSending() throws Exception {
+        when(vehicles.vehicles(IDENTITY)).thenReturn(List.of(new TapVehicleClient.Vehicle(VIN, "test car", true, true)));
+        PlaceCandidate stale = unresolved("27220 Canfield St W Apt 212, Dearborn Heights, MI", "route.png", 0)
+                .withLatLonPid(42.3369816, -83.2732627, "old-city-pid");
+        PlaceCandidate fresh = stale.withLatLonPid(42.3533364, -83.3125193, "fresh-street-pid");
+        when(geocoder.batchGeocode(eq(OWNER), eq(List.of(stale)))).thenReturn(List.of(fresh));
+        when(navigation.sendManualRoute(IDENTITY, VIN, List.of(fresh), IDEMPOTENCY_KEY))
+                .thenReturn(new TapVehicleClient.CommandResult("PENDING", null, "pending"));
+
+        mvc.perform(post("/route/send/" + VIN)
+                        .with(csrf()).with(login())
+                        .header("Idempotency-Key", IDEMPOTENCY_KEY)
+                        .contentType("application/json")
+                        .content(mapper.writeValueAsString(new PlaceCandidatesResponse(List.of(stale)))))
+                .andExpect(status().isAccepted());
+
+        verify(geocoder).batchGeocode(OWNER, List.of(stale));
+        verify(navigation).sendManualRoute(IDENTITY, VIN, List.of(fresh), IDEMPOTENCY_KEY);
+    }
+
+    @Test
+    void unresolvedFreshGeocodePreventsSendingPreviouslyValidClientTuple() throws Exception {
+        when(vehicles.vehicles(IDENTITY)).thenReturn(List.of(new TapVehicleClient.Vehicle(VIN, "test car", true, true)));
+        PlaceCandidate stale = unresolved("27220 Canfield St W Apt 212, Dearborn Heights, MI", "route.png", 0)
+                .withLatLonPid(42.3369816, -83.2732627, "old-city-pid");
+        when(geocoder.batchGeocode(eq(OWNER), eq(List.of(stale))))
+                .thenReturn(List.of(stale.withLatLonPid(0, 0, null)));
+
+        mvc.perform(post("/route/send/" + VIN)
+                        .with(csrf()).with(login())
+                        .header("Idempotency-Key", IDEMPOTENCY_KEY)
+                        .contentType("application/json")
+                        .content(mapper.writeValueAsString(new PlaceCandidatesResponse(List.of(stale)))))
+                .andExpect(status().isBadRequest());
+
+        verify(geocoder).batchGeocode(OWNER, List.of(stale));
+        verify(navigation, never()).sendManualRoute(any(), anyString(), anyList(), anyString());
+    }
+
+    @Test
+    void unresolvedOcrIsRejectedBeforeFreshGeocoding() throws Exception {
+        when(vehicles.vehicles(IDENTITY)).thenReturn(List.of(new TapVehicleClient.Vehicle(VIN, "test car", true, true)));
+        PlaceCandidate requiresReview = new PlaceCandidate("review this address", "REVIEW THIS ADDRESS", "route.png",
+                0, 42.3369816, -83.2732627, "old-city-pid", 1, true, List.of("alternate reading"));
+
+        mvc.perform(post("/route/send/" + VIN)
+                        .with(csrf()).with(login())
+                        .header("Idempotency-Key", IDEMPOTENCY_KEY)
+                        .contentType("application/json")
+                        .content(mapper.writeValueAsString(new PlaceCandidatesResponse(List.of(requiresReview)))))
+                .andExpect(status().isBadRequest());
+
+        verify(geocoder, never()).batchGeocode(anyString(), anyList());
+        verify(navigation, never()).sendManualRoute(any(), anyString(), anyList(), anyString());
+    }
+
+    @Test
     void editedStopsAreGeocodedInOneOwnerBatchBeforeSending() throws Exception {
         when(vehicles.vehicles(IDENTITY)).thenReturn(List.of(new TapVehicleClient.Vehicle(VIN, "test car", true, true)));
         PlaceCandidate first = unresolved("same address", "first.png", 1);

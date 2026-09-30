@@ -1,5 +1,7 @@
 # Documentation
 
+- [Canfield geocoding diagnosis (2026-09-29)](geocoding-canfield-2026-09-29.md): city-result root cause, address validation, and stale-cache safeguards.
+
 - [GitHub Actions publishing](github-actions.md): main-branch image builds on the
   private TrueNAS runner and publication to GHCR.
 

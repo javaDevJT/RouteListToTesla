@@ -148,7 +148,7 @@ The EasyOCR detector is bounded to a 1280-pixel longest side and an 800,000-pixe
 working area. It returns boxes in original-image coordinates; Tesseract and
 PaddleOCR retain their existing preprocessing. This leaves memory for Spring
 inside the 4 GiB container. Image input limits and the 45-second OCR deadline
-remain unchanged. Extraction cache version `ocr-consensus-v3` invalidates older
+remain unchanged. Extraction cache version `ocr-consensus-v4` invalidates older
 readings without deleting saved routes. Bare clock fragments such as `10 PM`
 are excluded by the shared address parser; names such as `10 PM ROAD` remain
 address candidates.
@@ -171,6 +171,14 @@ address candidates.
 Image upload does not automatically dispatch vehicle commands. The reviewed send path requires usable coordinates and a Google place ID for every stop; unresolved stops remain visible and block sending rather than being silently omitted.
 
 ## Cache, geocoding, and route state
+
+Geocoding preserves the full reviewed address, including apartment/unit
+information, but resolves its primary street address. Broad city/road matches,
+partial matches, and mismatched house numbers remain unresolved. The separate
+`street-address-v1` geocoding policy version participates in image-cache keys.
+Reviewed addresses are resolved again before dispatch so older drafts and
+browser-supplied place IDs cannot bypass current validation.
+
 
 New cache identities include owner, extraction version, normalized default state, and image content hash.
 Legacy entries remain untouched and are not shared across owners. A changed default state cannot reuse

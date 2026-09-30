@@ -94,6 +94,8 @@ public class ImageCacheService {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             digest.update(AddressOcrService.EXTRACTION_VERSION.getBytes(StandardCharsets.UTF_8));
             digest.update((byte) 0);
+            digest.update(GeocodingClient.GEOCODING_VERSION.getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
             String language = ocrLanguage == null || ocrLanguage.isBlank() ? "eng" : ocrLanguage.trim();
             digest.update(language.getBytes(StandardCharsets.UTF_8));
             digest.update((byte) 0);

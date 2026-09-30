@@ -7,6 +7,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.net.InetSocketAddress;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -23,6 +24,161 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GeocodingClientTest {
+    @Test
+    void removesSecondaryUnitOnlyFromLookupAndPreservesOriginalCandidate() throws Exception {
+        List<String> lookupAddresses = Collections.synchronizedList(new ArrayList<>());
+        HttpServer server = server(exchange -> {
+            lookupAddresses.add(addressParameter(exchange));
+            respond(exchange, okAddress("canfield", "12345", "W SAMPLE ST", 42.3, -83.2, false));
+        });
+        server.start();
+        try {
+            GeocodingClient client = client(server, 10, 20, 2, 4);
+            String originalText = "12345 W SAMPLE ST APT 212, SAMPLE CITY, MI";
+            PlaceCandidate original = new PlaceCandidate(originalText, "OCR NORMALIZED WITH APT 212", "scan.png",
+                    4, 0, 0, null, 2, true, List.of("12345 W SAMPLE ST"));
+
+            PlaceCandidate result = client.batchGeocode("owner-a", List.of(original)).get(0);
+
+            assertEquals(List.of("12345 W SAMPLE ST, SAMPLE CITY, MI"), lookupAddresses);
+            assertEquals(originalText, result.text());
+            assertEquals(original.normalized(), result.normalized());
+            assertEquals(original.sourceImage(), result.sourceImage());
+            assertEquals(original.lineIndex(), result.lineIndex());
+            assertEquals(original.ocrAgreement(), result.ocrAgreement());
+            assertEquals(original.ocrReviewRequired(), result.ocrReviewRequired());
+            assertEquals(original.ocrAlternatives(), result.ocrAlternatives());
+            assertEquals("canfield", result.pid());
+            assertEquals(42.3, result.lat());
+            assertEquals(-83.2, result.lon());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void stripsKnownUnitFormsWithoutTreatingRoadNamesOrHouseNumbersAsUnits() throws Exception {
+        List<String> lookupAddresses = Collections.synchronizedList(new ArrayList<>());
+        HttpServer server = server(exchange -> {
+            lookupAddresses.add(addressParameter(exchange));
+            respond(exchange, "{\"status\":\"ZERO_RESULTS\",\"results\":[]}");
+        });
+        server.start();
+        try {
+            List<String> originals = List.of(
+                    "123 MAIN ST APARTMENT 3B, SAMPLE CITY, MI",
+                    "80 MAIN ST STE 4B, SAMPLE CITY, MI",
+                    "80 MAIN ST SUITE 5, SAMPLE CITY, MI",
+                    "22 MAIN ST UNIT 6, SAMPLE CITY, MI",
+                    "55 MAIN ST # 212, SAMPLE CITY, MI",
+                    "123 MAIN ST, APT 212, SAMPLE CITY, MI",
+                    "123 MAIN ST APT212, SAMPLE CITY, MI",
+                    "123 MAIN ST STE.2, SAMPLE CITY, MI",
+                    "33 UNIT ROAD, SAMPLE CITY, MI",
+                    "123 UNIT 5 ROAD, SAMPLE CITY, MI",
+                    "44 APARTMENT LANE, SAMPLE CITY, MI",
+                    "12 1/2 MAIN ST APT 5, SAMPLE CITY, MI",
+                    "12.5 MAIN ST APT 5, SAMPLE CITY, MI",
+                    "12A MAIN ST APT 5, SAMPLE CITY, MI");
+            List<String> expectedLookups = List.of(
+                    "123 MAIN ST, SAMPLE CITY, MI",
+                    "80 MAIN ST, SAMPLE CITY, MI",
+                    "80 MAIN ST, SAMPLE CITY, MI",
+                    "22 MAIN ST, SAMPLE CITY, MI",
+                    "55 MAIN ST, SAMPLE CITY, MI",
+                    "123 MAIN ST, SAMPLE CITY, MI",
+                    "123 MAIN ST, SAMPLE CITY, MI",
+                    "123 MAIN ST, SAMPLE CITY, MI",
+                    "33 UNIT ROAD, SAMPLE CITY, MI",
+                    "123 UNIT 5 ROAD, SAMPLE CITY, MI",
+                    "44 APARTMENT LANE, SAMPLE CITY, MI",
+                    "12 1/2 MAIN ST, SAMPLE CITY, MI",
+                    "12.5 MAIN ST, SAMPLE CITY, MI",
+                    "12A MAIN ST, SAMPLE CITY, MI");
+
+            List<PlaceCandidate> results = client(server, 20, 20, 2, 4).batchGeocode("owner-a",
+                    originals.stream().map(text -> place(text, "scan.png", 0)).toList());
+
+            assertEquals(expectedLookups, lookupAddresses);
+            assertEquals(originals, results.stream().map(PlaceCandidate::text).toList());
+            assertTrue(results.stream().allMatch(result -> result.pid() == null && result.lat() == 0 && result.lon() == 0));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void rejectsBroadPartialAndNonMatchingStreetResults() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = server(exchange -> {
+            int request = requests.incrementAndGet();
+            String response = switch (request) {
+                case 1 -> partialCityResult();
+                case 2 -> okAddress("partial-street", "12345", "W SAMPLE ST", 42.3, -83.2, true);
+                case 3 -> okAddress("missing-number", null, "W SAMPLE ST", 42.3, -83.2, false);
+                default -> okAddress("wrong-number", "12346", "W SAMPLE ST", 42.3, -83.2, false);
+            };
+            respond(exchange, response);
+        });
+        server.start();
+        try {
+            List<PlaceCandidate> results = client(server, 10, 20, 2, 4).batchGeocode("owner-a", List.of(
+                    place("12345 W SAMPLE ST APT 212, SAMPLE CITY, MI", "scan.png", 0),
+                    place("12345 W SAMPLE ST", "scan.png", 1),
+                    place("12345 W SAMPLE ST APT 213", "scan.png", 2),
+                    place("12345 W SAMPLE ST APT 214", "scan.png", 3)));
+
+            assertEquals(4, requests.get());
+            assertTrue(results.stream().allMatch(result -> result.pid() == null && result.lat() == 0 && result.lon() == 0));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void acceptsExactStreetAddressWithMatchingHouseNumber() throws Exception {
+        HttpServer server = server(exchange -> respond(exchange,
+                okAddress("exact-street", "12345", "W SAMPLE ST", 42.3, -83.2, false)));
+        server.start();
+        try {
+            PlaceCandidate result = client(server, 10, 20, 2, 4)
+                    .batchGeocode("owner-a", List.of(place("12345 W SAMPLE ST", "scan.png", 0))).get(0);
+
+            assertEquals("exact-street", result.pid());
+            assertEquals(42.3, result.lat());
+            assertEquals(-83.2, result.lon());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void rejectsOutOfRangeZeroCoordinatesAndInvalidPlaceIds() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = server(exchange -> {
+            String response = switch (requests.incrementAndGet()) {
+                case 1 -> okAddress("valid-id", "12345", "W SAMPLE ST", 91, -83.2, false);
+                case 2 -> okAddress("valid-id", "12345", "W SAMPLE ST", 42.3, -181, false);
+                case 3 -> okAddress("valid-id", "12345", "W SAMPLE ST", 0, 0, false);
+                default -> okAddress("invalid id", "12345", "W SAMPLE ST", 42.3, -83.2, false);
+            };
+            respond(exchange, response);
+        });
+        server.start();
+        try {
+            List<PlaceCandidate> results = client(server, 10, 20, 2, 4).batchGeocode("owner-a", List.of(
+                    place("12345 W SAMPLE ST APT 1", "scan.png", 0),
+                    place("12345 W SAMPLE ST APT 2", "scan.png", 1),
+                    place("12345 W SAMPLE ST APT 3", "scan.png", 2),
+                    place("12345 W SAMPLE ST APT 4", "scan.png", 3)));
+
+            assertEquals(4, requests.get());
+            assertTrue(results.stream().allMatch(result -> result.pid() == null && result.lat() == 0 && result.lon() == 0));
+        } finally {
+            server.stop(0);
+        }
+    }
+
     @Test
     void deduplicatesQueriesAndPreservesEveryStopInInputOrder() throws Exception {
         AtomicInteger requests = new AtomicInteger();
@@ -216,8 +372,31 @@ class GeocodingClientTest {
     }
 
     private static String ok(String id, double lat, double lon) {
-        return "{\"status\":\"OK\",\"results\":[{\"place_id\":\"" + id
-                + "\",\"geometry\":{\"location\":{\"lat\":" + lat + ",\"lng\":" + lon + "}}}]}";
+        return okAddress(id, "12345", "W SAMPLE ST", lat, lon, false);
+    }
+
+    private static String okAddress(String id, String streetNumber, String route, double lat, double lon,
+            boolean partialMatch) {
+        String houseNumberComponent = streetNumber == null ? "" : "{\"long_name\":\"" + streetNumber
+                + "\",\"short_name\":\"" + streetNumber + "\",\"types\":[\"street_number\"]},";
+        return "{\"status\":\"OK\",\"results\":[{\"place_id\":\"" + id + "\",\"partial_match\":"
+                + partialMatch + ",\"types\":[\"street_address\"],\"address_components\":["
+                + houseNumberComponent + "{\"long_name\":\"" + route + "\",\"short_name\":\"" + route
+                + "\",\"types\":[\"route\"]}],\"geometry\":{\"location\":{\"lat\":" + lat
+                + ",\"lng\":" + lon + "}}}]}";
+    }
+
+    private static String partialCityResult() {
+        return "{\"status\":\"OK\",\"results\":[{\"place_id\":\"city-center\","
+                + "\"partial_match\":true,\"types\":[\"locality\",\"political\"],"
+                + "\"address_components\":[{\"long_name\":\"Dearborn Heights\","
+                + "\"short_name\":\"Dearborn Heights\",\"types\":[\"locality\",\"political\"]}],"
+                + "\"geometry\":{\"location\":{\"lat\":42.3,\"lng\":-83.2}}}]}";
+    }
+
+    private static String addressParameter(com.sun.net.httpserver.HttpExchange exchange) {
+        String encodedAddress = exchange.getRequestURI().getRawQuery().split("&")[0].substring("address=".length());
+        return URLDecoder.decode(encodedAddress, StandardCharsets.UTF_8);
     }
 
     private static PlaceCandidate place(String text, String sourceImage, int lineIndex) {

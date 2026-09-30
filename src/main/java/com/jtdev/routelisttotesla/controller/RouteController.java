@@ -244,25 +244,18 @@ public class RouteController {
     private List<PlaceCandidate> resolveReviewed(PlaceCandidatesResponse request, int maximum, String owner) {
         if (request == null || request.candidates() == null || request.candidates().isEmpty()
                 || request.candidates().size() > maximum) throw new IllegalArgumentException("Choose 1 to " + maximum + " reviewed addresses");
-        List<PlaceCandidate> resolved = new ArrayList<>(request.candidates());
-        List<PlaceCandidate> pending = new ArrayList<>();
-        List<Integer> pendingIndexes = new ArrayList<>();
-        for (int index = 0; index < request.candidates().size(); index++) {
-            PlaceCandidate candidate = request.candidates().get(index);
+        List<PlaceCandidate> reviewed = request.candidates();
+        for (PlaceCandidate candidate : reviewed) {
             if (candidate == null || candidate.text() == null || candidate.text().isBlank() || candidate.text().length() > 1000) {
                 throw new IllegalArgumentException("Every stop must have address text");
             }
             if (candidate.ocrReviewRequired()) {
                 throw new IllegalArgumentException("Confirm or edit every unresolved OCR reading before sending a route");
             }
-            if (!hasCoordinates(candidate) || candidate.pid() == null || candidate.pid().isBlank()) {
-                pending.add(candidate);
-                pendingIndexes.add(index);
-            }
         }
-        List<PlaceCandidate> geocoded = geocoder.batchGeocode(owner, pending);
-        for (int i = 0; i < pendingIndexes.size(); i++) {
-            resolved.set(pendingIndexes.get(i), geocoded.get(i));
+        List<PlaceCandidate> resolved = geocoder.batchGeocode(owner, reviewed);
+        if (resolved == null || resolved.size() != reviewed.size()) {
+            throw new IllegalArgumentException("Every stop needs valid coordinates and Google place ID; unresolved stops cannot be skipped");
         }
         for (PlaceCandidate candidate : resolved) {
             if (!hasCoordinates(candidate) || candidate.pid() == null || !candidate.pid().matches("[A-Za-z0-9_-]{1,512}")) {

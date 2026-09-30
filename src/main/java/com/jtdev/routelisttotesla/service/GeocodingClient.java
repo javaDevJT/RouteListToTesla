@@ -4,6 +4,7 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import com.jtdev.routelisttotesla.model.PlaceCandidate;
+import com.jtdev.routelisttotesla.util.AddressExtractor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -22,19 +23,29 @@ import java.util.ArrayDeque;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 public class GeocodingClient {
+    public static final String GEOCODING_VERSION = "street-address-v1";
+
     private static final int DEFAULT_OWNER_CALLS_PER_HOUR = 1_000;
     private static final int DEFAULT_GLOBAL_CALLS_PER_HOUR = 2_000;
     private static final int DEFAULT_OWNER_CONCURRENT_BATCHES = 2;
     private static final int DEFAULT_GLOBAL_CONCURRENT_BATCHES = 4;
     private static final long DEFAULT_MINIMUM_DELAY_MILLIS = 60;
     private static final long HOUR_NANOS = TimeUnit.HOURS.toNanos(1);
+    private static final Pattern SECONDARY_UNIT = Pattern.compile(
+            "(?:(?:,\\s*|\\s+)" + AddressExtractor.UNIT_LABELS + "\\.?\\s*#?\\s*"
+                    + "(?:[A-Z]?\\d+[A-Z0-9-]*|[A-Z](?:-\\d+[A-Z]?)?)\\s*)+(?=,|$)",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern HOUSE_NUMBER = Pattern.compile("^(\\d+(?:\\s+\\d+/\\d+|[./-]\\d+)?[A-Z]?)\\b");
 
     private final String apiKey;
     private final String geocodeUrl;
@@ -172,7 +183,7 @@ public class GeocodingClient {
     }
 
     private PlaceCandidate geocodeOne(PlaceCandidate candidate) {
-        URI uri = URI.create(geocodeUrl + "?address=" + encode(candidate.text())
+        URI uri = URI.create(geocodeUrl + "?address=" + encode(withoutSecondaryUnit(candidate.text()))
                 + "&region=" + encode(regionBias) + "&key=" + encode(apiKey));
         HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(15)).GET().build();
         HttpResponse<String> response = sendWithGlobalPacing(request);
@@ -186,17 +197,73 @@ public class GeocodingClient {
         if (body == null) throw new IllegalStateException("Geocoding returned an empty response");
         String status = body.path("status").asString();
         if ("OK".equals(status) && body.path("results").isArray() && !body.path("results").isEmpty()) {
-            JsonNode match = body.path("results").get(0);
-            JsonNode location = match.path("geometry").path("location");
-            if (location.path("lat").isNumber() && location.path("lng").isNumber()) {
-                return candidate.withLatLonPid(location.path("lat").asDouble(), location.path("lng").asDouble(),
-                        match.path("place_id").asString(null));
+            String requestedHouseNumber = houseNumber(candidate.text());
+            for (JsonNode match : body.path("results")) {
+                boolean addressType = hasType(match, "street_address") || hasType(match, "premise")
+                        || hasType(match, "subpremise");
+                if (match.path("partial_match").asBoolean(false) || !addressType) continue;
+
+                String streetNumber = addressComponent(match, "street_number");
+                if (streetNumber == null || addressComponent(match, "route") == null
+                        || !houseNumbersMatch(requestedHouseNumber, streetNumber)) continue;
+
+                JsonNode location = match.path("geometry").path("location");
+                if (location.path("lat").isNumber() && location.path("lng").isNumber()) {
+                    double latitude = location.path("lat").asDouble();
+                    double longitude = location.path("lng").asDouble();
+                    String placeId = match.path("place_id").asString(null);
+                    if (Double.isFinite(latitude) && latitude >= -90 && latitude <= 90
+                            && Double.isFinite(longitude) && longitude >= -180 && longitude <= 180
+                            && (latitude != 0 || longitude != 0) && placeId != null
+                            && placeId.matches("[A-Za-z0-9_-]{1,512}")) {
+                        return candidate.withLatLonPid(latitude, longitude, placeId);
+                    }
+                }
             }
         } else if (!"ZERO_RESULTS".equals(status)) {
             throw new IllegalStateException("Geocoding failed; check API access and quota");
         }
         // Keep unresolved stops visible for review; never silently remove them.
         return candidate.withLatLonPid(0, 0, null);
+    }
+
+    private static String withoutSecondaryUnit(String address) {
+        return SECONDARY_UNIT.matcher(address).replaceFirst("")
+                .replaceAll("\\s+", " ")
+                .replaceAll("\\s*,\\s*", ", ")
+                .replaceAll("(?:,\\s*){2,}", ", ")
+                .replaceAll(",\\s*$", "")
+                .trim();
+    }
+
+    private static String houseNumber(String address) {
+        Matcher matcher = HOUSE_NUMBER.matcher(AddressExtractor.normalize(address));
+        return matcher.find() ? canonicalHouseNumber(matcher.group(1)) : null;
+    }
+
+    private static boolean houseNumbersMatch(String requested, String returned) {
+        return requested == null || requested.equals(canonicalHouseNumber(returned));
+    }
+
+    private static String canonicalHouseNumber(String value) {
+        return value.toUpperCase(Locale.ROOT).replaceAll("\\s+", "");
+    }
+
+    private static String addressComponent(JsonNode result, String type) {
+        for (JsonNode component : result.path("address_components")) {
+            if (hasType(component, type)) {
+                String name = component.path("long_name").asString(null);
+                if (name != null && !name.isBlank()) return name;
+            }
+        }
+        return null;
+    }
+
+    private static boolean hasType(JsonNode result, String type) {
+        for (JsonNode resultType : result.path("types")) {
+            if (type.equals(resultType.asString())) return true;
+        }
+        return false;
     }
 
     private static String encode(String value) {
