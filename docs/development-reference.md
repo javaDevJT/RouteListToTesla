@@ -172,10 +172,14 @@ Image upload does not automatically dispatch vehicle commands. The reviewed send
 
 ## Cache, geocoding, and route state
 
-Geocoding preserves the full reviewed address, including apartment/unit
-information, but resolves its primary street address. Broad city/road matches,
-partial matches, and mismatched house numbers remain unresolved. The separate
-`street-address-v1` geocoding policy version participates in image-cache keys.
+Geocoding first looks up the full reviewed address, including apartment/unit
+information. If it returns no acceptable destination, one fallback lookup omits
+the recognized unit suffix. Both attempts reject broad city/road matches,
+partial matches, mismatched house numbers, and invalid coordinates or place IDs.
+Stops remain unresolved if neither attempt succeeds; their original text is
+preserved. Provider/service errors propagate without address retries. Fallback
+calls use the existing pacing and count against owner/global quotas only when
+needed. The `street-address-v2` policy version participates in image-cache keys.
 Reviewed addresses are resolved again before dispatch so older drafts and
 browser-supplied place IDs cannot bypass current validation.
 

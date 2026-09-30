@@ -33,7 +33,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class GeocodingClient {
-    public static final String GEOCODING_VERSION = "street-address-v1";
+    public static final String GEOCODING_VERSION = "street-address-v2";
 
     private static final int DEFAULT_OWNER_CALLS_PER_HOUR = 1_000;
     private static final int DEFAULT_GLOBAL_CALLS_PER_HOUR = 2_000;
@@ -107,11 +107,11 @@ public class GeocodingClient {
             uniqueQueries.putIfAbsent(candidate.text(), candidate);
         }
 
-        reserve(owner, uniqueQueries.size());
+        reserve(owner, uniqueQueries.size(), true);
         try {
             Map<String, PlaceCandidate> resultsByQuery = new HashMap<>();
             for (Map.Entry<String, PlaceCandidate> query : uniqueQueries.entrySet()) {
-                resultsByQuery.put(query.getKey(), geocodeOne(query.getValue()));
+                resultsByQuery.put(query.getKey(), geocodeOne(owner, query.getValue()));
             }
             return inputs.stream().map(candidate -> {
                 PlaceCandidate result = resultsByQuery.get(candidate.text());
@@ -122,7 +122,7 @@ public class GeocodingClient {
         }
     }
 
-    private void reserve(String owner, int calls) {
+    private void reserve(String owner, int calls, boolean newBatch) {
         long now = System.nanoTime();
         synchronized (budgetLock) {
             globalUsage.prune(now);
@@ -135,14 +135,16 @@ public class GeocodingClient {
             int activeForOwner = activeOwnerBatches.getOrDefault(owner, 0);
             if (calls > ownerCallsPerHour || calls > globalCallsPerHour
                     || account.calls + calls > ownerCallsPerHour || globalUsage.calls + calls > globalCallsPerHour
-                    || activeForOwner >= ownerConcurrentBatches || activeGlobalBatches >= globalConcurrentBatches) {
+                    || (newBatch && (activeForOwner >= ownerConcurrentBatches || activeGlobalBatches >= globalConcurrentBatches))) {
                 throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
                         "Geocoding rate or concurrency limit exceeded; retry later");
             }
             account.reserve(now, calls);
             globalUsage.reserve(now, calls);
-            activeOwnerBatches.put(owner, activeForOwner + 1);
-            activeGlobalBatches++;
+            if (newBatch) {
+                activeOwnerBatches.put(owner, activeForOwner + 1);
+                activeGlobalBatches++;
+            }
         }
     }
 
@@ -182,8 +184,16 @@ public class GeocodingClient {
         }
     }
 
-    private PlaceCandidate geocodeOne(PlaceCandidate candidate) {
-        URI uri = URI.create(geocodeUrl + "?address=" + encode(withoutSecondaryUnit(candidate.text()))
+    private PlaceCandidate geocodeOne(String owner, PlaceCandidate candidate) {
+        PlaceCandidate resolved = lookup(candidate, candidate.text());
+        String primaryAddress = withoutSecondaryUnit(candidate.text());
+        if (resolved.pid() != null || primaryAddress.equals(candidate.text())) return resolved;
+        reserve(owner, 1, false);
+        return lookup(candidate, primaryAddress);
+    }
+
+    private PlaceCandidate lookup(PlaceCandidate candidate, String address) {
+        URI uri = URI.create(geocodeUrl + "?address=" + encode(address)
                 + "&region=" + encode(regionBias) + "&key=" + encode(apiKey));
         HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(15)).GET().build();
         HttpResponse<String> response = sendWithGlobalPacing(request);
@@ -196,7 +206,7 @@ public class GeocodingClient {
         }
         if (body == null) throw new IllegalStateException("Geocoding returned an empty response");
         String status = body.path("status").asString();
-        if ("OK".equals(status) && body.path("results").isArray() && !body.path("results").isEmpty()) {
+        if ("OK".equals(status) && body.path("results").isArray()) {
             String requestedHouseNumber = houseNumber(candidate.text());
             for (JsonNode match : body.path("results")) {
                 boolean addressType = hasType(match, "street_address") || hasType(match, "premise")
@@ -228,7 +238,9 @@ public class GeocodingClient {
     }
 
     private static String withoutSecondaryUnit(String address) {
-        return SECONDARY_UNIT.matcher(address).replaceFirst("")
+        Matcher unit = SECONDARY_UNIT.matcher(address);
+        if (!unit.find()) return address;
+        return unit.replaceFirst("")
                 .replaceAll("\\s+", " ")
                 .replaceAll("\\s*,\\s*", ", ")
                 .replaceAll("(?:,\\s*){2,}", ", ")

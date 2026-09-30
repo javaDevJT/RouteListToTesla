@@ -25,22 +25,173 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GeocodingClientTest {
     @Test
-    void removesSecondaryUnitOnlyFromLookupAndPreservesOriginalCandidate() throws Exception {
-        List<String> lookupAddresses = Collections.synchronizedList(new ArrayList<>());
+    void cityMatchFallsBackWithinTheSameBatchAndPreservesDuplicateStops() throws Exception {
+        List<String> lookups = Collections.synchronizedList(new ArrayList<>());
+        List<Long> starts = Collections.synchronizedList(new ArrayList<>());
         HttpServer server = server(exchange -> {
-            lookupAddresses.add(addressParameter(exchange));
-            respond(exchange, okAddress("canfield", "12345", "W SAMPLE ST", 42.3, -83.2, false));
+            starts.add(System.nanoTime());
+            lookups.add(addressParameter(exchange));
+            respond(exchange, addressParameter(exchange).contains("APT") ? partialCityResult()
+                    : okAddress("street-address", "12345", "W SAMPLE ST", 42.3, -83.2, false));
         });
         server.start();
         try {
-            GeocodingClient client = client(server, 10, 20, 2, 4);
+            String full = "12345 W SAMPLE ST APT 212, SAMPLE CITY, MI";
+            GeocodingClient client = new GeocodingClient("test-key",
+                    "http://localhost:" + server.getAddress().getPort() + "/geocode", "us", 3, 3, 1, 1, 60);
+            assertEquals("street-address", client.batchGeocode("owner-a",
+                    List.of(place("12345 W SAMPLE ST", "warmup.png", 0))).getFirst().pid());
+            lookups.clear();
+            starts.clear();
+            List<PlaceCandidate> result = client.batchGeocode("owner-a", List.of(
+                    place(full, "a.png", 4), place(full, "b.png", 7)));
+
+            assertEquals(List.of(full, "12345 W SAMPLE ST, SAMPLE CITY, MI"), lookups);
+            assertEquals(List.of(full, full), result.stream().map(PlaceCandidate::text).toList());
+            assertEquals(List.of("a.png", "b.png"), result.stream().map(PlaceCandidate::sourceImage).toList());
+            assertEquals(List.of(4, 7), result.stream().map(PlaceCandidate::lineIndex).toList());
+            assertTrue(result.stream().allMatch(candidate -> "street-address".equals(candidate.pid())));
+            assertTrue(TimeUnit.NANOSECONDS.toMillis(starts.get(1) - starts.get(0)) >= 50);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void missingOrRejectedApartmentMatchFallsBackToAnAcceptedStreetAddress() throws Exception {
+        List<String> rejected = List.of(
+                "{\"status\":\"ZERO_RESULTS\",\"results\":[]}",
+                "{\"status\":\"OK\",\"results\":[]}",
+                okAddress("partial", "12345", "W SAMPLE ST", 42.3, -83.2, true),
+                okAddress("wrong-house", "12346", "W SAMPLE ST", 42.3, -83.2, false),
+                okAddress("missing-number", null, "W SAMPLE ST", 42.3, -83.2, false),
+                okAddress("invalid-geometry", "12345", "W SAMPLE ST", 91, -83.2, false),
+                okAddress("invalid id", "12345", "W SAMPLE ST", 42.3, -83.2, false));
+        AtomicInteger requests = new AtomicInteger();
+        List<String> lookups = Collections.synchronizedList(new ArrayList<>());
+        HttpServer server = server(exchange -> {
+            int request = requests.getAndIncrement();
+            lookups.add(addressParameter(exchange));
+            respond(exchange, request % 2 == 0 ? rejected.get(request / 2)
+                    : okAddress("accepted", "12345", "W SAMPLE ST", 42.3, -83.2, false));
+        });
+        server.start();
+        try {
+            List<PlaceCandidate> inputs = new ArrayList<>();
+            List<String> expected = new ArrayList<>();
+            for (int index = 0; index < rejected.size(); index++) {
+                String full = "12345 W SAMPLE ST APT " + index + ", SAMPLE CITY, MI";
+                inputs.add(place(full, "scan.png", index));
+                expected.add(full);
+                expected.add("12345 W SAMPLE ST, SAMPLE CITY, MI");
+            }
+            List<PlaceCandidate> result = client(server, 20, 20, 1, 1).batchGeocode("owner-a", inputs);
+            assertEquals(expected, lookups);
+            assertTrue(result.stream().allMatch(candidate -> "accepted".equals(candidate.pid())));
+            assertEquals(inputs.stream().map(PlaceCandidate::text).toList(), result.stream().map(PlaceCandidate::text).toList());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void retriesOnlyOnceAndDoesNotRetryAnAddressWithoutAUnit() throws Exception {
+        List<String> lookups = Collections.synchronizedList(new ArrayList<>());
+        HttpServer server = server(exchange -> {
+            lookups.add(addressParameter(exchange));
+            respond(exchange, "{\"status\":\"ZERO_RESULTS\",\"results\":[]}");
+        });
+        server.start();
+        try {
+            String full = "12345 W SAMPLE ST APT 212, SAMPLE CITY, MI";
+            String noUnit = "12345 W SAMPLE ST  , SAMPLE CITY, MI";
+            List<PlaceCandidate> result = client(server, 3, 3, 1, 1).batchGeocode("owner-a",
+                    List.of(place(full, "a.png", 0), place(noUnit, "b.png", 1)));
+            assertEquals(List.of(full, "12345 W SAMPLE ST, SAMPLE CITY, MI", noUnit), lookups);
+            assertTrue(result.stream().allMatch(candidate -> candidate.pid() == null && candidate.lat() == 0 && candidate.lon() == 0));
+            assertEquals(List.of(full, noUnit), result.stream().map(PlaceCandidate::text).toList());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void providerFailuresDoNotTriggerAddressFallbacks() throws Exception {
+        List<String> failures = List.of(
+                "{\"status\":\"REQUEST_DENIED\",\"results\":[]}",
+                "{\"status\":\"OVER_QUERY_LIMIT\",\"results\":[]}",
+                "{\"status\":\"UNKNOWN_ERROR\",\"results\":[]}",
+                "{\"status\":\"OK\"}", "invalid-json", "service-unavailable");
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = server(exchange -> {
+            int request = requests.getAndIncrement();
+            if (request == failures.size() - 1) {
+                byte[] bytes = failures.get(request).getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(503, bytes.length);
+                exchange.getResponseBody().write(bytes);
+                exchange.close();
+            } else {
+                respond(exchange, failures.get(request));
+            }
+        });
+        server.start();
+        try {
+            GeocodingClient client = client(server, 20, 20, 1, 1);
+            for (int index = 0; index < failures.size(); index++) {
+                PlaceCandidate input = place("12345 W SAMPLE ST APT " + index, "scan.png", index);
+                assertThrows(IllegalStateException.class, () -> client.batchGeocode("owner-a", List.of(input)));
+                assertEquals(index + 1, requests.get());
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void fallbackHonorsOwnerAndGlobalCallBudgetsAndReleasesTheBatchSlot() throws Exception {
+        for (int[] limits : List.of(new int[]{1, 5}, new int[]{5, 1})) {
+            AtomicInteger requests = new AtomicInteger();
+            HttpServer server = server(exchange -> {
+                requests.incrementAndGet();
+                respond(exchange, addressParameter(exchange).contains("APT") ? partialCityResult()
+                        : okAddress("street-address", "12345", "W SAMPLE ST", 42.3, -83.2, false));
+            });
+            server.start();
+            try {
+                GeocodingClient client = client(server, limits[0], limits[1], 1, 1);
+                ResponseStatusException rejected = assertThrows(ResponseStatusException.class, () -> client.batchGeocode(
+                        "owner-a", List.of(place("12345 W SAMPLE ST APT 212", "scan.png", 0))));
+                assertEquals(HttpStatus.TOO_MANY_REQUESTS, rejected.getStatusCode());
+                assertEquals(1, requests.get());
+                if (limits[1] > 1) {
+                    assertEquals("street-address", client.batchGeocode("owner-b",
+                            List.of(place("12345 W SAMPLE ST", "scan.png", 0))).getFirst().pid());
+                    assertEquals(2, requests.get());
+                }
+            } finally {
+                server.stop(0);
+            }
+        }
+    }
+
+    @Test
+    void usesFullApartmentAddressWhenItMatchesAndPreservesOriginalCandidate() throws Exception {
+        List<String> lookupAddresses = Collections.synchronizedList(new ArrayList<>());
+        HttpServer server = server(exchange -> {
+            lookupAddresses.add(addressParameter(exchange));
+            respond(exchange, okAddress("apartment-address", "12345", "W SAMPLE ST", 42.3, -83.2, false)
+                    .replace("\"street_address\"", "\"subpremise\""));
+        });
+        server.start();
+        try {
+            GeocodingClient client = client(server, 1, 1, 1, 1);
             String originalText = "12345 W SAMPLE ST APT 212, SAMPLE CITY, MI";
             PlaceCandidate original = new PlaceCandidate(originalText, "OCR NORMALIZED WITH APT 212", "scan.png",
                     4, 0, 0, null, 2, true, List.of("12345 W SAMPLE ST"));
 
             PlaceCandidate result = client.batchGeocode("owner-a", List.of(original)).get(0);
 
-            assertEquals(List.of("12345 W SAMPLE ST, SAMPLE CITY, MI"), lookupAddresses);
+            assertEquals(List.of(originalText), lookupAddresses);
             assertEquals(originalText, result.text());
             assertEquals(original.normalized(), result.normalized());
             assertEquals(original.sourceImage(), result.sourceImage());
@@ -48,7 +199,7 @@ class GeocodingClientTest {
             assertEquals(original.ocrAgreement(), result.ocrAgreement());
             assertEquals(original.ocrReviewRequired(), result.ocrReviewRequired());
             assertEquals(original.ocrAlternatives(), result.ocrAlternatives());
-            assertEquals("canfield", result.pid());
+            assertEquals("apartment-address", result.pid());
             assertEquals(42.3, result.lat());
             assertEquals(-83.2, result.lon());
         } finally {
@@ -96,10 +247,17 @@ class GeocodingClientTest {
                     "12.5 MAIN ST, SAMPLE CITY, MI",
                     "12A MAIN ST, SAMPLE CITY, MI");
 
-            List<PlaceCandidate> results = client(server, 20, 20, 2, 4).batchGeocode("owner-a",
+            List<String> expectedRequests = new ArrayList<>();
+            for (int index = 0; index < originals.size(); index++) {
+                expectedRequests.add(originals.get(index));
+                if (!originals.get(index).equals(expectedLookups.get(index))) {
+                    expectedRequests.add(expectedLookups.get(index));
+                }
+            }
+            List<PlaceCandidate> results = client(server, 40, 40, 2, 4).batchGeocode("owner-a",
                     originals.stream().map(text -> place(text, "scan.png", 0)).toList());
 
-            assertEquals(expectedLookups, lookupAddresses);
+            assertEquals(expectedRequests, lookupAddresses);
             assertEquals(originals, results.stream().map(PlaceCandidate::text).toList());
             assertTrue(results.stream().allMatch(result -> result.pid() == null && result.lat() == 0 && result.lon() == 0));
         } finally {
@@ -123,10 +281,10 @@ class GeocodingClientTest {
         server.start();
         try {
             List<PlaceCandidate> results = client(server, 10, 20, 2, 4).batchGeocode("owner-a", List.of(
-                    place("12345 W SAMPLE ST APT 212, SAMPLE CITY, MI", "scan.png", 0),
+                    place("12345 W SAMPLE ST, SAMPLE CITY, MI", "scan.png", 0),
                     place("12345 W SAMPLE ST", "scan.png", 1),
-                    place("12345 W SAMPLE ST APT 213", "scan.png", 2),
-                    place("12345 W SAMPLE ST APT 214", "scan.png", 3)));
+                    place("12345 W SAMPLE ST, SECOND CITY, MI", "scan.png", 2),
+                    place("12345 W SAMPLE ST, THIRD CITY, MI", "scan.png", 3)));
 
             assertEquals(4, requests.get());
             assertTrue(results.stream().allMatch(result -> result.pid() == null && result.lat() == 0 && result.lon() == 0));
@@ -167,10 +325,10 @@ class GeocodingClientTest {
         server.start();
         try {
             List<PlaceCandidate> results = client(server, 10, 20, 2, 4).batchGeocode("owner-a", List.of(
-                    place("12345 W SAMPLE ST APT 1", "scan.png", 0),
-                    place("12345 W SAMPLE ST APT 2", "scan.png", 1),
-                    place("12345 W SAMPLE ST APT 3", "scan.png", 2),
-                    place("12345 W SAMPLE ST APT 4", "scan.png", 3)));
+                    place("12345 W SAMPLE ST, FIRST CITY, MI", "scan.png", 0),
+                    place("12345 W SAMPLE ST, SECOND CITY, MI", "scan.png", 1),
+                    place("12345 W SAMPLE ST, THIRD CITY, MI", "scan.png", 2),
+                    place("12345 W SAMPLE ST, FOURTH CITY, MI", "scan.png", 3)));
 
             assertEquals(4, requests.get());
             assertTrue(results.stream().allMatch(result -> result.pid() == null && result.lat() == 0 && result.lon() == 0));
