@@ -57,8 +57,11 @@ test('release hardens the router and joins only the existing NPM bridge', () => 
   assert.equal(config.services.router.image, image);
   assert.equal(Object.hasOwn(config.services.router, 'ports'), false);
   assert.equal(config.services.router.user, '10001:10001');
-    assert.equal(config.services.router.mem_limit, '4g');
-    assert.equal(config.services.router.cpus, 4);
+  assert.equal(config.services.router.mem_limit, '8g');
+  assert.equal(config.services.router.cpus, 8);
+  for (const key of ['OMP_THREAD_LIMIT', 'OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS']) {
+    assert.equal(config.services.router.environment[key], '2');
+  }
   assert.equal(config.services.router.read_only, true);
   assert.deepEqual(config.services.router.tmpfs, ['/tmp:rw,nosuid,nodev,size=256m,mode=1777']);
   assert.deepEqual(config.services.router.cap_drop, ['ALL']);

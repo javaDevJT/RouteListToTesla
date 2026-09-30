@@ -65,8 +65,10 @@ existing geocoding settings as described in [TAP setup](OAUTH_SETUP.md) and the
 
 ## Deployment
 
-The parallel OCR release uses four CPUs and 4 GiB RAM. Its native qualification
-reports and implementation checks are recorded in the development reference.
+The OCR release configuration uses eight CPUs, 8 GiB RAM, and two compute threads
+per engine. Native qualification,
+route-code filtering, and speed comparisons are recorded in the
+[September 30 OCR report](docs/ocr-route-codes-2026-09-30.md).
 The runtime and benchmark details below describe the September 28 release.
 
 Image builds and publication are automated on pushes to `main` using the private

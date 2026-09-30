@@ -30,7 +30,11 @@ const REMOVED_ENV = Object.freeze([
 const OCR_ENV = Object.freeze({
   OCR_TESSERACT_EXECUTABLE: '/app/ocr/run',
   OCR_MODEL_MANIFEST: '/app/ocr/models.json',
-  OCR_LANGUAGE: 'eng'
+  OCR_LANGUAGE: 'eng',
+  OMP_THREAD_LIMIT: '2',
+  OMP_NUM_THREADS: '2',
+  OPENBLAS_NUM_THREADS: '2',
+  MKL_NUM_THREADS: '2'
 });
 const CACHE_PERMISSION_SERVICE = 'cache-permissions';
 const CACHE_PERMISSION_DEPENDENCY = Object.freeze({ condition: 'service_completed_successfully' });
@@ -109,8 +113,8 @@ export function buildReleaseConfig(currentConfig, { image, release, authEnvironm
   config.services.router.image = image;
   delete config.services.router.ports;
   config.services.router.user = '10001:10001';
-    config.services.router.mem_limit = '4g';
-    config.services.router.cpus = 4;
+  config.services.router.mem_limit = '8g';
+  config.services.router.cpus = 8;
   config.services.router.read_only = true;
   config.services.router.tmpfs = ['/tmp:rw,nosuid,nodev,size=256m,mode=1777'];
   config.services.router.cap_drop = ['ALL'];

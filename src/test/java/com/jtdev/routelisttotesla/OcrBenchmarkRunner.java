@@ -77,6 +77,7 @@ public class OcrBenchmarkRunner {
                 }
             } catch (Exception e) {
                 result.put("error", e.getClass().getSimpleName() + ": " + e.getMessage());
+                result.put("errorCause", Objects.toString(e.getCause(), ""));
             } finally {
                 result.put("elapsedMs", (System.nanoTime() - started) / 1_000_000.0);
             }

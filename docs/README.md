@@ -1,5 +1,7 @@
 # Documentation
 
+- [Route-code filtering and native OCR capacity (2026-09-30)](ocr-route-codes-2026-09-30.md): hash metadata filtering, unit preservation, quality and speed comparisons, release evidence.
+
 - [Canfield geocoding diagnosis (2026-09-29)](geocoding-canfield-2026-09-29.md): city-result root cause, address validation, and stale-cache safeguards.
 
 - [GitHub Actions publishing](github-actions.md): main-branch image builds on the

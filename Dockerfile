@@ -52,7 +52,7 @@ COPY --chmod=0755 ocr/run /app/ocr/run
 
 ENV JAVA_HOME=/opt/java PATH="/opt/java/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
-    OMP_THREAD_LIMIT=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+    OMP_THREAD_LIMIT=2 OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 \
     OCR_TESSERACT_EXECUTABLE=/app/ocr/run OCR_MODEL_MANIFEST=/app/ocr/models.json
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.source="https://github.com/javaDevJT/RouteListToTesla" \

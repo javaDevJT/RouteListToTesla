@@ -44,7 +44,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class AddressOcrService {
-    public static final String EXTRACTION_VERSION = "ocr-consensus-v4";
+    public static final String EXTRACTION_VERSION = "ocr-consensus-v5";
 
     static final int MAX_IMAGE_BYTES = 12 * 1024 * 1024;
     static final long MAX_IMAGE_PIXELS = 20_000_000L;

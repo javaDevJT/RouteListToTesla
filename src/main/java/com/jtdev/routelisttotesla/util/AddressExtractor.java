@@ -23,6 +23,8 @@ public class AddressExtractor {
     private static final Pattern HOUSE_NUMBER = Pattern.compile(
             "(?i)^(?=[^\\s]*[0-9])(?:[0-9OQDIILSZB]{2,}(?:-[0-9A-Z]{1,6})?|[0-9][A-Z]?(?:-[0-9A-Z]{1,6})?)(?:" + FRACTION_GLYPH + ")?$");
     private static final Pattern LEADING_OCR_DECORATION = Pattern.compile("^(?:[\\p{P}\\p{S}]\\s*)+(?=\\d)");
+    private static final Pattern ROUTE_CODE_LINE = Pattern.compile(
+            "^[#＃].*|^[\\p{L}\\p{N}]+(?:\\s*[._]\\s*[\\p{L}\\p{N}]+)+$");
     private static final Pattern COMPACT_DIRECTIONAL_MILE_ROAD = Pattern.compile(
             "(?i)^(\\d{1,6})\\s*([NSEW])\\s*(\\d{1,2})(?=\\s*MILE\\b)");
     private static final Pattern COMPACT_DIRECTIONAL_PREFIX = Pattern.compile("(?i)^(\\d{1,6})([NSEW])(?=\\s|$)");
@@ -101,7 +103,11 @@ public class AddressExtractor {
 
     public static String addressCandidateText(String text) {
         if (text == null || text.isBlank()) return null;
-        String candidateText = LEADING_OCR_DECORATION.matcher(text.trim()).replaceFirst("");
+        String originalText = text.trim();
+        String candidateText = LEADING_OCR_DECORATION.matcher(originalText).replaceFirst("");
+        // Keep hash-decorated street addresses; codes and standalone units are not street rows.
+        if (ROUTE_CODE_LINE.matcher(originalText).matches()
+                && (candidateText.equals(originalText) || !containsStreetType(candidateText))) return null;
         if (LEADING_CLOCK.matcher(candidateText).find()) return null;
         Matcher compactDirectional = COMPACT_DIRECTIONAL_MILE_ROAD.matcher(candidateText);
         if (compactDirectional.find() && containsStreetType(candidateText)) {

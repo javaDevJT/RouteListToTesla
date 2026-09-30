@@ -32,6 +32,26 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AddressOcrServiceTest {
+
+    @Test
+    void skipsItineraryCodesBeforeAddressesAndPreservesInlineAndWrappedHashUnits() throws Exception {
+        String tsv = tsv(
+                word(1, 1, 95, "Expected by 11:00 PM"),
+                word(2, 1, 95, "# B.L28. OV"),
+                word(3, 1, 95, "123 MAIN ST #212"),
+                word(4, 1, 95, "FLINT"),
+                word(5, 1, 95, "Deliver 1 package"),
+                word(6, 1, 95, "Expected by 11:00 PM"),
+                word(7, 1, 95, "FR.038"),
+                word(8, 1, 95, "89 OAK RD"),
+                word(9, 1, 95, "#3B"),
+                word(10, 1, 95, "BURTON"));
+        AddressOcrService service = new AddressOcrService("ocr-binary", "eng",
+                arguments -> new AddressOcrService.ProcessResult(0, tsv, ""));
+        assertEquals(List.of("123 MAIN ST #212, FLINT, MI", "89 OAK RD #3B, BURTON, MI"),
+                service.extractAddressCandidates(png(), "route.png", "MI")
+                        .stream().map(PlaceCandidate::text).toList());
+    }
     private static final String TSV_HEADER =
             "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext";
 

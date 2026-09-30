@@ -123,7 +123,7 @@ def easy_lines(path: str, manifest: dict) -> list[Line]:
     from PIL import Image
     import torch
     import easyocr
-    torch.set_num_threads(1)
+    torch.set_num_threads(2)
     torch.set_num_interop_threads(1)
     directory = manifest["easyocr_model_directory"]
     engine = easyocr.Reader(["en"], gpu=False, verbose=False, download_enabled=False,

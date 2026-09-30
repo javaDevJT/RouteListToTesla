@@ -4,6 +4,10 @@ TAP-managed sign-in and stable-subject authorization replace independent Google 
 
 ## Source flow
 
+### September 30 route-code filtering
+
+The shared `AddressExtractor.addressCandidateText` rejects hash-prefixed itinerary metadata and standalone dotted/underscored identifiers before scanning for house numbers. OCR can turn a route-code token into an apparent house number. A hash used as OCR decoration remains valid when it directly precedes a numeric street address with a recognized street type. Inline and wrapped units such as `123 MAIN ST #212` remain supported. Extraction version `ocr-consensus-v5` invalidates screenshot entries produced by the older parser without deleting saved routes or cache storage. See [native OCR capacity evidence](ocr-route-codes-2026-09-30.md).
+
 ### September 29 OCR concurrency and screenshot overlap release
 
 Primary owns address merging, deployment limits, integration checks, and release.
@@ -88,8 +92,10 @@ as UID/GID 10001 and contains neither Maven nor the Java compiler. OCR dependenc
 and checksum-verified models are prepared separately using Python 3.14. The
 runtime needs writable `/app/cache` and `/tmp`; production uses a retained data
 volume and a temporary filesystem with a read-only image filesystem. The release
-configuration and qualification harness use four CPUs and the user-approved 4 GiB
-memory limit. The OCR subprocess deadline remains 45 seconds.
+configuration and candidate qualification harness use eight CPUs and an 8 GiB
+memory limit. OCR uses two Torch/OpenMP/BLAS compute threads while Torch interop
+stays at one. All three engines still run in parallel; preprocessing, quality
+gates, admission control, and the 45-second OCR subprocess deadline are unchanged.
 
 Use native amd64 hardware for OCR performance qualification. Running this amd64
 image on Apple Silicon uses emulation and does not establish production timings.
@@ -147,8 +153,8 @@ Run decoder tests inside the release image: mount `ocr/` read-only at `/tests`, 
 The EasyOCR detector is bounded to a 1280-pixel longest side and an 800,000-pixel
 working area. It returns boxes in original-image coordinates; Tesseract and
 PaddleOCR retain their existing preprocessing. This leaves memory for Spring
-inside the 4 GiB container. Image input limits and the 45-second OCR deadline
-remain unchanged. Extraction cache version `ocr-consensus-v4` invalidates older
+inside the 8 GiB container. Image input limits and the 45-second OCR deadline
+remain unchanged. Extraction cache version `ocr-consensus-v5` invalidates older
 readings without deleting saved routes. Bare clock fragments such as `10 PM`
 are excluded by the shared address parser; names such as `10 PM ROAD` remain
 address candidates.

@@ -6,6 +6,26 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.util.List;
 
 public class AddressExtractorTest {
+    @Test
+    void routeCodesAreNotHouseNumbersAndHashUnitsRemainAddresses() {
+        for (String code : List.of("# FR.038", "# B.L28.OV", "# B.L28.0V",
+                "# B L28 OV", "# 8 L28 OV", "# UNASSIGNED_SORT_LOCATION",
+                "＃ B L28 OV", "# B.L28. OV", "B.L28.OV", "B . L28 . OV", "L28. OV", "FR.038")) {
+            assertNull(AddressExtractor.addressCandidateText(code), code);
+        }
+        assertEquals("123 MAIN ST #212", AddressExtractor.addressCandidateText("123 MAIN ST #212"));
+        assertEquals("23491 TEACUP CT", AddressExtractor.addressCandidateText("# 23491 TEACUP CT"));
+        assertEquals("12 1/2 MAIN RD", AddressExtractor.addressCandidateText("＃ 12 1/2 MAIN RD"));
+        assertEquals("123 MAIN ST APT #212", AddressExtractor.addressCandidateText("123 MAIN ST APT #212"));
+        assertEquals(List.of("123 MAIN ST #212, FLINT, MI"), AddressExtractor.addressLinesFromPlainJoined("""
+                Expected by 11:00 PM
+                # B.L28.OV
+                123 MAIN ST
+                #212
+                FLINT
+                """, "MI"));
+    }
+
 
     @Test
     public void testAddressExtractionWithTruncatedUnits() {
