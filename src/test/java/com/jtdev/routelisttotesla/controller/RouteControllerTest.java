@@ -208,7 +208,7 @@ class RouteControllerTest {
     @Test
     void validClientCoordinatesAndPlaceIdAreReGeocodedBeforeSending() throws Exception {
         when(vehicles.vehicles(IDENTITY)).thenReturn(List.of(new TapVehicleClient.Vehicle(VIN, "test car", true, true)));
-        PlaceCandidate stale = unresolved("27220 Canfield St W Apt 212, Dearborn Heights, MI", "route.png", 0)
+        PlaceCandidate stale = unresolved("12345 Sample St W Apt 212, Sample City, MI", "route.png", 0)
                 .withLatLonPid(42.3369816, -83.2732627, "old-city-pid");
         PlaceCandidate fresh = stale.withLatLonPid(42.3533364, -83.3125193, "fresh-street-pid");
         when(geocoder.batchGeocode(eq(OWNER), eq(List.of(stale)))).thenReturn(List.of(fresh));
@@ -229,7 +229,7 @@ class RouteControllerTest {
     @Test
     void unresolvedFreshGeocodePreventsSendingPreviouslyValidClientTuple() throws Exception {
         when(vehicles.vehicles(IDENTITY)).thenReturn(List.of(new TapVehicleClient.Vehicle(VIN, "test car", true, true)));
-        PlaceCandidate stale = unresolved("27220 Canfield St W Apt 212, Dearborn Heights, MI", "route.png", 0)
+        PlaceCandidate stale = unresolved("12345 Sample St W Apt 212, Sample City, MI", "route.png", 0)
                 .withLatLonPid(42.3369816, -83.2732627, "old-city-pid");
         when(geocoder.batchGeocode(eq(OWNER), eq(List.of(stale))))
                 .thenReturn(List.of(stale.withLatLonPid(0, 0, null)));
