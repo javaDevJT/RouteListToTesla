@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -239,7 +240,10 @@ class RouteControllerTest {
                         .header("Idempotency-Key", IDEMPOTENCY_KEY)
                         .contentType("application/json")
                         .content(mapper.writeValueAsString(new PlaceCandidatesResponse(List.of(stale)))))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.state").value("NOT_SENT"))
+                .andExpect(jsonPath("$.accepted").value(false))
+                .andExpect(jsonPath("$.message").value("Stop 1 could not be matched to a street address. Check its address or remove that stop, then try again. No route was sent."));
 
         verify(geocoder).batchGeocode(OWNER, List.of(stale));
         verify(navigation, never()).sendManualRoute(any(), anyString(), anyList(), anyString());
@@ -260,6 +264,45 @@ class RouteControllerTest {
 
         verify(geocoder, never()).batchGeocode(anyString(), anyList());
         verify(navigation, never()).sendManualRoute(any(), anyString(), anyList(), anyString());
+    }
+
+    @Test
+    void geocodingFailureIsExplicitlyNotSentButDispatchFailureRemainsUncertain() throws Exception {
+        when(vehicles.vehicles(IDENTITY)).thenReturn(List.of(new TapVehicleClient.Vehicle(VIN, "test car", true, true)));
+        PlaceCandidate candidate = resolved("123 MAIN ST", "route.png", 0);
+        String payload = mapper.writeValueAsString(new PlaceCandidatesResponse(List.of(candidate)));
+        when(geocoder.batchGeocode(OWNER, List.of(candidate))).thenThrow(new IllegalStateException("Geocoding service unavailable"));
+        mvc.perform(post("/route/send/" + VIN).with(csrf()).with(login())
+                        .header("Idempotency-Key", IDEMPOTENCY_KEY).contentType("application/json").content(payload))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.state").value("NOT_SENT"))
+                .andExpect(jsonPath("$.accepted").value(false));
+        verify(navigation, never()).sendManualRoute(any(), anyString(), anyList(), anyString());
+
+        doReturn(List.of(candidate)).when(geocoder).batchGeocode(OWNER, List.of(candidate));
+        when(navigation.sendManualRoute(IDENTITY, VIN, List.of(candidate), IDEMPOTENCY_KEY))
+                .thenThrow(new IllegalStateException("TAP request failed; command outcome may be unconfirmed"));
+        mvc.perform(post("/route/send/" + VIN).with(csrf()).with(login())
+                        .header("Idempotency-Key", IDEMPOTENCY_KEY).contentType("application/json").content(payload))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.state").doesNotExist())
+                .andExpect(jsonPath("$.accepted").doesNotExist());
+        verify(navigation).sendManualRoute(IDENTITY, VIN, List.of(candidate), IDEMPOTENCY_KEY);
+    }
+
+    @Test
+    void activeNavigationRejectionIsExplicitlyNotSent() throws Exception {
+        when(vehicles.vehicles(IDENTITY)).thenReturn(List.of(new TapVehicleClient.Vehicle(VIN, "test car", true, true)));
+        PlaceCandidate candidate = resolved("123 MAIN ST", "route.png", 0);
+        when(geocoder.batchGeocode(OWNER, List.of(candidate))).thenReturn(List.of(candidate));
+        when(navigation.sendManualRoute(IDENTITY, VIN, List.of(candidate), IDEMPOTENCY_KEY))
+                .thenReturn(new TapVehicleClient.CommandResult("NOT_SENT", false, "Stop the active navigation session first"));
+        mvc.perform(post("/route/send/" + VIN).with(csrf()).with(login())
+                        .header("Idempotency-Key", IDEMPOTENCY_KEY).contentType("application/json")
+                        .content(mapper.writeValueAsString(new PlaceCandidatesResponse(List.of(candidate)))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.state").value("NOT_SENT"))
+                .andExpect(jsonPath("$.accepted").value(false));
     }
 
     @Test

@@ -65,6 +65,11 @@ existing geocoding settings as described in [TAP setup](OAUTH_SETUP.md) and the
 
 ## Deployment
 
+Manual sends distinguish address-validation failures from uncertain vehicle-command
+outcomes. A stop without a verified street location stays visible for correction
+or removal; a request rejected before dispatch does not pause future sends. See
+the [October 1 error diagnosis](docs/errors-2026-10-01.md).
+
 The OCR release configuration uses eight CPUs, 8 GiB RAM, and two compute threads
 per engine. Native qualification,
 route-code filtering, and speed comparisons are recorded in the

@@ -383,6 +383,80 @@ test('editing an unresolved row clears its review requirement; legacy rows show 
     assert.equal(legacyRow.querySelector('.ocr-review'), null);
 });
 
+test('pre-send validation stays retryable while uncertain outcomes remain held', async () => {
+  const source = extractBetween('async function sendGroupToTesla(', 'function showStatus(');
+  for (const [ok, status, body, held] of [
+    [false, 400, { state: 'NOT_SENT', accepted: false, message: 'Stop 1 needs review.' }, false],
+    [false, 503, { state: 'NOT_SENT', accepted: false, message: 'Geocoding unavailable' }, false],
+    [false, 409, { state: 'NOT_SENT', accepted: false, message: 'Stop the active navigation session first' }, false],
+    [false, 503, { error: 'TAP outcome unconfirmed' }, true],
+    [false, 400, { error: 'Unclassified error' }, true],
+    [true, 202, { state: 'PENDING', accepted: null }, true],
+    [true, 200, null, true]
+  ]) {
+    const button = new FakeElement('button');
+    button.textContent = 'Send Route 1';
+    const holds = [], statuses = [];
+    const context = vm.createContext({
+      currentVin: 'VIN-TEST', availableVehicles: [{ vin: 'VIN-TEST', command: true }],
+      extractedAddresses: [candidate({ ocrReviewRequired: false })], manualCommandInFlight: new Set(),
+      getManualCommandHold: () => null, updateManualCommandHoldControls() {},
+      persistManualCommandHold: (vin, hold) => holds.push(hold),
+      apiFetch: async () => ({ ok, status, json: async () => { if (!body) throw new Error('Malformed response'); return body; } }),
+      crypto: { randomUUID: () => 'fixed-idempotency-key' }, document: { querySelector: () => button },
+      console: { error() {} }, showStatus: (message, type) => statuses.push({ message, type }), sendStatus: {}
+    });
+    new vm.Script(source + '\nglobalThis.send = sendGroupToTesla;').runInContext(context);
+    await context.send(0, 0, 1);
+    assert.equal(holds.length > 0, held);
+    assert.equal(button.disabled, held);
+    if (!held) {
+      assert.match(statuses.at(-1).message, /Route not sent:/);
+      assert.equal(button.textContent, 'Send Route 1');
+    }
+  }
+});
+
+test('clear-hold button removes the stored pause and permits a retry', () => {
+  const source = extractBetween('function manualCommandHoldStorageKey(vin) {', 'function updateManualCommandHoldControls(');
+  const stored = new Map(), statuses = [];
+  const status = new FakeElement('div');
+  status.classList.remove = () => {};
+  let controlsUpdated = 0;
+  const context = vm.createContext({
+    MANUAL_COMMAND_HOLD_PREFIX: 'hold:', manualCommandHolds: new Map(), currentVin: 'VIN-TEST',
+    sessionStorage: {
+      getItem: key => stored.get(key) ?? null,
+      setItem: (key, value) => stored.set(key, value),
+      removeItem: key => stored.delete(key)
+    },
+    document: { createElement: tag => new FakeElement(tag), querySelectorAll: () => [status] },
+    updateManualCommandHoldControls: () => { controlsUpdated++; },
+    showStatus: message => statuses.push(message)
+  });
+  new vm.Script(source + '\nglobalThis.holds = { persistManualCommandHold, getManualCommandHold, showManualCommandHold };').runInContext(context);
+  const hold = context.holds.persistManualCommandHold('VIN-TEST', { state: 'HTTP_400', idempotencyKey: 'old-key' });
+  context.holds.showManualCommandHold('VIN-TEST', hold, status);
+  assert.ok(context.holds.getManualCommandHold('VIN-TEST'));
+  status.querySelector('button').listeners.click();
+  assert.equal(context.holds.getManualCommandHold('VIN-TEST'), null);
+  assert.equal(stored.size, 0);
+  assert.equal(controlsUpdated, 1);
+  assert.equal(status.dataset.manualCommandHold, undefined);
+  assert.match(statuses.at(-1), /cleared/);
+});
+
+test('unlocated addresses explain the problem instead of showing zero coordinates', () => {
+  const address = candidate({ lat: 0, lon: 0, pid: null });
+  const context = loadUi(addressUiSource, {
+    document: { createElement: tagName => new FakeElement(tagName) }, extractedAddresses: [address],
+    sendStatus: {}, showStatus() {}
+  });
+  const row = context.ui.createAddressItem(address, 0);
+  assert.match(row.querySelector('.address-meta').textContent, /Location not found/);
+  assert.doesNotMatch(row.querySelector('.address-meta').textContent, /0\.0000/);
+});
+
 test('manual and automatic route sends stop before API dispatch when any route row needs review', async () => {
     const sendSource = extractBetween('async function sendGroupToTesla(', 'function showStatus(');
     const autoSource = extractBetween('async function startAutoNavigation(', 'function startAutoNavPolling(');

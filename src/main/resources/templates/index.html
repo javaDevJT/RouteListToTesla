@@ -343,16 +343,20 @@
             statusElement.dataset.manualCommandHoldVin = vin;
 
             const message = document.createElement('span');
-            message.textContent = `An earlier route command for VIN ${vin} has an unconfirmed outcome. All route and automatic-navigation sends to this vehicle are paused. Check and reconcile the vehicle before clearing this hold.`;
+            message.textContent = 'We could not confirm whether your Tesla received the earlier route. Sending is paused to avoid sending it twice. Check the navigation screen in your Tesla, then allow sending below. This clears the pause; any address problem still needs to be corrected.';
             const diagnostic = document.createElement('small');
             diagnostic.textContent = `State: ${hold.state || 'UNKNOWN'} · Idempotency key: ${hold.idempotencyKey || 'unavailable'}`;
             const clearButton = document.createElement('button');
             clearButton.type = 'button';
             clearButton.className = 'btn btn-secondary';
-            clearButton.textContent = 'I checked the vehicle; clear hold';
+            clearButton.textContent = 'I checked the vehicle; allow sending';
             clearButton.addEventListener('click', () => clearManualCommandHold(vin, statusElement));
 
-            statusElement.append(message, document.createElement('br'), diagnostic);
+            const details = document.createElement('details');
+            const summary = document.createElement('summary');
+            summary.textContent = 'Technical details';
+            details.append(summary, diagnostic);
+            statusElement.append(message, details);
             if (hold.persistenceFailed) {
                 const warning = document.createElement('small');
                 warning.textContent = ' This tab could not persist the hold; keep it open until you reconcile the command.';
@@ -870,9 +874,9 @@
 
             const metadata = document.createElement('div');
             metadata.className = 'address-meta';
-            const latitude = Number.isFinite(address.lat) ? address.lat.toFixed(4) : 'N/A';
-            const longitude = Number.isFinite(address.lon) ? address.lon.toFixed(4) : 'N/A';
-            metadata.textContent = `Source: ${address.sourceImage || 'Unknown'} | Line: ${(address.lineIndex || 0) + 1} | Coords: ${latitude}, ${longitude}`;
+            const located = Boolean(address.pid) && Number.isFinite(address.lat) && Number.isFinite(address.lon)
+                && Math.abs(address.lat) <= 90 && Math.abs(address.lon) <= 180 && (address.lat !== 0 || address.lon !== 0);
+            metadata.textContent = `Source: ${address.sourceImage || 'Unknown'} | Line: ${(address.lineIndex || 0) + 1} | ${located ? 'Location verified' : 'Location not found — review this address'}`;
 
             const input = document.createElement('textarea');
             input.className = 'address-input';
@@ -1038,8 +1042,16 @@
                 });
                 requestDispatched = true;
                 const response = await request;
+                let result = null;
+                try { result = await response.json(); } catch (error) {
+                    if (response.ok) throw error;
+                }
 
                 if (!response.ok) {
+                    if (result?.accepted === false && ['NOT_SENT', 'REJECTED'].includes(result.state)) {
+                        showStatus(`Route not sent: ${result.message || 'Review the addresses before trying again.'}`, 'error', sendStatus);
+                        return;
+                    }
                     keepDisabled = true;
                     persistManualCommandHold(commandVin, {
                         idempotencyKey,
@@ -1051,7 +1063,6 @@
                     return;
                 }
 
-                const result = await response.json();
                 if (result.accepted === true) {
                     keepDisabled = true;
                     sendButton.dataset.sendCompleted = 'true';

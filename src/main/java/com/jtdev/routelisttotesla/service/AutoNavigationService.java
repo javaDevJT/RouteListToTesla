@@ -260,7 +260,7 @@ public class AutoNavigationService {
             String userId, String vin, List<PlaceCandidate> candidates, String idempotencyKey) {
         synchronized (vehicleLock(vin)) {
             if (hasBlockingSessionForVin(vin)) {
-                throw new IllegalStateException("Stop the active navigation session before sending a manual route");
+                return new CommandResult("NOT_SENT", false, "Stop the active navigation session before sending a manual route. No route was sent.");
             }
             return tapVehicleClient.sendRoute(new TapAccessService.GrantIdentity(userId, "0".repeat(64)),
                     vin, candidates, idempotencyKey);
@@ -272,7 +272,7 @@ public class AutoNavigationService {
         if (identity == null) throw new AccessDeniedException("Sign in through TAP first");
         synchronized (vehicleLock(vin)) {
             if (hasBlockingSessionForVin(vin)) {
-                throw new IllegalStateException("Stop the active navigation session before sending a manual route");
+                return new CommandResult("NOT_SENT", false, "Stop the active navigation session before sending a manual route. No route was sent.");
             }
             return tapVehicleClient.sendRoute(identity, vin, candidates, idempotencyKey);
         }

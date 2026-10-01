@@ -4,6 +4,8 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import com.jtdev.routelisttotesla.model.PlaceCandidate;
 import com.jtdev.routelisttotesla.util.AddressExtractor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -54,6 +56,7 @@ public class AddressOcrService {
     private static final Duration PROCESS_TERMINATION_GRACE = Duration.ofMillis(150);
     private static final long PROCESS_POLL_INTERVAL_MILLIS = 10;
     private static final Semaphore OCR_SLOTS = new Semaphore(1, true);
+    private static final Logger LOG = LoggerFactory.getLogger(AddressOcrService.class);
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final List<String> CONSENSUS_ENGINES = List.of("tesseract", "paddleocr", "easyocr");
     private static final Set<String> CONSENSUS_ENGINE_SET = Set.copyOf(CONSENSUS_ENGINES);
@@ -97,18 +100,24 @@ public class AddressOcrService {
     }
 
     public List<PlaceCandidate> extractAddressCandidates(byte[] imageBytes, String name, String defaultState) throws Exception {
+        long startedAt = System.nanoTime();
         try {
             if (!OCR_SLOTS.tryAcquire(0, TimeUnit.MILLISECONDS)) {
+                logFailure("admission_busy", null, null, startedAt);
                 throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "OCR is busy; try again");
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            logFailure("admission_interrupted", e.getClass(), null, startedAt);
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "OCR admission was interrupted", e);
         }
 
         Path jobDirectory = null;
+        String failureCategory = "image_validation";
+        Integer exitCode = null;
         try {
             String imageExtension = validateImage(imageBytes);
+            failureCategory = "image_setup";
             jobDirectory = Files.createTempDirectory("routelist-ocr-");
             Path imageFile = jobDirectory.resolve("input" + imageExtension);
             Files.write(imageFile, imageBytes);
@@ -121,26 +130,41 @@ public class AddressOcrService {
                     "tsv");
 
             ProcessResult result;
+            failureCategory = "ocr_process";
             try {
                 result = commandExecutor.execute(command);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                failureCategory = "process_interrupted";
                 throw new IllegalStateException("Local OCR was interrupted.", e);
             } catch (IOException e) {
+                boolean timedOut = "OCR process timed out.".equals(e.getMessage());
+                failureCategory = timedOut ? "process_timeout" : "process_io_failure";
+                if (timedOut) {
+                    throw new IllegalStateException("The local OCR process timed out. Please retry.", e);
+                }
                 throw new IllegalStateException(
                         "The local OCR process could not be started or completed. Check the OCR wrapper configuration and installed engine dependencies.", e);
             }
 
+            exitCode = result.exitCode();
             if (result.exitCode() == 65) {
+                failureCategory = "invalid_image";
                 throw new IllegalArgumentException(
                         "The image could not be decoded or exceeds the 20 megapixel limit. Choose a valid HEIC, PNG, or JPEG image.");
             }
             if (result.exitCode() != 0) {
+                if (isWrapperTimeout(result.stderr())) {
+                    failureCategory = "engine_timeout";
+                    throw new IllegalStateException("The local OCR engines timed out. Please retry.");
+                }
+                failureCategory = "engine_failure";
                 throw new IllegalStateException(
                         "The local OCR process failed with exit code " + result.exitCode()
                                 + ". Check the OCR wrapper configuration and installed engine dependencies.");
             }
 
+            failureCategory = "output_processing";
             ParsedOcrOutput parsedOutput = parseOutput(result.stdout(), allowLegacyTsv);
             List<OcrLine> lines = readLines(parsedOutput.tsv());
             if (parsedOutput.consensus()) {
@@ -225,6 +249,12 @@ public class AddressOcrService {
                 lineIndex = lastLineIndex;
             }
             return candidates;
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            logFailure(failureCategory, e.getClass(), exitCode, startedAt);
+            throw e;
+        } catch (IOException e) {
+            logFailure(failureCategory, e.getClass(), exitCode, startedAt);
+            throw e;
         } finally {
             try {
                 if (jobDirectory != null) {
@@ -239,6 +269,18 @@ public class AddressOcrService {
                 OCR_SLOTS.release();
             }
         }
+    }
+
+    private static void logFailure(String category, Class<?> exceptionClass, Integer exitCode, long startedAt) {
+        LOG.warn("OCR failed category={} exceptionClass={} exitCode={} elapsedMs={}",
+                category,
+                exceptionClass == null ? "none" : exceptionClass.getSimpleName(),
+                exitCode == null ? "none" : exitCode.toString(),
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt));
+    }
+
+    private static boolean isWrapperTimeout(String stderr) {
+        return stderr != null && stderr.stripTrailing().endsWith("Consensus OCR failed: TimeoutExpired");
     }
 
     static String withDefaultState(String address, String defaultState) {
@@ -565,8 +607,8 @@ public class AddressOcrService {
             recordDescendants(process.toHandle(), observedDescendants);
 
             String output = new String(awaitStream(stdout), StandardCharsets.UTF_8);
-            awaitStream(stderr);
-            return new ProcessResult(process.exitValue(), output, "");
+            String errorOutput = new String(awaitStream(stderr), StandardCharsets.UTF_8);
+            return new ProcessResult(process.exitValue(), output, errorOutput);
         } catch (InterruptedException e) {
             interrupted = true;
             throw e;

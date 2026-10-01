@@ -3,6 +3,9 @@ package com.jtdev.routelisttotesla.service;
 import com.jtdev.routelisttotesla.model.PlaceCandidate;
 import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -441,6 +444,34 @@ class AddressOcrServiceTest {
 
         assertTrue(error.getMessage().contains("exit code 1"));
         assertTrue(error.getMessage().contains("local OCR process failed"));
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void retainsStderrForDiagnosisWithoutLoggingOrReturningItsContents(CapturedOutput output) throws Exception {
+        String privateDiagnostic = "123 Main St SECRET_TOKEN";
+        AddressOcrService.ProcessResult process = AddressOcrService.runCommand(
+                List.of("/bin/sh", "-c", "printf '%s' '" + privateDiagnostic + "' >&2"), Duration.ofSeconds(3));
+        assertEquals(privateDiagnostic, process.stderr());
+
+        AddressOcrService service = new AddressOcrService("ocr-binary", "eng", arguments ->
+                new AddressOcrService.ProcessResult(2, "", privateDiagnostic));
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> service.extractAddressCandidates(png(), "route.png", "MI"));
+
+        assertTrue(error.getMessage().contains("exit code 2"));
+        assertFalse(error.getMessage().contains(privateDiagnostic));
+        assertTrue(output.toString().contains("category=engine_failure"));
+        assertFalse(output.toString().contains(privateDiagnostic));
+
+        AddressOcrService timeout = new AddressOcrService("ocr-binary", "eng", arguments ->
+                new AddressOcrService.ProcessResult(
+                        2, "", privateDiagnostic + "\nConsensus OCR failed: TimeoutExpired\n"));
+        IllegalStateException timeoutError = assertThrows(IllegalStateException.class,
+                () -> timeout.extractAddressCandidates(png(), "route.png", "MI"));
+        assertTrue(timeoutError.getMessage().contains("timed out"));
+        assertTrue(output.toString().contains("category=engine_timeout"));
+        assertFalse(output.toString().contains(privateDiagnostic));
     }
 
     @Test

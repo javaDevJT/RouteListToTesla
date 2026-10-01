@@ -455,8 +455,7 @@ class AutoNavigationServiceTest {
         AutoNavSession session = startSession(1);
 
         assertThrows(IllegalStateException.class, () -> service.createSession(VIN, IDENTITY, addresses(1)));
-        assertThrows(IllegalStateException.class,
-                () -> service.sendManualRoute(USER, VIN, addresses(1), "a".repeat(36)));
+        assertEquals("NOT_SENT", service.sendManualRoute(USER, VIN, addresses(1), "a".repeat(36)).state());
 
         verify(vehicleClient, never()).sendRoute(any(TapAccessService.GrantIdentity.class), anyString(), anyList(), anyString());
         assertEquals(AutoNavSession.Status.RUNNING, session.getStatus());
@@ -679,8 +678,7 @@ class AutoNavigationServiceTest {
         assertNull(service.getActiveSessionForUser(identity(subject.toLowerCase())));
         assertThrows(IllegalStateException.class,
                 () -> service.createSession(VIN, identity(subject.toLowerCase()), addresses(1)));
-        assertThrows(IllegalStateException.class,
-                () -> service.sendManualRoute(identity(subject.toLowerCase()), VIN, addresses(1), "b".repeat(36)));
+        assertEquals("NOT_SENT", service.sendManualRoute(identity(subject.toLowerCase()), VIN, addresses(1), "b".repeat(36)).state());
         assertEquals(subject, session.getUserId());
     }
 

@@ -1,5 +1,7 @@
 # Documentation
 
+- [OCR errors and route-send holds (2026-10-01)](errors-2026-10-01.md): definite pre-send rejections, unresolved-location feedback, privacy-preserving failure diagnostics, and validation evidence.
+
 - [Route-code filtering and native OCR capacity (2026-09-30)](ocr-route-codes-2026-09-30.md): hash metadata filtering, unit preservation, quality and speed comparisons, release evidence.
 
 - [Canfield geocoding diagnosis (2026-09-29)](geocoding-canfield-2026-09-29.md): city-result root cause, address validation, and stale-cache safeguards.

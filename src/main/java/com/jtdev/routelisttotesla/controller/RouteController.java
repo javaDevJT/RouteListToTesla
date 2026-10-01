@@ -14,6 +14,8 @@ import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.text.Normalizer;
@@ -21,6 +23,7 @@ import java.text.Normalizer;
 @RestController
 @RequestMapping("/route")
 public class RouteController {
+    private static final Logger log = LoggerFactory.getLogger(RouteController.class);
     private final AddressOcrService ocr;
     private final GeocodingClient geocoder;
     private final ImageCacheService cacheService;
@@ -78,7 +81,18 @@ public class RouteController {
             }
         }
 
-        List<PlaceCandidate> geocoded = geocoder.batchGeocode(owner, misses);
+        List<PlaceCandidate> geocoded;
+        long lookupStarted = System.nanoTime();
+        try {
+            geocoded = geocoder.batchGeocode(owner, misses);
+        } catch (RuntimeException exception) {
+            log.warn("Screenshot processing failed: stage=geocoding type={} elapsedMs={}",
+                    exception.getClass().getSimpleName(), (System.nanoTime() - lookupStarted) / 1_000_000);
+            if (exception instanceof IllegalStateException) {
+                throw new IllegalStateException("Image reading succeeded, but address lookup failed. Try processing again shortly.", exception);
+            }
+            throw exception;
+        }
         List<PlaceCandidate> results = new ArrayList<>();
         List<List<PlaceCandidate>> imageCandidates = new ArrayList<>();
         for (ImageWork image : work) {
@@ -104,12 +118,25 @@ public class RouteController {
                                               @RequestHeader("Idempotency-Key") String key,
                                               @AuthenticationPrincipal OAuth2User principal) throws Exception {
         TapAccessService.GrantIdentity identity = requireCommandAccess(vin, principal);
-        if (key == null || !key.matches("[A-Za-z0-9_-]{32,128}")) {
-            throw new IllegalArgumentException("A stable route command idempotency key is required");
+        List<PlaceCandidate> candidates;
+        try {
+            if (key == null || !key.matches("[A-Za-z0-9_-]{32,128}")) {
+                throw new IllegalArgumentException("A stable route command idempotency key is required");
+            }
+            candidates = resolveReviewed(addressData, 8, identity.ownerSub());
+        } catch (IllegalArgumentException exception) {
+            return ResponseEntity.badRequest().body(new TapVehicleClient.CommandResult("NOT_SENT", false, exception.getMessage()));
+        } catch (IllegalStateException exception) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(new TapVehicleClient.CommandResult("NOT_SENT", false, exception.getMessage()));
+        } catch (ResponseStatusException exception) {
+            return ResponseEntity.status(exception.getStatusCode())
+                    .body(new TapVehicleClient.CommandResult("NOT_SENT", false, exception.getReason()));
         }
-        List<PlaceCandidate> candidates = resolveReviewed(addressData, 8, identity.ownerSub());
         TapVehicleClient.CommandResult result = autoNavigationService.sendManualRoute(identity, vin, candidates, key);
-        return ResponseEntity.status("PENDING".equals(result.state()) ? HttpStatus.ACCEPTED : HttpStatus.OK).body(result);
+        HttpStatus status = "PENDING".equals(result.state()) ? HttpStatus.ACCEPTED
+                : "NOT_SENT".equals(result.state()) ? HttpStatus.CONFLICT : HttpStatus.OK;
+        return ResponseEntity.status(status).body(result);
     }
 
     @PostMapping(value = "/cache/check", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -257,9 +284,11 @@ public class RouteController {
         if (resolved == null || resolved.size() != reviewed.size()) {
             throw new IllegalArgumentException("Every stop needs valid coordinates and Google place ID; unresolved stops cannot be skipped");
         }
-        for (PlaceCandidate candidate : resolved) {
+        for (int index = 0; index < resolved.size(); index++) {
+            PlaceCandidate candidate = resolved.get(index);
             if (!hasCoordinates(candidate) || candidate.pid() == null || !candidate.pid().matches("[A-Za-z0-9_-]{1,512}")) {
-                throw new IllegalArgumentException("Every stop needs valid coordinates and a Google place ID; unresolved stops cannot be skipped");
+                throw new IllegalArgumentException("Stop " + (index + 1)
+                        + " could not be matched to a street address. Check its address or remove that stop, then try again. No route was sent.");
             }
         }
         return List.copyOf(resolved);
