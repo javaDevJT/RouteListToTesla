@@ -86,6 +86,12 @@ field and ISO date formats. Run from the repository root:
 ./mvnw spring-boot:run
 ```
 
+Image publication uses the private `truenas-routelisttotesla-storage-32g` runner
+class, with the existing disk build cache and GitHub cache fallback. This class
+selects 32 GiB of runner storage; the deployed application's resources are
+configured separately. The operator observed roughly 26 GB peak runner usage
+before requesting this reduction from the 64 GiB class.
+
 The Dockerfile builds the JAR from source in a JDK stage, derives modules with
 `jdeps`, and creates a stripped `jlink` runtime. The final Ubuntu 26.04 image runs
 as UID/GID 10001 and contains neither Maven nor the Java compiler. OCR dependencies

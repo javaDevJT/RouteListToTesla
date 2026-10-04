@@ -15,7 +15,7 @@ concurrency:
 jobs:
   publish:
     if: github.ref == 'refs/heads/main'
-    runs-on: truenas-routelisttotesla-storage-64g
+    runs-on: truenas-routelisttotesla-storage-32g
     timeout-minutes: 60
     permissions:
       contents: read
