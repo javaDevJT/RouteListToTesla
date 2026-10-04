@@ -72,7 +72,12 @@ public class RouteController {
             String hash = cacheService.calculateImageHash(bytes, filename, state, owner);
             List<PlaceCandidate> cached = cacheService.getCachedResults(hash);
             if (cached == null) {
-                List<PlaceCandidate> extracted = ocr.extractAddressCandidates(bytes, filename, state);
+                List<PlaceCandidate> extracted = cacheService.getCachedOcrResults(hash);
+                if (extracted == null) {
+                    extracted = ocr.extractAddressCandidates(bytes, filename, state);
+                    cacheService.cacheOcrResults(hash, filename, extracted);
+                }
+                extracted = rebindSource(extracted, filename);
                 int start = misses.size();
                 misses.addAll(extracted);
                 work.add(new ImageWork(filename, hash, null, start, misses.size()));

@@ -27,9 +27,11 @@ import java.util.List;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -65,6 +67,72 @@ class RouteControllerTest {
     @BeforeEach
     void useCurrentGrant() {
         when(tapAccess.grantIdentity(any())).thenReturn(IDENTITY);
+        when(cache.getCachedOcrResults(anyString())).thenReturn(null);
+    }
+
+    @Test
+    void retriesReuseCompletedImagesAfterOcrAndLookupFailures() throws Exception {
+        PlaceCandidate first = unresolved("123 FIRST ST APT 330 MI", "first.png", 0);
+        PlaceCandidate second = unresolved("456 SECOND RD MI", "second.png", 0);
+        List<PlaceCandidate> raw = List.of(first, second);
+        List<PlaceCandidate> located = raw.stream().map(row -> row.withLatLonPid(42.1, -83.1, "street-id")).toList();
+        java.util.Map<String, List<PlaceCandidate>> extractedCache = new java.util.HashMap<>();
+        when(cache.calculateImageHash(any(byte[].class), anyString(), eq("MI"), eq(OWNER)))
+                .thenAnswer(call -> call.getArgument(1, String.class) + "-key");
+        when(cache.getCachedResults(anyString())).thenReturn(null);
+        when(cache.getCachedOcrResults(anyString())).thenAnswer(call -> extractedCache.get(call.getArgument(0)));
+        doAnswer(call -> { extractedCache.put(call.getArgument(0), call.getArgument(2)); return null; })
+                .when(cache).cacheOcrResults(anyString(), anyString(), anyList());
+        when(ocr.extractAddressCandidates(any(byte[].class), eq("first.png"), eq("MI"))).thenReturn(List.of(first));
+        when(ocr.extractAddressCandidates(any(byte[].class), eq("second.png"), eq("MI")))
+                .thenThrow(new IllegalStateException("OCR engines timed out")).thenReturn(List.of(second));
+        when(geocoder.batchGeocode(OWNER, raw))
+                .thenThrow(new IllegalStateException("Temporary Google lookup failure")).thenReturn(located);
+
+        mvc.perform(multipart("/route/places").file(image("first.png")).file(image("second.png"))
+                        .param("defaultState", "MI").with(csrf()).with(login()))
+                .andExpect(status().isServiceUnavailable());
+        verify(geocoder, never()).batchGeocode(anyString(), anyList());
+        mvc.perform(multipart("/route/places").file(image("first.png")).file(image("second.png"))
+                        .param("defaultState", "MI").with(csrf()).with(login()))
+                .andExpect(status().isServiceUnavailable());
+        verify(cache, never()).cacheImageResults(anyString(), anyString(), anyList());
+        mvc.perform(multipart("/route/places").file(image("first.png")).file(image("second.png"))
+                        .param("defaultState", "MI").with(csrf()).with(login()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.candidates[0].text").value(first.text()))
+                .andExpect(jsonPath("$.candidates[1].text").value(second.text()))
+                .andExpect(jsonPath("$.imageCandidates.length()").value(2));
+        verify(ocr, times(1)).extractAddressCandidates(any(byte[].class), eq("first.png"), eq("MI"));
+        verify(ocr, times(2)).extractAddressCandidates(any(byte[].class), eq("second.png"), eq("MI"));
+        verify(geocoder, times(2)).batchGeocode(OWNER, raw);
+    }
+
+    @Test
+    void recoveredExtractionRebindsImageMetadataBeforeLookupWithoutLosingReviewEvidence() throws Exception {
+        PlaceCandidate saved = new PlaceCandidate("123 MAIN ST APT 330 MI", "123 MAIN ST APT 330 MI",
+                "old-name.heic", 2, 0, 0, null, 2, true, List.of("partial row", "complete row"));
+        when(cache.calculateImageHash(any(byte[].class), eq("new-name.heic"), eq("MI"), eq(OWNER)))
+                .thenReturn("scoped-hash");
+        when(cache.getCachedResults("scoped-hash")).thenReturn(null);
+        when(cache.getCachedOcrResults("scoped-hash")).thenReturn(List.of(saved));
+        when(geocoder.batchGeocode(eq(OWNER), anyList())).thenAnswer(call -> {
+            List<PlaceCandidate> rows = call.getArgument(1);
+            assertEquals("new-name.heic", rows.getFirst().sourceImage());
+            return rows.stream().map(row -> row.withLatLonPid(42.1, -83.1, "street-id")).toList();
+        });
+
+        mvc.perform(multipart("/route/places").file(image("new-name.heic"))
+                        .param("defaultState", "MI").with(csrf()).with(login()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.candidates[0].text").value(saved.text()))
+                .andExpect(jsonPath("$.candidates[0].sourceImage").value("new-name.heic"))
+                .andExpect(jsonPath("$.candidates[0].lineIndex").value(2))
+                .andExpect(jsonPath("$.candidates[0].ocrAgreement").value(2))
+                .andExpect(jsonPath("$.candidates[0].ocrReviewRequired").value(true))
+                .andExpect(jsonPath("$.candidates[0].ocrAlternatives.length()").value(2));
+        verify(ocr, never()).extractAddressCandidates(any(byte[].class), anyString(), anyString());
+        verify(cache, never()).cacheOcrResults(anyString(), anyString(), anyList());
     }
 
     @Test

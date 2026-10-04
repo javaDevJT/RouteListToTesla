@@ -32,21 +32,26 @@ import java.util.Map;
 @Service
 public class ImageCacheService {
 
-    private static final String CACHE_DIR = "cache/images";
-    private static final String CACHE_INDEX_FILE = "cache/image_cache_index.json";
+    private final Path cacheDirectory;
+    private final Path cacheIndexFile;
     private static final Logger log = org.slf4j.LoggerFactory.getLogger(ImageCacheService.class);
     private final ObjectMapper objectMapper = JsonMapper.builderWithJackson2Defaults().build();
     @Value("${ocr.language:eng}")
     private String ocrLanguage = "eng";
 
     public ImageCacheService() {
+        this(Paths.get("cache"));
+    }
+
+    ImageCacheService(Path root) {
+        cacheDirectory = root.resolve("images");
+        cacheIndexFile = root.resolve("image_cache_index.json");
         initializeCacheDirectory();
     }
 
     private void initializeCacheDirectory() {
         try {
-            Files.createDirectories(Paths.get(CACHE_DIR));
-            Files.createDirectories(Paths.get("cache"));
+            Files.createDirectories(cacheDirectory);
         } catch (IOException e) {
             log.warn("Failed to create cache directory: {}", e.getMessage());
         }
@@ -113,7 +118,8 @@ public class ImageCacheService {
     /**
      * Cache processed results for an image
      */
-    public void cacheImageResults(String imageHash, String originalFilename, List<PlaceCandidate> candidates) {
+    // ponytail: serialize short JSON writes; use a database if cache write volume becomes limiting.
+    public synchronized void cacheImageResults(String imageHash, String originalFilename, List<PlaceCandidate> candidates) {
         try {
             CacheEntry entry = new CacheEntry();
             entry.imageHash = imageHash;
@@ -123,8 +129,8 @@ public class ImageCacheService {
             entry.candidateCount = candidates.size();
 
             // Save individual cache entry
-            Path cacheFile = Paths.get(CACHE_DIR, imageHash + ".json");
-            objectMapper.writeValue(cacheFile.toFile(), entry);
+            Path cacheFile = cacheDirectory.resolve(imageHash + ".json");
+            writeCacheFile(cacheFile, entry);
 
             // Update cache index
             updateCacheIndex(imageHash, entry);
@@ -132,7 +138,7 @@ public class ImageCacheService {
             log.info("Cached results for image {} (hash: {}) with {} candidates",
                     originalFilename, imageHash, candidates.size());
 
-        } catch (JacksonException e) {
+        } catch (IOException | JacksonException e) {
             log.warn("Failed to cache image results for {}: {}", originalFilename, e.getMessage());
         }
     }
@@ -142,7 +148,7 @@ public class ImageCacheService {
      */
     public List<PlaceCandidate> getCachedResults(String imageHash) {
         try {
-            Path cacheFile = Paths.get(CACHE_DIR, imageHash + ".json");
+            Path cacheFile = cacheDirectory.resolve(imageHash + ".json");
             if (!Files.exists(cacheFile)) {
                 return null;
             }
@@ -163,7 +169,7 @@ public class ImageCacheService {
      * Check if results are cached for this image hash
      */
     public boolean isCached(String imageHash) {
-        Path cacheFile = Paths.get(CACHE_DIR, imageHash + ".json");
+        Path cacheFile = cacheDirectory.resolve(imageHash + ".json");
         return Files.exists(cacheFile);
     }
 
@@ -181,9 +187,9 @@ public class ImageCacheService {
 
             index.put(imageHash, indexEntry);
 
-            objectMapper.writeValue(new File(CACHE_INDEX_FILE), index);
+            writeCacheFile(cacheIndexFile, index);
 
-        } catch (JacksonException e) {
+        } catch (IOException | JacksonException e) {
             log.warn("Failed to update cache index: {}", e.getMessage());
         }
     }
@@ -193,7 +199,7 @@ public class ImageCacheService {
      */
     private Map<String, CacheIndexEntry> loadCacheIndex() {
         try {
-            File indexFile = new File(CACHE_INDEX_FILE);
+            File indexFile = cacheIndexFile.toFile();
             if (indexFile.exists()) {
                 return objectMapper.readValue(indexFile, new TypeReference<>() {
                 });
@@ -210,16 +216,17 @@ public class ImageCacheService {
     public Map<String, Object> getCacheStats() {
         Map<String, CacheIndexEntry> index = loadCacheIndex();
         Map<String, Object> stats = new HashMap<>();
-        stats.put("totalCachedImages", index.size());
-        stats.put("cacheDirectory", CACHE_DIR);
-        stats.put("indexFile", CACHE_INDEX_FILE);
+        stats.put("totalCachedImages", index.keySet().stream().filter(key -> !key.endsWith(".ocr")).count());
+        stats.put("cachedExtractions", index.keySet().stream().filter(key -> key.endsWith(".ocr")).count());
+        stats.put("cacheDirectory", cacheDirectory.toString());
+        stats.put("indexFile", cacheIndexFile.toString());
         return stats;
     }
 
     /**
      * Clear old cache entries (could be scheduled)
      */
-    public void clearOldEntries(int daysOld) {
+    public synchronized void clearOldEntries(int daysOld) {
         Map<String, CacheIndexEntry> index = loadCacheIndex();
         LocalDateTime cutoff = LocalDateTime.now().minusDays(daysOld);
 
@@ -228,7 +235,7 @@ public class ImageCacheService {
                 LocalDateTime entryTime = LocalDateTime.parse(entry.getValue().timestamp, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
                 if (entryTime.isBefore(cutoff)) {
                     // Delete cache file
-                    Path cacheFile = Paths.get(CACHE_DIR, entry.getKey() + ".json");
+                    Path cacheFile = cacheDirectory.resolve(entry.getKey() + ".json");
                     Files.deleteIfExists(cacheFile);
                     log.info("Cleaned up old cache entry: {}", entry.getKey());
                     return true;
@@ -240,9 +247,32 @@ public class ImageCacheService {
         });
 
         try {
-            objectMapper.writeValue(new File(CACHE_INDEX_FILE), index);
-        } catch (JacksonException e) {
+            writeCacheFile(cacheIndexFile, index);
+        } catch (IOException | JacksonException e) {
             log.warn("Failed to save updated cache index: {}", e.getMessage());
+        }
+    }
+
+    public void cacheOcrResults(String imageHash, String originalFilename, List<PlaceCandidate> candidates) {
+        cacheImageResults(imageHash + ".ocr", originalFilename, candidates);
+    }
+
+    public List<PlaceCandidate> getCachedOcrResults(String imageHash) {
+        return getCachedResults(imageHash + ".ocr");
+    }
+
+    private void writeCacheFile(Path target, Object value) throws IOException {
+        Path temporary = Files.createTempFile(target.getParent(), ".cache-", ".tmp");
+        try {
+            objectMapper.writeValue(temporary.toFile(), value);
+            try {
+                Files.move(temporary, target, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException exception) {
+                Files.move(temporary, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temporary);
         }
     }
 

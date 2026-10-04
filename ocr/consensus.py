@@ -20,9 +20,23 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ENGINES = ("tesseract", "paddleocr", "easyocr")
-# Reserve time under Java's 45-second process deadline for worker cleanup and response generation.
-ENGINE_WORKER_DEADLINE_SECONDS = 37
+# Reserve time under Java's 75-second process deadline for worker cleanup and response generation.
+ENGINE_WORKER_DEADLINE_SECONDS = 60
 ENGINE_WORKER_CLEANUP_SECONDS = 2
+
+
+class OcrTimeout(Exception):
+    def __init__(self, scope: str, engines: tuple[str, ...]):
+        if scope not in {"engine", "shared_deadline"}:
+            raise ValueError("Unknown OCR timeout scope")
+        requested = set(engines)
+        self.scope = scope
+        self.engines = tuple(engine for engine in ENGINES if engine in requested)
+        super().__init__()
+
+    def safe_message(self) -> str:
+        engines = ",".join(self.engines) or "none"
+        return f"Consensus OCR failed: Timeout scope={self.scope} engines={engines}"
 
 
 def canonical(text: str) -> str:
@@ -325,7 +339,7 @@ def _run_engine_workers(commands: dict[str, list[str]], timeout: float = ENGINE_
     if set(commands) != set(ENGINES):
         raise ValueError("Expected one command per OCR engine")
     if timeout <= 0:
-        raise subprocess.TimeoutExpired("OCR engine workers", timeout)
+        raise OcrTimeout("shared_deadline", ())
 
     workers: dict[str, subprocess.Popen] = {}
     results = {}
@@ -343,12 +357,24 @@ def _run_engine_workers(commands: dict[str, list[str]], timeout: float = ENGINE_
 
             for engine in ENGINES:
                 process = workers[engine]
-                process.wait(timeout=max(0, deadline - time.monotonic()))
+                try:
+                    process.wait(timeout=max(0, deadline - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    active_engines = tuple(
+                        name for name in ENGINES if workers[name].poll() is None
+                    )
+                    raise OcrTimeout("shared_deadline", active_engines) from None
                 if process.returncode != 0:
                     raise RuntimeError(f"{engine} worker failed with exit status {process.returncode}")
 
                 payload = json.loads(result_paths[engine].read_text())
                 if not isinstance(payload, dict) or payload.get("engine") != engine:
+                    raise ValueError(f"Invalid response from {engine} worker")
+                if payload.get("failure") == "timeout":
+                    if set(payload) != {"engine", "failure"}:
+                        raise ValueError(f"Invalid timeout response from {engine} worker")
+                    raise OcrTimeout("engine", (engine,))
+                if "failure" in payload:
                     raise ValueError(f"Invalid response from {engine} worker")
                 raw_lines = payload.get("lines")
                 elapsed = payload.get("engineMilliseconds")
@@ -361,7 +387,10 @@ def _run_engine_workers(commands: dict[str, list[str]], timeout: float = ENGINE_
                     lines.append(Line(**raw_line))
                 results[engine] = (lines, elapsed)
                 if time.monotonic() > deadline:
-                    raise subprocess.TimeoutExpired(process.args, timeout)
+                    active_engines = tuple(
+                        name for name in ENGINES if workers[name].poll() is None
+                    )
+                    raise OcrTimeout("shared_deadline", active_engines)
             return results
         except BaseException:
             _stop_workers(workers)
@@ -378,8 +407,13 @@ def _run_engine_worker(engine: str, path: str, manifest_path: str, result_path: 
         "easyocr": lambda: easy_lines(path, manifest),
     }[engine]
     before = time.monotonic()
-    with contextlib.redirect_stdout(sys.stderr):
-        lines = recognize()
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            lines = recognize()
+    except subprocess.TimeoutExpired:
+        # Timeout arguments can contain captured OCR output; write only a fixed safe marker.
+        Path(result_path).write_text(json.dumps({"engine": engine, "failure": "timeout"}))
+        return
     Path(result_path).write_text(json.dumps({
         "engine": engine,
         "engineMilliseconds": round((time.monotonic() - before) * 1000),
@@ -418,6 +452,9 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
+    except OcrTimeout as error:
+        print(error.safe_message(), file=sys.stderr)
+        sys.exit(2)
     except InvalidImageError:
         print("Image decoding failed or image exceeds pixel limit.", file=sys.stderr)
         sys.exit(65)

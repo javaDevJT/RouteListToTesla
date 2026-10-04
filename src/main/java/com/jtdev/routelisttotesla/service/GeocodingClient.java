@@ -5,6 +5,8 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import com.jtdev.routelisttotesla.model.PlaceCandidate;
 import com.jtdev.routelisttotesla.util.AddressExtractor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -25,9 +27,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -35,6 +38,10 @@ import java.util.regex.Pattern;
 public class GeocodingClient {
     public static final String GEOCODING_VERSION = "street-address-v2";
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(GeocodingClient.class);
+    private static final int MAX_ATTEMPTS = 3;
+    private static final long FIRST_RETRY_DELAY_MILLIS = 100;
+    private static final long SECOND_RETRY_DELAY_MILLIS = 200;
     private static final int DEFAULT_OWNER_CALLS_PER_HOUR = 1_000;
     private static final int DEFAULT_GLOBAL_CALLS_PER_HOUR = 2_000;
     private static final int DEFAULT_OWNER_CONCURRENT_BATCHES = 2;
@@ -180,61 +187,143 @@ public class GeocodingClient {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Geocoding interrupted");
         } catch (ExecutionException e) {
+            Throwable cause = unwrap(e);
+            if (cause instanceof IOException) throw new TransientTransportFailure(cause);
             throw new IllegalStateException("Geocoding service is unavailable");
         }
     }
 
     private PlaceCandidate geocodeOne(String owner, PlaceCandidate candidate) {
-        PlaceCandidate resolved = lookup(candidate, candidate.text());
+        PlaceCandidate resolved = lookup(owner, candidate, candidate.text());
         String primaryAddress = withoutSecondaryUnit(candidate.text());
         if (resolved.pid() != null || primaryAddress.equals(candidate.text())) return resolved;
         reserve(owner, 1, false);
-        return lookup(candidate, primaryAddress);
+        return lookup(owner, candidate, primaryAddress);
     }
 
-    private PlaceCandidate lookup(PlaceCandidate candidate, String address) {
+    private PlaceCandidate lookup(String owner, PlaceCandidate candidate, String address) {
         URI uri = URI.create(geocodeUrl + "?address=" + encode(address)
                 + "&region=" + encode(regionBias) + "&key=" + encode(apiKey));
         HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(15)).GET().build();
-        HttpResponse<String> response = sendWithGlobalPacing(request);
-        if (response.statusCode() != 200) throw new IllegalStateException("Geocoding returned HTTP " + response.statusCode());
-        JsonNode body;
-        try {
-            body = mapper.readTree(response.body());
-        } catch (JacksonException e) {
-            throw new IllegalStateException("Geocoding returned an invalid response");
-        }
-        if (body == null) throw new IllegalStateException("Geocoding returned an empty response");
-        String status = body.path("status").asString();
-        if ("OK".equals(status) && body.path("results").isArray()) {
-            String requestedHouseNumber = houseNumber(candidate.text());
-            for (JsonNode match : body.path("results")) {
-                boolean addressType = hasType(match, "street_address") || hasType(match, "premise")
-                        || hasType(match, "subpremise");
-                if (match.path("partial_match").asBoolean(false) || !addressType) continue;
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            if (attempt > 1) {
+                waitBeforeRetry(attempt - 1);
+                reserve(owner, 1, false);
+            }
 
-                String streetNumber = addressComponent(match, "street_number");
-                if (streetNumber == null || addressComponent(match, "route") == null
-                        || !houseNumbersMatch(requestedHouseNumber, streetNumber)) continue;
+            HttpResponse<String> response;
+            try {
+                response = sendWithGlobalPacing(request);
+            } catch (TransientTransportFailure e) {
+                Throwable cause = e.getCause() == null ? e : e.getCause();
+                logFailure(attempt, "transport", null, null, cause);
+                if (attempt == MAX_ATTEMPTS) throw new IllegalStateException("Geocoding service is unavailable");
+                continue;
+            }
 
-                JsonNode location = match.path("geometry").path("location");
-                if (location.path("lat").isNumber() && location.path("lng").isNumber()) {
-                    double latitude = location.path("lat").asDouble();
-                    double longitude = location.path("lng").asDouble();
-                    String placeId = match.path("place_id").asString(null);
-                    if (Double.isFinite(latitude) && latitude >= -90 && latitude <= 90
-                            && Double.isFinite(longitude) && longitude >= -180 && longitude <= 180
-                            && (latitude != 0 || longitude != 0) && placeId != null
-                            && placeId.matches("[A-Za-z0-9_-]{1,512}")) {
-                        return candidate.withLatLonPid(latitude, longitude, placeId);
+            int httpStatus = response.statusCode();
+            if (httpStatus != 200) {
+                if (isRetryableHttpStatus(httpStatus)) {
+                    logFailure(attempt, "http_transient", httpStatus, null, null);
+                    if (attempt == MAX_ATTEMPTS) throw new IllegalStateException("Geocoding service is unavailable");
+                    continue;
+                }
+                logFailure(attempt, "http_not_retried", httpStatus, null, null);
+                throw new IllegalStateException("Geocoding returned HTTP " + httpStatus);
+            }
+
+            JsonNode body;
+            try {
+                body = mapper.readTree(response.body());
+            } catch (JacksonException e) {
+                logFailure(attempt, "invalid_response", httpStatus, null, e);
+                throw new IllegalStateException("Geocoding returned an invalid response");
+            }
+            if (body == null) {
+                logFailure(attempt, "invalid_response", httpStatus, null, null);
+                throw new IllegalStateException("Geocoding returned an empty response");
+            }
+            String status = body.path("status").asString();
+            if ("UNKNOWN_ERROR".equals(status)) {
+                logFailure(attempt, "provider_transient", httpStatus, status, null);
+                if (attempt == MAX_ATTEMPTS) throw new IllegalStateException("Geocoding service is unavailable");
+                continue;
+            }
+            if ("OK".equals(status) && body.path("results").isArray()) {
+                String requestedHouseNumber = houseNumber(candidate.text());
+                for (JsonNode match : body.path("results")) {
+                    boolean addressType = hasType(match, "street_address") || hasType(match, "premise")
+                            || hasType(match, "subpremise");
+                    if (match.path("partial_match").asBoolean(false) || !addressType) continue;
+
+                    String streetNumber = addressComponent(match, "street_number");
+                    if (streetNumber == null || addressComponent(match, "route") == null
+                            || !houseNumbersMatch(requestedHouseNumber, streetNumber)) continue;
+
+                    JsonNode location = match.path("geometry").path("location");
+                    if (location.path("lat").isNumber() && location.path("lng").isNumber()) {
+                        double latitude = location.path("lat").asDouble();
+                        double longitude = location.path("lng").asDouble();
+                        String placeId = match.path("place_id").asString(null);
+                        if (Double.isFinite(latitude) && latitude >= -90 && latitude <= 90
+                                && Double.isFinite(longitude) && longitude >= -180 && longitude <= 180
+                                && (latitude != 0 || longitude != 0) && placeId != null
+                                && placeId.matches("[A-Za-z0-9_-]{1,512}")) {
+                            return candidate.withLatLonPid(latitude, longitude, placeId);
+                        }
                     }
                 }
+            } else if (!"ZERO_RESULTS".equals(status)) {
+                logFailure(attempt, "provider_not_retried", httpStatus, status, null);
+                throw new IllegalStateException("Geocoding failed; check API access and quota");
             }
-        } else if (!"ZERO_RESULTS".equals(status)) {
-            throw new IllegalStateException("Geocoding failed; check API access and quota");
+            // Keep unresolved stops visible for review; never silently remove them.
+            return candidate.withLatLonPid(0, 0, null);
         }
-        // Keep unresolved stops visible for review; never silently remove them.
-        return candidate.withLatLonPid(0, 0, null);
+        throw new IllegalStateException("Geocoding service is unavailable");
+    }
+
+    private static boolean isRetryableHttpStatus(int status) {
+        return status == 408 || status == 500 || status == 502 || status == 503 || status == 504;
+    }
+
+    private static void waitBeforeRetry(int failedAttempt) {
+        long delayMillis = failedAttempt == 1 ? FIRST_RETRY_DELAY_MILLIS : SECOND_RETRY_DELAY_MILLIS;
+        try {
+            TimeUnit.MILLISECONDS.sleep(delayMillis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Geocoding interrupted");
+        }
+    }
+
+    private static Throwable unwrap(Throwable failure) {
+        while ((failure instanceof ExecutionException || failure instanceof CompletionException)
+                && failure.getCause() != null) {
+            failure = failure.getCause();
+        }
+        return failure;
+    }
+
+    private static void logFailure(int attempt, String category, Integer httpStatus, String providerStatus,
+                                   Throwable cause) {
+        String safeProviderStatus = providerStatus == null ? "none" : safeGoogleStatus(providerStatus);
+        String causeType = cause == null ? "none" : cause.getClass().getSimpleName();
+        LOGGER.warn("Geocoding attempt failed category={} attempt={}/{} httpStatus={} providerStatus={} causeType={}",
+                category, attempt, MAX_ATTEMPTS, httpStatus == null ? "none" : httpStatus, safeProviderStatus, causeType);
+    }
+
+    private static String safeGoogleStatus(String status) {
+        return switch (status) {
+            case "OK" -> "OK";
+            case "ZERO_RESULTS" -> "ZERO_RESULTS";
+            case "OVER_QUERY_LIMIT" -> "OVER_QUERY_LIMIT";
+            case "OVER_DAILY_LIMIT" -> "OVER_DAILY_LIMIT";
+            case "REQUEST_DENIED" -> "REQUEST_DENIED";
+            case "INVALID_REQUEST" -> "INVALID_REQUEST";
+            case "UNKNOWN_ERROR" -> "UNKNOWN_ERROR";
+            default -> "OTHER";
+        };
     }
 
     private static String withoutSecondaryUnit(String address) {
@@ -280,6 +369,12 @@ public class GeocodingClient {
 
     private static String encode(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
+    }
+
+    private static final class TransientTransportFailure extends RuntimeException {
+        private TransientTransportFailure(Throwable cause) {
+            super(cause);
+        }
     }
 
     private static final class Usage {

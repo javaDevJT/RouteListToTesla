@@ -51,7 +51,7 @@ public class AddressOcrService {
     static final int MAX_IMAGE_BYTES = 12 * 1024 * 1024;
     static final long MAX_IMAGE_PIXELS = 20_000_000L;
     static final int MAX_TSV_BYTES = 8 * 1024 * 1024;
-    static final Duration PROCESS_TIMEOUT = Duration.ofSeconds(45);
+    static final Duration PROCESS_TIMEOUT = Duration.ofSeconds(75);
     static final Duration OUTPUT_DRAIN_TIMEOUT = Duration.ofSeconds(1);
     private static final Duration PROCESS_TERMINATION_GRACE = Duration.ofMillis(150);
     private static final long PROCESS_POLL_INTERVAL_MILLIS = 10;
@@ -114,6 +114,8 @@ public class AddressOcrService {
 
         Path jobDirectory = null;
         String failureCategory = "image_validation";
+        String timeoutScope = "none";
+        String timeoutEngines = "none";
         Integer exitCode = null;
         try {
             String imageExtension = validateImage(imageBytes);
@@ -154,8 +156,11 @@ public class AddressOcrService {
                         "The image could not be decoded or exceeds the 20 megapixel limit. Choose a valid HEIC, PNG, or JPEG image.");
             }
             if (result.exitCode() != 0) {
-                if (isWrapperTimeout(result.stderr())) {
+                TimeoutDetails timeout = wrapperTimeout(result.stderr());
+                if (timeout != null) {
                     failureCategory = "engine_timeout";
+                    timeoutScope = timeout.scope();
+                    timeoutEngines = timeout.engines().isEmpty() ? "none" : String.join(",", timeout.engines());
                     throw new IllegalStateException("The local OCR engines timed out. Please retry.");
                 }
                 failureCategory = "engine_failure";
@@ -250,10 +255,10 @@ public class AddressOcrService {
             }
             return candidates;
         } catch (IllegalArgumentException | IllegalStateException e) {
-            logFailure(failureCategory, e.getClass(), exitCode, startedAt);
+            logFailure(failureCategory, e.getClass(), exitCode, startedAt, timeoutScope, timeoutEngines);
             throw e;
         } catch (IOException e) {
-            logFailure(failureCategory, e.getClass(), exitCode, startedAt);
+            logFailure(failureCategory, e.getClass(), exitCode, startedAt, timeoutScope, timeoutEngines);
             throw e;
         } finally {
             try {
@@ -272,15 +277,58 @@ public class AddressOcrService {
     }
 
     private static void logFailure(String category, Class<?> exceptionClass, Integer exitCode, long startedAt) {
-        LOG.warn("OCR failed category={} exceptionClass={} exitCode={} elapsedMs={}",
+        logFailure(category, exceptionClass, exitCode, startedAt, "none", "none");
+    }
+
+    private static void logFailure(
+            String category, Class<?> exceptionClass, Integer exitCode, long startedAt,
+            String timeoutScope, String timeoutEngines) {
+        LOG.warn("OCR failed category={} exceptionClass={} exitCode={} elapsedMs={} timeoutScope={} timeoutEngines={}",
                 category,
                 exceptionClass == null ? "none" : exceptionClass.getSimpleName(),
                 exitCode == null ? "none" : exitCode.toString(),
-                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt));
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt),
+                timeoutScope,
+                timeoutEngines);
     }
 
-    private static boolean isWrapperTimeout(String stderr) {
-        return stderr != null && stderr.stripTrailing().endsWith("Consensus OCR failed: TimeoutExpired");
+    private static TimeoutDetails wrapperTimeout(String stderr) {
+        if (stderr == null) {
+            return null;
+        }
+        String output = stderr.stripTrailing();
+        String lastLine = output.substring(output.lastIndexOf('\n') + 1);
+        if (lastLine.equals("Consensus OCR failed: TimeoutExpired")) {
+            return new TimeoutDetails("shared_deadline", List.of());
+        }
+
+        String prefix = "Consensus OCR failed: Timeout scope=";
+        if (!lastLine.startsWith(prefix)) {
+            return null;
+        }
+        int engineSeparator = lastLine.indexOf(" engines=", prefix.length());
+        if (engineSeparator < 0) {
+            return null;
+        }
+        String scope = lastLine.substring(prefix.length(), engineSeparator);
+        if (!scope.equals("engine") && !scope.equals("shared_deadline")) {
+            return null;
+        }
+        String engineList = lastLine.substring(engineSeparator + " engines=".length());
+        List<String> reported = new ArrayList<>();
+        if (!engineList.equals("none")) {
+            for (String engine : engineList.split(",", -1)) {
+                if (!CONSENSUS_ENGINE_SET.contains(engine) || reported.contains(engine)) {
+                    return null;
+                }
+                reported.add(engine);
+            }
+        }
+        if (scope.equals("engine") && reported.size() != 1) {
+            return null;
+        }
+        List<String> ordered = CONSENSUS_ENGINES.stream().filter(reported::contains).toList();
+        return new TimeoutDetails(scope, ordered);
     }
 
     static String withDefaultState(String address, String defaultState) {
@@ -737,6 +785,9 @@ public class AddressOcrService {
     @FunctionalInterface
     interface CommandExecutor {
         ProcessResult execute(List<String> command) throws IOException, InterruptedException;
+    }
+
+    private record TimeoutDetails(String scope, List<String> engines) {
     }
 
     record ProcessResult(int exitCode, String stdout, String stderr) {

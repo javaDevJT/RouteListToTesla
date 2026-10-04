@@ -3,15 +3,23 @@ package com.jtdev.routelisttotesla.service;
 import com.jtdev.routelisttotesla.model.PlaceCandidate;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -22,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.*;
 
 class GeocodingClientTest {
     @Test
@@ -116,23 +125,114 @@ class GeocodingClientTest {
     }
 
     @Test
-    void providerFailuresDoNotTriggerAddressFallbacks() throws Exception {
+    void retriesTransientProviderFailuresForTheSameApartmentAddressAtMostThreeTimes() throws Exception {
+        String full = "12345 W SAMPLE ST APT 212, SAMPLE CITY, MI";
+        List<String> lookups = Collections.synchronizedList(new ArrayList<>());
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = server(exchange -> {
+            lookups.add(addressParameter(exchange));
+            int request = requests.getAndIncrement();
+            if (request == 0) {
+                respond(exchange, 408, "private provider details");
+            } else if (request == 1) {
+                respond(exchange, "{\"status\":\"UNKNOWN_ERROR\",\"results\":[]}");
+            } else {
+                respond(exchange, okAddress("accepted", "12345", "W SAMPLE ST", 42.3, -83.2, false));
+            }
+        });
+        server.start();
+        try {
+            PlaceCandidate result = client(server, 3, 3, 1, 1)
+                    .batchGeocode("owner-a", List.of(place(full, "scan.png", 0))).getFirst();
+
+            assertEquals(3, requests.get());
+            assertEquals(List.of(full, full, full), lookups);
+            assertEquals(full, result.text());
+            assertEquals("accepted", result.pid());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void retriesTransportFailuresForTheSameRequestAtMostThreeTimes() {
+        String address = "12345 W SAMPLE ST APT 212, SAMPLE CITY, MI";
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> success = successfulResponse(ok("accepted", 42.3, -83.2));
+        CompletableFuture<HttpResponse<String>> ioFailure =
+                CompletableFuture.failedFuture(new IOException("private transport detail"));
+        CompletableFuture<HttpResponse<String>> timeoutFailure =
+                CompletableFuture.failedFuture(new HttpTimeoutException("private timeout detail"));
+        when(httpClient.<String>sendAsync(any(HttpRequest.class), any()))
+                .thenReturn(ioFailure, timeoutFailure, CompletableFuture.completedFuture(success));
+        GeocodingClient client = client(httpClient, 3, 3, 1, 1);
+
+        PlaceCandidate result = client.batchGeocode("owner-a", List.of(place(address, "scan.png", 0))).getFirst();
+        ArgumentCaptor<HttpRequest> sentRequests = ArgumentCaptor.forClass(HttpRequest.class);
+        verify(httpClient, times(3)).<String>sendAsync(sentRequests.capture(), any());
+
+        assertEquals(1L, sentRequests.getAllValues().stream().map(HttpRequest::uri).distinct().count());
+        assertEquals("accepted", result.pid());
+    }
+
+    @Test
+    void exhaustedTransientFailuresStopAfterThreeAttempts() throws Exception {
+        String full = "12345 W SAMPLE ST APT 212, SAMPLE CITY, MI";
+        List<String> lookups = Collections.synchronizedList(new ArrayList<>());
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = server(exchange -> {
+            requests.incrementAndGet();
+            lookups.add(addressParameter(exchange));
+            respond(exchange, 503, "private provider details");
+        });
+        server.start();
+        try {
+            IllegalStateException failure = assertThrows(IllegalStateException.class,
+                    () -> client(server, 3, 3, 1, 1).batchGeocode("owner-a",
+                            List.of(place(full, "scan.png", 0))));
+
+            assertEquals(3, requests.get());
+            assertEquals(List.of(full, full, full), lookups);
+            assertFalse(failure.getMessage().contains("private provider details"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void retryUsesOwnerBudgetBeforeSendingAndReleasesTheBatchSlot() {
+        HttpClient httpClient = mock(HttpClient.class);
+        CompletableFuture<HttpResponse<String>> ioFailure =
+                CompletableFuture.failedFuture(new IOException("private transport detail"));
+        HttpResponse<String> success = successfulResponse(ok("accepted", 42.3, -83.2));
+        when(httpClient.<String>sendAsync(any(HttpRequest.class), any()))
+                .thenReturn(ioFailure, CompletableFuture.completedFuture(success));
+        GeocodingClient client = client(httpClient, 1, 10, 1, 1);
+
+        ResponseStatusException rejected = assertThrows(ResponseStatusException.class,
+                () -> client.batchGeocode("owner-a", List.of(place("12345 W SAMPLE ST", "a.png", 0))));
+
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, rejected.getStatusCode());
+        verify(httpClient, times(1)).<String>sendAsync(any(HttpRequest.class), any());
+        assertEquals("accepted", client.batchGeocode("owner-b",
+                List.of(place("12345 W SAMPLE ST", "b.png", 0))).getFirst().pid());
+        verify(httpClient, times(2)).<String>sendAsync(any(HttpRequest.class), any());
+    }
+
+    @Test
+    void providerFailuresDoNotRetryOrTriggerAddressFallbacks() throws Exception {
+        List<Integer> httpStatuses = List.of(200, 200, 200, 200, 200, 200, 429, 501);
         List<String> failures = List.of(
                 "{\"status\":\"REQUEST_DENIED\",\"results\":[]}",
                 "{\"status\":\"OVER_QUERY_LIMIT\",\"results\":[]}",
-                "{\"status\":\"UNKNOWN_ERROR\",\"results\":[]}",
-                "{\"status\":\"OK\"}", "invalid-json", "service-unavailable");
+                "{\"status\":\"OVER_DAILY_LIMIT\",\"results\":[]}",
+                "{\"status\":\"INVALID_REQUEST\",\"results\":[]}",
+                "{\"status\":\"OK\"}", "invalid-json",
+                "{\"status\":\"OVER_QUERY_LIMIT\",\"results\":[]}", "service-unavailable");
         AtomicInteger requests = new AtomicInteger();
         HttpServer server = server(exchange -> {
             int request = requests.getAndIncrement();
-            if (request == failures.size() - 1) {
-                byte[] bytes = failures.get(request).getBytes(StandardCharsets.UTF_8);
-                exchange.sendResponseHeaders(503, bytes.length);
-                exchange.getResponseBody().write(bytes);
-                exchange.close();
-            } else {
-                respond(exchange, failures.get(request));
-            }
+            respond(exchange, httpStatuses.get(request), failures.get(request));
         });
         server.start();
         try {
@@ -510,6 +610,21 @@ class GeocodingClientTest {
                 "us", ownerLimit, globalLimit, ownerConcurrency, globalConcurrency, 0);
     }
 
+    private static GeocodingClient client(HttpClient httpClient, int ownerLimit, int globalLimit,
+                                          int ownerConcurrency, int globalConcurrency) {
+        GeocodingClient client = new GeocodingClient("test-key", "http://127.0.0.1:1/geocode", "us",
+                ownerLimit, globalLimit, ownerConcurrency, globalConcurrency, 0);
+        ReflectionTestUtils.setField(client, "http", httpClient);
+        return client;
+    }
+
+    private static HttpResponse<String> successfulResponse(String body) {
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn(body);
+        return response;
+    }
+
     private static HttpServer server(Handler handler) throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/geocode", exchange -> {
@@ -523,8 +638,12 @@ class GeocodingClientTest {
     }
 
     private static void respond(com.sun.net.httpserver.HttpExchange exchange, String body) throws Exception {
+        respond(exchange, 200, body);
+    }
+
+    private static void respond(com.sun.net.httpserver.HttpExchange exchange, int status, String body) throws Exception {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.sendResponseHeaders(200, bytes.length);
+        exchange.sendResponseHeaders(status, bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();
     }

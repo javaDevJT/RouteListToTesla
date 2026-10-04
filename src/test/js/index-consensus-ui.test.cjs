@@ -42,6 +42,31 @@ test('upload errors show the server reason and retain the selected files for ret
     }
 });
 
+test('each image uses its own sequential request and seams stay deduplicated', async () => {
+    const addresses = [], sent = [];
+    class FormData {
+        constructor() { this.names = []; }
+        append(name, value, filename) { if (name === 'images') this.names.push(filename); }
+    }
+    const rows = [
+        [candidate({ text: '101 FIRST RD', normalized: '101 FIRST RD' }), candidate({ text: '202 SECOND RD', normalized: '202 SECOND RD' })],
+        [candidate({ text: '202 SECOND RD', normalized: '202 SECOND RD' }), candidate({ text: '303 THIRD RD', normalized: '303 THIRD RD' })]
+    ];
+    const source = extractBetween('function appendImageCandidates(', '// File input handler');
+    const context = vm.createContext({
+        FormData, extractedAddresses: addresses,
+        apiFetch: async (url, options) => {
+            const index = sent.length;
+            sent.push(options.body.names);
+            return { ok: true, json: async () => ({ imageCandidates: [rows[index]] }) };
+        }
+    });
+    new vm.Script(source + '\nglobalThis.upload = uploadImages;').runInContext(context);
+    await context.upload([{ file: {}, name: 'first.heic' }, { file: {}, name: 'second.heic' }], 'MI');
+    assert.deepEqual(sent, [['first.heic'], ['second.heic']]);
+    assert.deepEqual(Array.from(addresses, row => row.text), ['101 FIRST RD', '202 SECOND RD', '303 THIRD RD']);
+});
+
 class FakeElement {
     constructor(tagName) {
         this.tagName = tagName.toLowerCase();

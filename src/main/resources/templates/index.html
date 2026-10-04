@@ -655,20 +655,19 @@
         }
 
         async function uploadImages(fileInfos, defaultState) {
-            if (fileInfos.length === 0) return;
-            const formData = new FormData();
-            for (const fileInfo of fileInfos) formData.append('images', fileInfo.file, fileInfo.name);
-            formData.append('defaultState', defaultState);
-
-            const response = await apiFetch('/route/places', { method: 'POST', body: formData });
-            if (!response.ok) {
-                const problem = await response.json().catch(() => ({}));
-                throw new Error(problem.error || `HTTP ${response.status}: ${response.statusText}`);
-            }
-            const result = await response.json();
-            // Keep image boundaries when a fresh batch follows cached screenshots.
-            for (const candidates of result.imageCandidates || [result.candidates || []]) {
-                appendImageCandidates(candidates);
+            for (const fileInfo of fileInfos) {
+                const formData = new FormData();
+                formData.append('images', fileInfo.file, fileInfo.name);
+                formData.append('defaultState', defaultState);
+                const response = await apiFetch('/route/places', { method: 'POST', body: formData });
+                if (!response.ok) {
+                    const problem = await response.json().catch(() => ({}));
+                    throw new Error(problem.error || `HTTP ${response.status}: ${response.statusText}`);
+                }
+                const result = await response.json();
+                for (const candidates of result.imageCandidates || [result.candidates || []]) {
+                    appendImageCandidates(candidates);
+                }
             }
         }
 

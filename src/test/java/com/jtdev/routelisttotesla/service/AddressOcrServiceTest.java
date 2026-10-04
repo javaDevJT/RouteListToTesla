@@ -37,6 +37,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AddressOcrServiceTest {
 
     @Test
+    void javaWrapperDeadlineLeavesTimeForConsensusWorkersToStop() {
+        assertEquals(Duration.ofSeconds(75), AddressOcrService.PROCESS_TIMEOUT);
+        assertTrue(AddressOcrService.PROCESS_TIMEOUT.minusSeconds(60).compareTo(Duration.ofSeconds(2)) > 0);
+    }
+
+    @Test
     void skipsItineraryCodesBeforeAddressesAndPreservesInlineAndWrappedHashUnits() throws Exception {
         String tsv = tsv(
                 word(1, 1, 95, "Expected by 11:00 PM"),
@@ -471,6 +477,24 @@ class AddressOcrServiceTest {
                 () -> timeout.extractAddressCandidates(png(), "route.png", "MI"));
         assertTrue(timeoutError.getMessage().contains("timed out"));
         assertTrue(output.toString().contains("category=engine_timeout"));
+        assertTrue(output.toString().contains("timeoutScope=shared_deadline"));
+        assertFalse(output.toString().contains(privateDiagnostic));
+
+        AddressOcrService engineTimeout = new AddressOcrService("ocr-binary", "eng", arguments ->
+                new AddressOcrService.ProcessResult(2, "",
+                        privateDiagnostic + "\nConsensus OCR failed: Timeout scope=engine engines=tesseract\n"));
+        IllegalStateException engineTimeoutError = assertThrows(IllegalStateException.class,
+                () -> engineTimeout.extractAddressCandidates(png(), "route.png", "MI"));
+        assertTrue(engineTimeoutError.getMessage().contains("timed out"));
+        assertTrue(output.toString().contains("timeoutScope=engine timeoutEngines=tesseract"));
+        assertFalse(output.toString().contains(privateDiagnostic));
+
+        AddressOcrService sharedEngineTimeout = new AddressOcrService("ocr-binary", "eng", arguments ->
+                new AddressOcrService.ProcessResult(2, "",
+                        privateDiagnostic + "\nConsensus OCR failed: Timeout scope=shared_deadline engines=paddleocr,easyocr\n"));
+        assertThrows(IllegalStateException.class,
+                () -> sharedEngineTimeout.extractAddressCandidates(png(), "route.png", "MI"));
+        assertTrue(output.toString().contains("timeoutEngines=paddleocr,easyocr"));
         assertFalse(output.toString().contains(privateDiagnostic));
     }
 

@@ -1,12 +1,36 @@
 package com.jtdev.routelisttotesla.service;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import com.jtdev.routelisttotesla.model.PlaceCandidate;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class ImageCacheServiceTest {
+    @Test
+    void completedExtractionSurvivesRestartWithoutBecomingACompletedImage(@TempDir java.nio.file.Path root) {
+        ImageCacheService cache = new ImageCacheService(root);
+        String key = cache.calculateClientCacheKey("a".repeat(64), "MI", "owner-a");
+        PlaceCandidate row = new PlaceCandidate("123 MAIN ST APT 330 MI", "123 MAIN ST APT 330 MI",
+                "original.heic", 2, 0, 0, null, 3, false, java.util.List.of("three engine readings"));
+        cache.cacheOcrResults(key, "original.heic", java.util.List.of(row));
+        ImageCacheService restarted = new ImageCacheService(root);
+        assertEquals(java.util.List.of(row), restarted.getCachedOcrResults(key));
+        assertNull(restarted.getCachedResults(key));
+        assertFalse(restarted.isCached(key));
+        assertNull(restarted.getCachedOcrResults(cache.calculateClientCacheKey("a".repeat(64), "MI", "owner-b")));
+        assertNull(restarted.getCachedOcrResults(cache.calculateClientCacheKey("a".repeat(64), "OH", "owner-a")));
+        assertEquals(0L, restarted.getCacheStats().get("totalCachedImages"));
+        assertEquals(1L, restarted.getCacheStats().get("cachedExtractions"));
+        PlaceCandidate resolved = row.withLatLonPid(42.1, -83.1, "street-pid");
+        restarted.cacheImageResults(key, "original.heic", java.util.List.of(resolved));
+        assertEquals(java.util.List.of(resolved), new ImageCacheService(root).getCachedResults(key));
+    }
+
     @Test
     void clientCacheKeyIncludesGeocodingVersion() throws Exception {
         ImageCacheService cache = new ImageCacheService();

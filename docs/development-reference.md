@@ -34,7 +34,7 @@ checks before deployment. Per-suite native reports are retained under
 The execution worker completed its handoff and timeout-test correction; the
 primary owns native qualification and deployment of release `20260929-parallel-ocr`.
 
-The browser preserves the selected image order, calculates each image's SHA-256, and checks the compatible cache before upload. Cache identity includes the extraction version and default state as well as image content; file names remain display metadata. Uncached images are uploaded to the application server.
+The browser preserves the selected image order, calculates each image's SHA-256, and checks the compatible cache before upload. Uncached images are processed in sequential single-image requests so completed images remain reusable when a later image fails. Successful OCR is persisted before geocoding under an extraction-only cache entry; a retry can reuse it after restart, without advertising it as a completed browser cache hit. See [October 4 reliability changes](reliability-2026-10-04.md). Cache identity includes the extraction version and default state as well as image content; file names remain display metadata. Uncached images are uploaded to the application server.
 
 `AddressOcrService` invokes `ocr/run`, which runs Tesseract, PaddleOCR through RapidOCR, and EasyOCR locally.
 It requires strict consensus JSON with observed per-engine line evidence; plain Tesseract TSV is supported
@@ -95,7 +95,7 @@ volume and a temporary filesystem with a read-only image filesystem. The release
 configuration and candidate qualification harness use eight CPUs and an 8 GiB
 memory limit. OCR uses two Torch/OpenMP/BLAS compute threads while Torch interop
 stays at one. All three engines still run in parallel; preprocessing, quality
-gates, admission control, and the 45-second OCR subprocess deadline are unchanged.
+gates and admission control are unchanged. The October 4 reliability patch allows a 60-second shared Python engine deadline inside a 75-second Java subprocess deadline; worker cleanup remains bounded and all three engines are required.
 
 Use native amd64 hardware for OCR performance qualification. Running this amd64
 image on Apple Silicon uses emulation and does not establish production timings.
@@ -153,8 +153,7 @@ Run decoder tests inside the release image: mount `ocr/` read-only at `/tests`, 
 The EasyOCR detector is bounded to a 1280-pixel longest side and an 800,000-pixel
 working area. It returns boxes in original-image coordinates; Tesseract and
 PaddleOCR retain their existing preprocessing. This leaves memory for Spring
-inside the 8 GiB container. Image input limits and the 45-second OCR deadline
-remain unchanged. Extraction cache version `ocr-consensus-v5` invalidates older
+inside the 8 GiB container. Image input limits remain unchanged. OCR has a 60-second shared engine deadline and a 75-second outer process deadline. Extraction cache version `ocr-consensus-v5` invalidates older
 readings without deleting saved routes. Bare clock fragments such as `10 PM`
 are excluded by the shared address parser; names such as `10 PM ROAD` remain
 address candidates.
@@ -183,7 +182,7 @@ information. If it returns no acceptable destination, one fallback lookup omits
 the recognized unit suffix. Both attempts reject broad city/road matches,
 partial matches, mismatched house numbers, and invalid coordinates or place IDs.
 Stops remain unresolved if neither attempt succeeds; their original text is
-preserved. Provider/service errors propagate without address retries. Fallback
+preserved. Transient transport errors, HTTP 408/500/502/503/504, and Google `UNKNOWN_ERROR` receive at most three application-owned attempts of the unchanged address, with 100/200 ms backoff. Each extra attempt reserves owner/global usage and uses the 60 ms pacing gate. Permanent, quota, malformed, and definitive no-match responses do not retry. JDK-internal recovery of idempotent GET connections can add wire activity within one application attempt; the application counter is not an exact billing meter. Service failures do not cause unit omission. Fallback
 calls use the existing pacing and count against owner/global quotas only when
 needed. The `street-address-v2` policy version participates in image-cache keys.
 Reviewed addresses are resolved again before dispatch so older drafts and
