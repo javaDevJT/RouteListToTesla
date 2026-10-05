@@ -70,6 +70,14 @@ COPY --from=ocr-build /app/ocr /app/ocr
 COPY ocr/consensus.py /app/ocr/consensus.py
 COPY --chmod=0755 ocr/run /app/ocr/run
 
+# Validate installed packages in the assembled runtime, after all stage copies.
+RUN set -eu; \
+    for dependency in libssl3t64 openssl openssl-provider-legacy; do \
+        installed_version="$(dpkg-query -W -f='${Version}' "$dependency")"; \
+        printf '%s %s\n' "$dependency" "$installed_version"; \
+        dpkg --compare-versions "$installed_version" ge 3.5.5-1ubuntu3.6; \
+    done
+
 ENV JAVA_HOME=/opt/java PATH="/opt/java/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     OMP_THREAD_LIMIT=2 OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 \
