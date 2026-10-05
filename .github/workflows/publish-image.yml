@@ -72,6 +72,8 @@ jobs:
           cache-to: ${{ steps.ci_disk_cache_1.outputs.to && format('type=local,dest={0},mode=max,ignore-error=true', steps.ci_disk_cache_1.outputs.to) || '' }}
           context: .
           platforms: linux/amd64
+          # Recheck Ubuntu security updates even when application layers are cached.
+          no-cache-filters: runtime-base
           push: false # Push-by-digest is configured in the exporter; tags follow the scan.
           build-args: |
             VCS_REF=${{ github.sha }}

@@ -1,5 +1,6 @@
 # Documentation
 
+- [CI recovery (2026-10-05)](ci-recovery-2026-10-05.md): vulnerability remediation, runner storage sizing, and release acceptance evidence.
 - [Screenshot processing reliability (2026-10-04)](reliability-2026-10-04.md): staged cache recovery, bounded OCR and Google failure handling, qualification and release evidence.
 
 - [OCR errors and route-send holds (2026-10-01)](errors-2026-10-01.md): definite pre-send rejections, unresolved-location feedback, privacy-preserving failure diagnostics, and validation evidence.

@@ -28,12 +28,24 @@ RUN apt-get update && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 
 FROM runtime-base AS ocr-build
-RUN apt-get update && apt-get install -y --no-install-recommends python3-venv \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential python3-dev python3-venv \
     && rm -rf /var/lib/apt/lists/*
 COPY ocr/requirements.txt /app/ocr/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip python3 -m venv /opt/ocr \
+    && CMAKE_ARGS="-DWITH_FFMPEG=OFF -DWITH_GSTREAMER=OFF -DWITH_V4L=OFF -DWITH_QT=OFF -DWITH_GTK=OFF -DWITH_OPENGL=OFF -DBUILD_EXAMPLES=OFF" \
+         CMAKE_BUILD_PARALLEL_LEVEL=4 \
+       /opt/ocr/bin/pip wheel --no-cache-dir --no-deps \
+         --no-binary=opencv-python,opencv-python-headless \
+         --wheel-dir=/tmp/opencv-wheelhouse \
+         opencv-python==5.0.0.93 opencv-python-headless==5.0.0.93 \
+    && /opt/ocr/bin/pip install --no-cache-dir --no-index --no-deps \
+         --find-links=/tmp/opencv-wheelhouse \
+         opencv-python==5.0.0.93 opencv-python-headless==5.0.0.93 \
+    && rm -rf /tmp/opencv-wheelhouse \
     && /opt/ocr/bin/pip install -r /app/ocr/requirements.txt \
-    && /opt/ocr/bin/pip check
+    && /opt/ocr/bin/pip check \
+    && /opt/ocr/bin/python -c 'import cv2, re; info = cv2.getBuildInformation(); match = re.search(r"^\s*FFMPEG:\s*(\S+)", info, re.MULTILINE); assert match and match.group(1) == "NO", "OpenCV FFmpeg backend must be disabled"; print("OpenCV FFMPEG:", match.group(1))'
 COPY ocr/download_models.py ocr/models.json /app/ocr/
 RUN /opt/ocr/bin/python /app/ocr/download_models.py --directory /app/ocr/models --manifest /app/ocr/models.json
 

@@ -1,0 +1,39 @@
+# October 5 CI recovery
+
+## Objective and acceptance
+
+Fix the failing main-branch image build without weakening the High/Critical vulnerability gate or the private runner's storage-efficiency policy. Preserve the three local OCR engines, native HEIC support, authorization, retained application data, and vehicle-command safeguards. Complete source, CI, immutable image, native OCR qualification, deployment, and served-runtime checks. No Google address lookups or Tesla commands are authorized by this recovery.
+
+## Baseline evidence
+
+Main commit `402683a3e4f1aea606c789e6901955f4e535b267` failed run `37240152411` on the RouteList 32 GiB storage runner. The build/test step succeeded. The High/Critical vulnerability scan failed, and the storage gate measured 26,837,884,928 bytes (24.995 GiB), 78.109% of its 32 GiB allocation, below the existing 80% utilization requirement. Release-tag publication was skipped. This storage rejection is underutilization, not an out-of-space failure.
+
+## Ownership and decisions
+
+- Primary: runner coordination, workflow/storage configuration, documentation, integration checks, commit/push, CI monitoring, image qualification, and release verification.
+- Dependency worker: inspect the exact failed-run SBOM/Grype evidence and repair affected runtime dependencies in `Dockerfile`, `ocr/requirements.txt`, or `pom.xml`; preserve OCR behavior and report focused compatibility checks. No security waivers or unrelated changes.
+- Independent review: assigned after the candidate exists, limited to vulnerability coverage, storage-policy preservation, and release risks.
+
+Worker policy is resolved from the live native spawn catalog on October 5, 2026: its single callable Luna model is `gpt-6-luna`, with maximum supported effort `max`. Both controls are explicitly selected for `/root/ci_security_repair`, using a fresh bounded prompt. Observed runtime model/effort fields are not exposed separately. Native completion returns worker capacity; completed prior workers are retained as historical records without messaging or restarting them.
+
+## Work and release ledger
+
+The independent read-only candidate review completed with no static blocker in the Dockerfile, workflow, or dependency overrides. Its accepted result permits the qualification build on the existing 32 GiB lane. The review checked wheel build/install sequencing, the enforced `FFMPEG: NO` assertion, targeted base-stage cache invalidation, and preservation of both gates. It did not claim native runtime compatibility: the surviving `cv2` installation and all 11 PNG/JPEG/HEIC fixtures remain release prerequisites.
+
+Recovery is in progress. The runner owner must confirm any newly requested storage label is configured and listening before a workflow push can target it. Vulnerabilities must be repaired against artifact evidence; scanner suppression and artificial disk padding are excluded. A green build must prove both gates and release-tag publication, then the resulting image must pass native OCR and runtime checks before the production handoff.
+
+The exact scan artifact identifies High findings in FFmpeg 8.1.1 bundled with OpenCV, Jackson core/databind 3.1.5, and Ubuntu OpenSSL packages `3.5.5-1ubuntu3.5`, plus Critical Tomcat 11.0.24 findings. The dependency worker is preparing targeted repairs. The workflow now invalidates the `runtime-base` stage's cache so its existing `apt-get update`/`apt-get upgrade` checks current security packages on every build. Official Docker cache documentation confirms that an unchanged `RUN` instruction otherwise reuses its cached result; `no-cache-filters` limits invalidation to the named stage.
+
+The complete blocker set in artifact `container-security-publish-0-build-1` includes 17 distinct High FFmpeg CVEs, three Critical Tomcat advisories (fixed in 11.0.25), two High Jackson core advisories and three High Jackson databind advisories (all covered by 3.1.7), and one High OpenSSL advisory affecting three Ubuntu packages (fixed in `3.5.5-1ubuntu3.6`). The newer OpenCV wheel only repairs part of the FFmpeg set. The selected repair is an image-only OpenCV source build with `WITH_FFMPEG=OFF`, retaining screenshot image codecs and both honestly declared OpenCV distributions required by the OCR engines. Its build storage must be measured before final runner sizing.
+
+The human approved coordination with the new infrastructure owner, “Add daily Docker vulnerability scans,” for a conditional 30 GiB RouteList lane. That owner exclusively controls infrastructure changes; the primary owns this repository's workflow. The corrected dependency build may change peak storage, so old-artifact sizing alone does not establish the final reservation or listener readiness. The existing 32 GiB label remains selected pending that qualification.
+
+The Actions coordinator independently validated the old run's complete export and bound storage telemetry. Its report confirms that 30 GiB would yield 83.316% utilization and 5,374,369,792 bytes of headroom for the old image. This does not qualify the repaired image. The selected next step is native candidate qualification on the existing 32 GiB lane, followed by runner resizing only if the corrected completed-build evidence requires and permits it.
+
+The current production application was read back as `RUNNING` on the previous verified reliability digest `sha256:1c40c1c94f8e6049298c07dbb0d296774470e936df068ca403cdb48c679e4293`, with the existing route-data volume and no published host ports. New release helpers in the ignored `output/private/ci-fix-20261005/` directory preserve earlier evidence and target a separate disposable QA app. Their code matches the previous verified helpers apart from release paths and trailing whitespace; the fixture manifest has nine generated cases plus two original HEIC cases.
+
+The targeted Maven repair passed a fresh `clean package`: 146 tests, zero failures/errors/skips. The newly built JAR contains Jackson core/databind 3.1.7 and all three Tomcat embedded modules at 11.0.25. The browser regression suite also passed. OpenCV/native-image, CI security/storage, and deployment checks remain pending.
+
+The dependency worker completed and released its native slot. Its exact artifact findings and inspected Docker/POM repairs are retained, with native packaging qualification pending. The primary owns Dockerfile integration. Both required OpenCV distributions are built from pinned source with FFmpeg, other external video backends, and GUI backends disabled. Four build jobs bound compilation parallelism. The generic video-I/O module stays present to preserve API/build-information compatibility; its FFmpeg backend must report `NO`. Upstream warns that the two distributions share `cv2`; this pre-existing dependency conflict therefore requires testing the actual installed build and all image/OCR fixtures, rather than treating `pip check` as sufficient qualification.
+
+Independent candidate review is assigned to `/root/ci_candidate_review` at `gpt-6-luna` / `max`, with read-only ownership of the Docker/workflow/POM diff. Its acceptance checks target build feasibility, actual FFmpeg exclusion, security-gate preservation, and runtime compatibility; primary retains all edits and release actions.
