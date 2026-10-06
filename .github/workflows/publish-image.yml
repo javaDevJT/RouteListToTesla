@@ -7,6 +7,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      cold_build:
+        description: Run an isolated cold image build without reusable caches.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -50,6 +56,7 @@ jobs:
 
       - name: Prepare disk build cache
         id: ci_disk_cache_1
+        if: ${{ inputs.cold_build != true }}
         run: ci-cache "routelisttotesla-linux-amd64"
       - name: Prepare immutable image and release tags
         id: container_security_1
@@ -67,9 +74,10 @@ jobs:
         with:
           outputs: ${{ steps.container_security_1.outputs.exporter }}
           cache-from: |
-            type=local,src=${{ steps.ci_disk_cache_1.outputs.from }}
-            type=gha,version=2,scope=routelisttotesla-linux-amd64
-          cache-to: ${{ steps.ci_disk_cache_1.outputs.to && format('type=local,dest={0},mode=max,ignore-error=true', steps.ci_disk_cache_1.outputs.to) || '' }}
+            ${{ inputs.cold_build != true && format('type=local,src={0}', steps.ci_disk_cache_1.outputs.from) || '' }}
+            ${{ inputs.cold_build != true && 'type=gha,version=2,scope=routelisttotesla-linux-amd64' || '' }}
+          cache-to: ${{ inputs.cold_build != true && steps.ci_disk_cache_1.outputs.to && format('type=local,dest={0},mode=max,ignore-error=true', steps.ci_disk_cache_1.outputs.to) || '' }}
+          no-cache: ${{ inputs.cold_build }}
           context: .
           platforms: linux/amd64
           # Refresh the assembled runtime and its derived OCR environment together.
@@ -77,6 +85,7 @@ jobs:
           push: false # Push-by-digest is configured in the exporter; tags follow the scan.
           build-args: |
             VCS_REF=${{ github.sha }}
+            ${{ inputs.cold_build && format('BUILDKIT_CACHE_MOUNT_NS=routelisttotesla-cold-{0}-{1}', github.run_id, github.run_attempt) || '' }}
           tags: ${{ steps.container_security_1.outputs.repository }}
       - name: Generate SBOM and enforce High/Critical vulnerability gate
         uses: ./.github/actions/container-security
