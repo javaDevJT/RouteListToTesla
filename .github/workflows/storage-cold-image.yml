@@ -68,8 +68,6 @@ jobs:
           no-cache: ${{ true }}
           context: .
           platforms: linux/amd64
-          # Refresh the assembled runtime and its derived OCR environment together.
-          no-cache-filters: runtime-base,ocr-build,runtime
           push: false # Push-by-digest is configured in the exporter; tags follow the scan.
           build-args: |
             VCS_REF=${{ github.sha }}
