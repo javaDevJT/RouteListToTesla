@@ -1,0 +1,87 @@
+name: Manual storage runtime qualification (RouteListToTesla)
+
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: "Test-only phase; cache hit requires a prior completed cache miss with the same key and source revision."
+        required: true
+        type: choice
+        options:
+          - cache-miss
+          - cache-hit
+          - hold
+          - physical-enospc
+      cache_key:
+        description: "Safe bounded fixture key. Use a fresh key for each cache-miss/cache-hit pair."
+        required: true
+        type: string
+        default: fixture-v1
+      hold_seconds:
+        description: "Bounded interval to keep real quota pressure present (1-300 seconds)."
+        required: true
+        type: string
+        default: "30"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: storage-runtime-${{ github.workflow }}-${{ inputs.cache_key }}
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    name: RouteListToTesla 32 GiB runtime fixture
+    runs-on: truenas-routelisttotesla-storage-32g
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    steps:
+      - name: Start BuildKit storage collection
+        run: ci-storage-efficiency start
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: Set up authenticated remote BuildKit for cache phases
+        if: ${{ inputs.phase == 'cache-miss' || inputs.phase == 'cache-hit' }}
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver: remote
+          endpoint: tcp://buildkit:1234
+          driver-opts: |
+            cacert=/run/buildkit/tls/ca.pem
+            cert=/run/buildkit/tls/client.pem
+            key=/run/buildkit/tls/client.key
+
+      - name: Run bounded runtime qualification fixture
+        env:
+          RUNTIME_QUALIFICATION_TARGET: routelisttotesla
+          RUNTIME_QUALIFICATION_PHASE: ${{ inputs.phase }}
+          RUNTIME_QUALIFICATION_CACHE_KEY: ${{ inputs.cache_key }}
+          RUNTIME_QUALIFICATION_HOLD_SECONDS: ${{ inputs.hold_seconds }}
+        run: node .github/scripts/ci-storage-runtime-qualification.mjs
+
+      - name: Finish and enforce BuildKit storage usage
+        if: always()
+        run: ci-storage-efficiency finish
+
+      - name: Upload bounded runtime and storage evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: storage-runtime-qualification-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          path: |
+            ${{ runner.temp }}/storage-runtime-qualification.json
+            ${{ runner.temp }}/ci-storage-usage-start.json
+            ${{ runner.temp }}/ci-storage-usage.json
+          if-no-files-found: warn
+          retention-days: 14
