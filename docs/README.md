@@ -1,5 +1,6 @@
 # Documentation
 
+- [Container vulnerability repair (2026-10-10)](security-release-2026-10-10.md): unused Pebble runtime removal and release verification.
 - [CI recovery (2026-10-05)](ci-recovery-2026-10-05.md): vulnerability remediation, runner storage sizing, and release acceptance evidence.
 - [Screenshot processing reliability (2026-10-04)](reliability-2026-10-04.md): staged cache recovery, bounded OCR and Google failure handling, qualification and release evidence.
 

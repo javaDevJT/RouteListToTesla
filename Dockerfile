@@ -21,7 +21,10 @@ RUN mkdir /build/extracted \
         --strip-debug --no-header-files --no-man-pages --compress=zip-6 --output /build/jre
 
 FROM ${RUNTIME_IMAGE} AS runtime-base
-RUN apt-get update && apt-get upgrade -y \
+# Rockcraft adds a Pebble binary to this base. Java runs directly;
+# remove the unused service manager rather than ship its vulnerable Go runtime.
+RUN rm -f /usr/bin/pebble \
+    && apt-get update && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
         ca-certificates curl findutils python3 tesseract-ocr tesseract-ocr-eng \
         libgomp1 libgl1 libglib2.0-0t64 libxcb1 libfreetype6 libfontconfig1 \
@@ -72,6 +75,8 @@ COPY --chmod=0755 ocr/run /app/ocr/run
 
 # Validate installed packages in the assembled runtime, after all stage copies.
 RUN set -eu; \
+    test ! -e /usr/bin/pebble; \
+    test ! -L /usr/bin/pebble; \
     for dependency in libssl3t64 openssl openssl-provider-legacy; do \
         installed_version="$(dpkg-query -W -f='${Version}' "$dependency")"; \
         printf '%s %s\n' "$dependency" "$installed_version"; \
