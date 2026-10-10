@@ -33,3 +33,51 @@ Local validation passed 146 Java tests, 15 frontend tests and seven OpenCV guard
 tests, plus whitespace validation. Independent review approved the removal and
 final absence guards; executable confirmation comes from the new image build,
 full scanner and native OCR qualification.
+
+## Verified release
+
+Application source `5c0f7de7238f4bfe9f64fa257a32cb49263692f0` was committed and
+pushed to `main`. [CI run 38047955977](https://github.com/javaDevJT/RouteListToTesla/actions/runs/38047955977)
+passed build, scan and publication. The actual Grype report has zero High and zero
+Critical findings; it still lists 238 Medium, 17 Low and one Negligible finding.
+The SBOM no longer contains `/usr/bin/pebble`.
+
+The source label, Linux/amd64 architecture, SHA tag and `latest` alias were
+verified against this immutable image:
+
+```text
+ghcr.io/javadevjt/routelisttotesla@sha256:93db0724fec94bce3b39c91baa750653dbd112f661ebac4b092ab0ec6480c650
+```
+
+Native AMD qualification passed all eleven screenshots in exact order, including
+the two original HEIC files, and 36 Python tests. All three OCR engines supplied
+readings. The final runtime has no Pebble binary, runs as UID 10001, starts the
+jlink Java application, and passes package and OpenCV backend checks. The test
+used the immutable image with no source overlays; its disposable app and inputs
+were removed successfully. Peak memory was 1,455,751,168 bytes.
+
+TrueNAS update job **6034** succeeded for release `20261010-pebble-security`.
+Only the router/cache-permissions image references and router release identifier
+changed. Full configuration and runtime volume mount identities matched the
+preserved baseline. The application runs the exact image above, with eight CPUs,
+8 GiB, UID `10001:10001`, a read-only root filesystem and no host ports.
+
+[TeslaRouter](https://teslarouter.javadevjt.tech/login) returned HTTP 200 with the
+correct release identifier. TAP authorization redirects to the TAP host;
+signed-out vehicle/session reads redirect to login and upload returns 403. The
+mobile-width Chrome login smoke passed. Existing frontend retry/cache, apartment
+preservation and overlap-deduplication checks passed with mocked authenticated
+APIs; no personal-address Google lookups or vehicle commands were issued.
+
+The workflow's storage steps succeeded. Their output states that storage
+lifecycle is owned by runner hooks; no workflow storage artifact was emitted.
+This release does not claim a new capacity calibration. The existing 40 GiB pool
+admitted the job automatically and no infrastructure settings were changed.
+
+Private evidence and operational adapters are retained under
+`output/private/vuln-20261010/`: `ci-verification.json`,
+`registry-verification.json`, `native.runner.json`, `native-completion.json`,
+`deployment.json`, `production-verification.json`, and
+`browser-verification.json`. The evidence binds source, CI, digest, native QA,
+deployment, served identity and browser checks. This documentation follow-up
+changes no application code or image recipe.
