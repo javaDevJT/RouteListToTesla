@@ -17,6 +17,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      CI_CACHE_DISABLE: "1"
     steps:
       - name: Start BuildKit storage collection
         run: ci-storage-efficiency start
