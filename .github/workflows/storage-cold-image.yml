@@ -66,6 +66,8 @@ jobs:
       - name: Build, test, and publish
         id: container_build_1
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        env:
+          DOCKER_BUILD_RECORD_RETENTION_DAYS: "1"
         with:
           outputs: ${{ steps.container_security_1.outputs.exporter }}
           cache-from: |
@@ -99,7 +101,7 @@ jobs:
             ${{ runner.temp }}/ci-storage-usage-start.json
             ${{ runner.temp }}/ci-storage-usage.json
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 1
       - name: Report immutable image reference
         env:
           IMAGE_DIGEST: ${{ steps.container_build_1.outputs.digest }}
