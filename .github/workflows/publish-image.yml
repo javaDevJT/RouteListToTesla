@@ -15,6 +15,8 @@ concurrency:
   group: ghcr-main
   cancel-in-progress: false
 
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
 jobs:
   publish:
     if: github.ref == 'refs/heads/main'
