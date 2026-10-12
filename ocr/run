@@ -1,2 +1,0 @@
-#!/bin/sh
-exec /opt/ocr/bin/python /app/ocr/consensus.py "$@"
