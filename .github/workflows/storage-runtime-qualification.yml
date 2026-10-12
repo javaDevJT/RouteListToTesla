@@ -86,4 +86,4 @@ jobs:
             ${{ runner.temp }}/ci-storage-usage-start.json
             ${{ runner.temp }}/ci-storage-usage.json
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 1
