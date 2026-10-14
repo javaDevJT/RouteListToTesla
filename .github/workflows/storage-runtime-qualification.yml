@@ -51,12 +51,14 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
+          package-manager-cache: false
           node-version: "24"
 
       - name: Set up authenticated remote BuildKit for cache phases
         if: ${{ inputs.phase == 'cache-miss' || inputs.phase == 'cache-hit' }}
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
+          cache-binary: false
           driver: remote
           endpoint: tcp://buildkit:1234
           driver-opts: |
