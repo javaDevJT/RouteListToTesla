@@ -76,14 +76,46 @@ jobs:
         if: always()
         run: ci-storage-efficiency finish
 
-      - name: Upload bounded runtime and storage evidence
+      - name: Format bounded plaintext runtime and storage evidence
+        id: storage_log
         if: always()
+        run: |
+          python3 .github/scripts/format-storage-evidence.py \
+            --output "$RUNNER_TEMP/ci-storage-evidence.log" \
+            --repository "$GITHUB_REPOSITORY" --revision "$GITHUB_SHA" \
+            --runtime-input "$RUNNER_TEMP/storage-runtime-qualification.json" \
+            --usage-input "$RUNNER_TEMP/ci-storage-usage-start.json" \
+            --usage-input "$RUNNER_TEMP/ci-storage-usage.json"
+      - name: Upload bounded runtime and storage log
+        if: ${{ always() && steps.storage_log.outputs.available == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: storage-runtime-qualification-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-          path: |
-            ${{ runner.temp }}/storage-runtime-qualification.json
-            ${{ runner.temp }}/ci-storage-usage-start.json
-            ${{ runner.temp }}/ci-storage-usage.json
-          if-no-files-found: warn
+          name: ci-log-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          path: ${{ runner.temp }}/ci-storage-evidence.log
+          if-no-files-found: error
           retention-days: 1
+
+  cleanup-artifacts:
+    name: Remove transient build artifacts
+    needs: ["qualify"]
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: truenas-routelisttotesla-storage-8g
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Check out trusted default branch cleanup code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Set up Python for bounded cleanup
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Delete non-retained current-run artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/cleanup-actions-artifacts.py --current
+
