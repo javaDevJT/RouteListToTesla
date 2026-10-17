@@ -302,7 +302,7 @@ function candidate(overrides = {}) {
         ],
         resolution: {
             status: 'VERIFIED_UNIT', strategy: 'original', reasonCode: 'street_match', attempts: 1,
-            policyVersion: 'street-address-v4', retryAfterSeconds: null
+            policyVersion: 'street-address-v5', retryAfterSeconds: null
         },
         ...overrides
     };
@@ -317,7 +317,7 @@ function resolvedCandidate(address, placeId = 'resolved-place') {
         text: address.text, lat: 42.31, lon: -83.81, pid: placeId,
         resolution: {
             status: 'VERIFIED_UNIT', strategy: 'original', reasonCode: 'street_match', attempts: 1,
-            policyVersion: 'street-address-v4', retryAfterSeconds: null
+            policyVersion: 'street-address-v5', retryAfterSeconds: null
         }
     };
 }
@@ -555,7 +555,7 @@ test('terminal upload outcomes do not trigger an automatic second lookup', async
             text: `120 Main St Apt 104, Ann Arbor MI ${status}`,
             resolution: {
                 status, strategy: 'bounded_recovery', reasonCode: status.toLowerCase(), attempts: 8,
-                policyVersion: 'street-address-v4', retryAfterSeconds: status === 'DEFERRED' ? 30 : null
+                policyVersion: 'street-address-v5', retryAfterSeconds: status === 'DEFERRED' ? 30 : null
             }
         });
         const harness = createUploadHarness(async url => {
@@ -741,7 +741,7 @@ test('every terminal location outcome stays visible and only verified unit/build
     const addresses = statuses.map(status => {
         const resolution = {
             status, strategy: 'bounded_recovery', reasonCode: status.toLowerCase(), attempts: 4,
-            policyVersion: 'street-address-v4', retryAfterSeconds: status === 'DEFERRED' ? 30 : null
+            policyVersion: 'street-address-v5', retryAfterSeconds: status === 'DEFERRED' ? 30 : null
         };
         if (status === 'VERIFIED_UNIT') return candidate({ text: '120 Main St Apt 104, Ann Arbor MI', resolution });
         if (status === 'VERIFIED_BUILDING') return candidate({ text: '120 Main St Apt 104, Ann Arbor MI', resolution });

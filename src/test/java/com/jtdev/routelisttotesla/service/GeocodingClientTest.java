@@ -2,6 +2,7 @@ package com.jtdev.routelisttotesla.service;
 
 import com.jtdev.routelisttotesla.model.LocationResolution;
 import com.jtdev.routelisttotesla.model.PlaceCandidate;
+import com.jtdev.routelisttotesla.util.StreetSuffixCatalog;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -56,7 +57,8 @@ class GeocodingClientTest {
             List<PlaceCandidate> result = client.batchGeocode("owner-a", List.of(
                     place(full, "a.png", 4), place(full, "b.png", 7)));
 
-            assertEquals(List.of(full, full, "12345 W SAMPLE ST, SAMPLE CITY, MI"), lookups);
+            assertEquals(List.of(full, "12345 W SAMPLE STREET APT 212, SAMPLE CITY, MI", full,
+                    "12345 W SAMPLE ST, SAMPLE CITY, MI"), lookups);
             assertEquals(List.of(full, full), result.stream().map(PlaceCandidate::text).toList());
             assertEquals(List.of("a.png", "b.png"), result.stream().map(PlaceCandidate::sourceImage).toList());
             assertEquals(List.of(4, 7), result.stream().map(PlaceCandidate::lineIndex).toList());
@@ -86,6 +88,7 @@ class GeocodingClientTest {
                 String full = "12345 W SAMPLE ST APT " + index + ", SAMPLE CITY, MI";
                 inputs.add(place(full, "scan.png", index));
                 expected.add(full);
+                expected.add("12345 W SAMPLE STREET APT " + index + ", SAMPLE CITY, MI");
                 expected.add(full);
                 expected.add("12345 W SAMPLE ST, SAMPLE CITY, MI");
             }
@@ -112,7 +115,9 @@ class GeocodingClientTest {
             String noUnit = "12345 W SAMPLE ST  , SAMPLE CITY, MI";
             List<PlaceCandidate> result = client(server, 10, 10, 1, 1).batchGeocode("owner-a",
                     List.of(place(full, "a.png", 0), place(noUnit, "b.png", 1)));
-            assertEquals(List.of(full, full, "12345 W SAMPLE ST, SAMPLE CITY, MI", noUnit, noUnit), lookups);
+            assertEquals(List.of(full, "12345 W SAMPLE STREET APT 212, SAMPLE CITY, MI", full,
+                    "12345 W SAMPLE ST, SAMPLE CITY, MI", noUnit,
+                    "12345 W SAMPLE STREET  , SAMPLE CITY, MI", noUnit), lookups);
             assertTrue(result.stream().allMatch(candidate -> candidate.pid() == null && candidate.lat() == 0 && candidate.lon() == 0));
             assertTrue(result.stream().allMatch(candidate -> candidate.resolution().status() == LocationResolution.Status.NO_MATCH));
             assertEquals(List.of(full, noUnit), result.stream().map(PlaceCandidate::text).toList());
@@ -339,7 +344,7 @@ class GeocodingClientTest {
             PlaceCandidate result = client(server, 10, 10, 1, 1)
                     .batchGeocode("owner-a", List.of(inbound)).getFirst();
 
-            assertEquals(2, requests.get());
+            assertEquals(3, requests.get());
             assertEquals(text, result.text());
             assertEquals(inbound.normalized(), result.normalized());
             assertEquals(inbound.sourceImage(), result.sourceImage());
@@ -375,6 +380,7 @@ class GeocodingClientTest {
 
             assertEquals(List.of(originalText, "11570 FORDLINE ST APT201, ALLEN PARK, MI",
                     "11570 FORDLINE ST APT 201, ALLEN PARK, MI",
+                    "11570 FORDLINE STREET APT 201, ALLEN PARK, MI",
                     "11570 FORDLINE ST APT201, ALLEN PARK, MI"), lookups);
             assertEquals(originalText, result.text());
             assertEquals("fordline", result.pid());
@@ -403,6 +409,7 @@ class GeocodingClientTest {
 
             assertEquals(List.of(originalText, "11570 FORDLINE ST APT201, ALLEN PARK, MI",
                     "11570 FORDLINE ST APT 201, ALLEN PARK, MI",
+                    "11570 FORDLINE STREET APT 201, ALLEN PARK, MI",
                     "11570 FORDLINE ST APT201, ALLEN PARK, MI"), lookups);
             assertEquals(originalText, result.text());
             assertEquals("fordline", result.pid());
@@ -447,12 +454,14 @@ class GeocodingClientTest {
         try {
             String unmarked = "11570 FORDLINE ST, HAMTRAMCK, ALLEN PARK, MI";
             String onlyLocality = "11570 FORDLINE ST, JAMESTOWN VILLAGE, MI";
-            List<PlaceCandidate> results = client(server, 5, 5, 1, 1).batchGeocode("owner-a", List.of(
+            List<PlaceCandidate> results = client(server, 20, 20, 1, 1).batchGeocode("owner-a", List.of(
                     place(unmarked, "scan.png", 0), place(onlyLocality, "scan.png", 1)));
 
-            assertEquals(List.of(unmarked, unmarked, onlyLocality, onlyLocality), lookups);
+            assertEquals(List.of(unmarked, "11570 FORDLINE STREET, HAMTRAMCK, ALLEN PARK, MI", unmarked,
+                    onlyLocality, "11570 FORDLINE STREET, JAMESTOWN VILLAGE, MI", onlyLocality), lookups);
             assertEquals(List.of(unmarked, onlyLocality), results.stream().map(PlaceCandidate::text).toList());
             assertTrue(results.stream().allMatch(result -> result.pid() == null && result.lat() == 0 && result.lon() == 0));
+            assertTrue(results.stream().allMatch(result -> result.resolution().status() == LocationResolution.Status.NO_MATCH));
         } finally {
             server.stop(0);
         }
@@ -481,8 +490,9 @@ class GeocodingClientTest {
                     place("12345 W SAMPLE ST, OTHER CITY, MI", "scan.png", 1),
                     place("12345 W SAMPLE ST, SAMPLE CITY, OH", "scan.png", 2)));
 
-            assertEquals(6, requests.get());
+            assertEquals(9, requests.get());
             assertTrue(results.stream().allMatch(result -> result.pid() == null && result.lat() == 0 && result.lon() == 0));
+            assertTrue(results.stream().allMatch(result -> result.resolution().status() == LocationResolution.Status.NO_MATCH));
         } finally {
             server.stop(0);
         }
@@ -505,8 +515,8 @@ class GeocodingClientTest {
             List<PlaceCandidate> results = client(server, 10, 10, 1, 1).batchGeocode("owner-a", List.of(
                     place(withoutUnit, "flat.png", 0), place(withUnit, "flat-unit.png", 1)));
 
-            assertEquals(List.of(withoutUnit, withUnit, "54321 W SAMPLE ST APT 212, SAMPLE CITY MI", withUnit),
-                    lookups);
+            assertEquals(List.of(withoutUnit, withUnit, "54321 W SAMPLE ST APT 212, SAMPLE CITY MI",
+                    "54321 W SAMPLE STREET APT 212, SAMPLE CITY MI", withUnit), lookups);
             assertEquals(List.of("flat-city", "flat-unit"), results.stream().map(PlaceCandidate::pid).toList());
             assertTrue(results.stream().allMatch(result -> result.resolution().status()
                     == LocationResolution.Status.VERIFIED_BUILDING));
@@ -532,8 +542,9 @@ class GeocodingClientTest {
                     place("12345 W SAMPLE ST SAMPLE CITY MI", "flat.png", 0),
                     place("54321 W SAMPLE ST SAMPLE CITY OH", "flat.png", 1)));
 
-            assertEquals(4, requests.get());
+            assertEquals(6, requests.get());
             assertTrue(results.stream().allMatch(result -> result.pid() == null && result.lat() == 0 && result.lon() == 0));
+            assertTrue(results.stream().allMatch(result -> result.resolution().status() == LocationResolution.Status.NO_MATCH));
         } finally {
             server.stop(0);
         }
@@ -561,7 +572,8 @@ class GeocodingClientTest {
         List<String> addresses = List.of(
                 "12345 MAIN ST N",
                 "54321 W MAIN ST",
-                "67890 MEADOWS BOULEVARD CITY MI");
+                "67890 MEADOWS BOULEVARD CITY MI",
+                "78901 NORTH EAST SAMPLE PT SAMPLE CITY MI");
         List<String> lookups = Collections.synchronizedList(new ArrayList<>());
         HttpServer server = server(exchange -> {
             String address = addressParameter(exchange);
@@ -572,9 +584,12 @@ class GeocodingClientTest {
             } else if (address.startsWith("54321")) {
                 respond(exchange, okAddress("directional-prefix", "54321", "WEST MAIN STREET",
                         42.3, -83.2, false));
-            } else {
+            } else if (address.startsWith("67890")) {
                 respond(exchange, okAddress("city-named-city", "67890", "MEADOWS BOULEVARD",
                         42.3, -83.2, false, "CITY", "MI"));
+            } else {
+                respond(exchange, okAddress("flat-diagonal", "78901", "NORTHEAST SAMPLE POINT",
+                        42.3, -83.2, false, "SAMPLE CITY", "MI"));
             }
         });
         server.start();
@@ -583,7 +598,7 @@ class GeocodingClientTest {
                     .map(address -> place(address, "flat.png", 0)).toList());
 
             assertEquals(addresses, lookups);
-            assertEquals(List.of("directional-suffix", "directional-prefix", "city-named-city"),
+            assertEquals(List.of("directional-suffix", "directional-prefix", "city-named-city", "flat-diagonal"),
                     results.stream().map(PlaceCandidate::pid).toList());
         } finally {
             server.stop(0);
@@ -713,14 +728,15 @@ class GeocodingClientTest {
         });
         server.start();
         try {
-            List<PlaceCandidate> results = client(server, 10, 20, 2, 4).batchGeocode("owner-a", List.of(
+            List<PlaceCandidate> results = client(server, 20, 20, 2, 4).batchGeocode("owner-a", List.of(
                     place("12345 W SAMPLE ST, SAMPLE CITY, MI", "scan.png", 0),
                     place("12345 W SAMPLE ST", "scan.png", 1),
                     place("12345 W SAMPLE ST, SECOND CITY, MI", "scan.png", 2),
                     place("12345 W SAMPLE ST, THIRD CITY, MI", "scan.png", 3)));
 
-            assertEquals(7, requests.get());
+            assertEquals(11, requests.get());
             assertTrue(results.stream().allMatch(result -> result.pid() == null && result.lat() == 0 && result.lon() == 0));
+            assertTrue(results.stream().allMatch(result -> result.resolution().status() == LocationResolution.Status.NO_MATCH));
         } finally {
             server.stop(0);
         }
@@ -778,6 +794,221 @@ class GeocodingClientTest {
                     "456 KNOTTY PINE TRL, TESTVILLE, MI"), queries);
         } finally {
             server.stop(0);
+        }
+    }
+
+    @Test
+    void acceptsPointAndAnUnincorporatedTownshipCommunityInOneOriginalQueryEach() throws Exception {
+        List<String> queries = Collections.synchronizedList(new ArrayList<>());
+        HttpServer server = server(exchange -> {
+            String query = addressParameter(exchange);
+            queries.add(query);
+            String response = query.startsWith("123")
+                    ? okRouteAliases("point", "123", "Doves Point", "Doves Point", 42.3, -83.2, "TESTVILLE", "MI")
+                    : townshipAddress("countryside", "TESTHILL", "TESTHILL Township");
+            respond(exchange, response);
+        });
+        server.start();
+        try {
+            List<String> originals = List.of("123 DOVES PT, TESTVILLE, MI", "456 COUNTRYSIDE LN, TESTHILL, MI");
+            List<PlaceCandidate> results = client(server, 20, 20, 1, 1).batchGeocode("owner-a", List.of(
+                    place(originals.get(0), "first.heic", 0), place(originals.get(1), "first.heic", 3)));
+            assertEquals(List.of("point", "countryside"), results.stream().map(PlaceCandidate::pid).toList());
+            assertEquals(originals, queries);
+            assertEquals(originals, results.stream().map(PlaceCandidate::text).toList());
+            assertTrue(results.stream().allMatch(row -> row.resolution().attempts() == 1
+                    && row.resolution().status() == LocationResolution.Status.VERIFIED_BUILDING));
+        } finally { server.stop(0); }
+    }
+
+    @Test
+    void everyCatalogAliasCanBeComparedAtSuffixPositionWithoutChangingStreetNames() {
+        for (String alias : StreetSuffixCatalog.aliases()) {
+            String primary = StreetSuffixCatalog.canonical(alias);
+            assertTrue(Boolean.TRUE.equals(ReflectionTestUtils.invokeMethod(GeocodingClient.class,
+                    "streetRoutesMatch", "SAMPLE " + alias, "SAMPLE " + primary)), alias);
+        }
+        for (String[] pair : List.of(new String[]{"SAMPLE PT", "SAMPLE POINTS"},
+                new String[]{"SAMPLE PARKWAY", "SAMPLE PARKWAYS"},
+                new String[]{"SAMPLE WALK", "SAMPLE WALKS"},
+                new String[]{"PT SAMPLE RD", "POINT SAMPLE ROAD"},
+                new String[]{"COUNTRYSIDE LN", "COUNTRY SIDE LANE"},
+                new String[]{"N SAMPLE PT", "S SAMPLE POINT"},
+                new String[]{"PINE NORTHWEST RD", "PINE NW ROAD"},
+                new String[]{"PINE NORTH RD", "PINE N ROAD"},
+                new String[]{"NORTH EAST SAMPLE PT", "NORTHWEST SAMPLE POINT"},
+                new String[]{"N E SAMPLE PT", "SOUTHEAST SAMPLE POINT"},
+                new String[]{"SAMPLE PT NORTH EAST", "SAMPLE POINT SOUTH EAST"},
+                new String[]{"SAMPLE PT N E", "SAMPLE POINT NORTHWEST"},
+                new String[]{"SAMPLE NORTH EAST PT", "SAMPLE NORTHEAST POINT"})) {
+            assertFalse(Boolean.TRUE.equals(ReflectionTestUtils.invokeMethod(GeocodingClient.class,
+                    "streetRoutesMatch", pair[0], pair[1])), List.of(pair).toString());
+        }
+        for (String[] pair : List.of(new String[]{"SAMPLE PKWY", "SAMPLE PARKWAY"},
+                new String[]{"SAMPLE PKWY", "SAMPLE PARKWAYS"},
+                new String[]{"MT PLEASANT RD", "MOUNT PLEASANT ROAD"},
+                new String[]{"FT SAMPLE BLVD", "FORT SAMPLE BOULEVARD"},
+                new String[]{"NORTH ST CLAIR CT", "NORTH SAINT CLAIR COURT"},
+                new String[]{"NORTH MT PLEASANT RD", "NORTH MOUNT PLEASANT ROAD"},
+                new String[]{"NORTH FT SAMPLE BLVD", "NORTH FORT SAMPLE BOULEVARD"},
+                new String[]{"N SAMPLE PT", "NORTH SAMPLE POINT"},
+                new String[]{"S SAMPLE PT", "SOUTH SAMPLE POINT"},
+                new String[]{"E SAMPLE PT", "EAST SAMPLE POINT"},
+                new String[]{"W SAMPLE PT", "WEST SAMPLE POINT"},
+                new String[]{"NE SAMPLE PT", "NORTHEAST SAMPLE POINT"},
+                new String[]{"NW SAMPLE PT", "NORTHWEST SAMPLE POINT"},
+                new String[]{"SE SAMPLE PT", "SOUTHEAST SAMPLE POINT"},
+                new String[]{"SW SAMPLE PT", "SOUTHWEST SAMPLE POINT"},
+                new String[]{"N E SAMPLE PT", "NORTHEAST SAMPLE POINT"},
+                new String[]{"NORTH EAST SAMPLE PT", "NORTHEAST SAMPLE POINT"},
+                new String[]{"SAMPLE PT N", "SAMPLE POINT NORTH"},
+                new String[]{"SAMPLE PT S", "SAMPLE POINT SOUTH"},
+                new String[]{"SAMPLE PT E", "SAMPLE POINT EAST"},
+                new String[]{"SAMPLE PT W", "SAMPLE POINT WEST"},
+                new String[]{"SAMPLE PT NE", "SAMPLE POINT NORTHEAST"},
+                new String[]{"SAMPLE PT NW", "SAMPLE POINT NORTHWEST"},
+                new String[]{"SAMPLE PT SE", "SAMPLE POINT SOUTHEAST"},
+                new String[]{"SAMPLE PT SW", "SAMPLE POINT SOUTHWEST"},
+                new String[]{"SAMPLE PT N E", "SAMPLE POINT NORTHEAST"},
+                new String[]{"SAMPLE PT NORTH EAST", "SAMPLE POINT NORTHEAST"})) {
+            assertTrue(Boolean.TRUE.equals(ReflectionTestUtils.invokeMethod(GeocodingClient.class,
+                    "streetRoutesMatch", pair[0], pair[1])), List.of(pair).toString());
+        }
+    }
+
+    @Test
+    void aSharedShortSuffixCannotOverrideAnIncompatibleFullSuffix() throws Exception {
+        for (String[] suffixes : List.of(new String[]{"PARK", "PARKS", "PARK"},
+                new String[]{"PARKWAY", "PARKWAYS", "PKWY"},
+                new String[]{"PARKWAYS", "PARKWAY", "PKWY"},
+                new String[]{"MEADOW", "MEADOWS", "MDW"})) {
+            HttpServer server = server(exchange -> respond(exchange,
+                    okRouteAliases("other-street", "123", "SAMPLE " + suffixes[1], "SAMPLE " + suffixes[2],
+                            42.3, -83.2, "TESTVILLE", "MI")));
+            server.start();
+            try {
+                PlaceCandidate result = client(server, 20, 20, 1, 1).batchGeocode("owner-a",
+                        List.of(place("123 SAMPLE " + suffixes[0] + ", TESTVILLE, MI", "scan.png", 0))).getFirst();
+                assertNull(result.pid(), String.join("/", suffixes));
+                assertEquals(LocationResolution.Status.NO_MATCH, result.resolution().status());
+            } finally { server.stop(0); }
+        }
+    }
+
+    @Test
+    void triesAnOfficialFullSuffixBeforeStructuredLookupAndRetainsApartment() throws Exception {
+        List<String> queries = Collections.synchronizedList(new ArrayList<>());
+        HttpServer server = server(exchange -> {
+            String query = addressParameter(exchange);
+            queries.add(query);
+            respond(exchange, query.contains(" POINT ")
+                    ? okUnitAddress("point-unit", "123", "Doves Point", "104", 42.3, -83.2, "TESTVILLE", "MI")
+                    : "{\"status\":\"ZERO_RESULTS\",\"results\":[]}");
+        });
+        server.start();
+        try {
+            String original = "123 DOVES PT APT104, TESTVILLE, MI";
+            PlaceCandidate result = client(server, 20, 20, 1, 1).batchGeocode("owner-a",
+                    List.of(place(original, "scan.png", 0))).getFirst();
+            assertEquals("point-unit", result.pid());
+            assertEquals(original, result.text());
+            assertEquals(LocationResolution.Status.VERIFIED_UNIT, result.resolution().status());
+            assertEquals(List.of(original, "123 DOVES PT APT 104, TESTVILLE, MI",
+                    "123 DOVES POINT APT 104, TESTVILLE, MI"), queries);
+        } finally { server.stop(0); }
+    }
+
+    @Test
+    void reservesStructuredAndUnitlessFormsWithinTheSixQueryLimit() throws Exception {
+        String original = "12345 PINE TR APT104, JAMESTOWN VILLAGE, SAMPLE CITY, MI";
+        String cleaned = "12345 PINE TR APT104, SAMPLE CITY, MI";
+        String normalizedUnit = "12345 PINE TR APT 104, SAMPLE CITY, MI";
+        String fullSuffix = "12345 PINE TRAIL APT 104, SAMPLE CITY, MI";
+        String unitless = "12345 PINE TR, SAMPLE CITY, MI";
+        List<String> lookups = Collections.synchronizedList(new ArrayList<>());
+        List<Boolean> structured = Collections.synchronizedList(new ArrayList<>());
+        HttpServer server = server(exchange -> {
+            String address = addressParameter(exchange);
+            lookups.add(address);
+            structured.add(exchange.getRequestURI().getRawQuery().contains("&components="));
+            respond(exchange, address.equals(unitless)
+                    ? okAddress("unitless-fallback", "12345", "PINE TRAIL", 42.3, -83.2,
+                            false, "SAMPLE CITY", "MI")
+                    : "{\"status\":\"ZERO_RESULTS\",\"results\":[]}");
+        });
+        server.start();
+        try {
+            PlaceCandidate result = client(server, 20, 20, 1, 1).batchGeocode("owner-a",
+                    List.of(place(original, "scan.png", 0))).getFirst();
+
+            assertEquals(List.of(original, cleaned, normalizedUnit, fullSuffix, cleaned, unitless), lookups);
+            assertEquals(List.of(false, false, false, false, true, false), structured);
+            assertEquals("unitless-fallback", result.pid());
+            assertEquals(original, result.text());
+            assertEquals(6, result.resolution().attempts());
+            assertEquals(LocationResolution.Status.VERIFIED_BUILDING, result.resolution().status());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void townshipFallbackRequiresMatchingCommunityAndRejectsConflictingStrongLocalities() throws Exception {
+        List<String> invalidResponses = List.of(
+                townshipAddress("wrong-neighborhood", "OTHER", "TESTHILL Township"),
+                townshipAddress("wrong-township", "TESTHILL", "OTHER Township"),
+                townshipAddress("no-township", "TESTHILL", "TESTHILL County"),
+                townshipAddress("wrong-state", "TESTHILL", "TESTHILL Township")
+                        .replace("\"MI\"", "\"OH\""),
+                townshipAddress("city-conflict", "TESTHILL", "TESTHILL Township")
+                        .replace("],\"geometry\"", ",{\"long_name\":\"OTHER CITY\",\"short_name\":\"OTHER CITY\","
+                                + "\"types\":[\"locality\"]}],\"geometry\""),
+                townshipAddress("city-conflict-short-base", "TESTHILL", "TESTHILL Township")
+                        .replace("\"short_name\":\"TESTHILL Township\"", "\"short_name\":\"TESTHILL\"")
+                        .replace("],\"geometry\"", ",{\"long_name\":\"OTHER CITY\",\"short_name\":\"OTHER CITY\","
+                                + "\"types\":[\"locality\"]}],\"geometry\""),
+                townshipAddress("missing-country", "TESTHILL", "TESTHILL Township")
+                        .replace("\"country\",\"political\"", "\"unrelated\""),
+                townshipAddress("city-center", "TESTHILL", "TESTHILL Township")
+                        .replace("\"types\":[\"street_address\"]", "\"types\":[\"locality\"]"));
+        for (String response : invalidResponses) {
+            HttpServer server = server(exchange -> respond(exchange, response));
+            server.start();
+            try {
+                PlaceCandidate result = client(server, 20, 20, 1, 1).batchGeocode("owner-a",
+                        List.of(place("456 COUNTRYSIDE LN, TESTHILL, MI", "scan.png", 0))).getFirst();
+                assertNull(result.pid(), response);
+                assertEquals(LocationResolution.Status.NO_MATCH, result.resolution().status());
+            } finally { server.stop(0); }
+        }
+        for (String township : List.of("TESTHILL Township", "TESTHILL Twp.", "TESTHILL Charter Township",
+                "Township of TESTHILL", "Charter Twp of TESTHILL")) {
+            HttpServer server = server(exchange -> respond(exchange, townshipAddress("valid", "TESTHILL", township)));
+            server.start();
+            try {
+                assertEquals("valid", client(server, 20, 20, 1, 1).batchGeocode("owner-a",
+                        List.of(place("456 COUNTRYSIDE LN, TESTHILL, MI", "scan.png", 0))).getFirst().pid());
+            } finally { server.stop(0); }
+        }
+    }
+
+    @Test
+    void acceptsOnlyMatchingTownshipAdminAreaShortNameBase() throws Exception {
+        for (String[] sample : List.of(new String[]{"TESTHILL", "short-base"},
+                new String[]{"OTHER", null})) {
+            String response = townshipAddress("short-base", "TESTHILL", "TESTHILL Township")
+                    .replace("\"short_name\":\"TESTHILL Township\"", "\"short_name\":\"" + sample[0] + "\"");
+            HttpServer server = server(exchange -> respond(exchange, response));
+            server.start();
+            try {
+                PlaceCandidate result = client(server, 20, 20, 1, 1).batchGeocode("owner-a",
+                        List.of(place("456 COUNTRYSIDE LN, TESTHILL, MI", "scan.png", 0))).getFirst();
+                assertEquals(sample[1], result.pid(), sample[0]);
+                assertEquals(sample[1] == null ? LocationResolution.Status.NO_MATCH
+                        : LocationResolution.Status.VERIFIED_BUILDING, result.resolution().status(), sample[0]);
+            } finally {
+                server.stop(0);
+            }
         }
     }
 
@@ -910,14 +1141,15 @@ class GeocodingClientTest {
         });
         server.start();
         try {
-            List<PlaceCandidate> results = client(server, 10, 20, 2, 4).batchGeocode("owner-a", List.of(
+            List<PlaceCandidate> results = client(server, 20, 20, 2, 4).batchGeocode("owner-a", List.of(
                     place("12345 W SAMPLE ST, SAMPLE CITY, MI", "scan.png", 0),
                     place("12346 W SAMPLE ST, SAMPLE CITY, MI", "scan.png", 1),
                     place("12347 W SAMPLE ST, SAMPLE CITY, MI", "scan.png", 2),
                     place("12348 W SAMPLE ST, SAMPLE CITY, MI", "scan.png", 3)));
 
-            assertEquals(8, requests.get());
+            assertEquals(12, requests.get());
             assertTrue(results.stream().allMatch(result -> result.pid() == null && result.lat() == 0 && result.lon() == 0));
+            assertTrue(results.stream().allMatch(result -> result.resolution().status() == LocationResolution.Status.NO_MATCH));
         } finally {
             server.stop(0);
         }
@@ -926,8 +1158,10 @@ class GeocodingClientTest {
     @Test
     void deduplicatesQueriesAndPreservesEveryStopInInputOrder() throws Exception {
         AtomicInteger requests = new AtomicInteger();
+        List<String> lookups = Collections.synchronizedList(new ArrayList<>());
         HttpServer server = server(exchange -> {
             int request = requests.incrementAndGet();
+            lookups.add(addressParameter(exchange));
             String response = request == 1
                     ? ok("first", 42.1, -83.1)
                     : "{\"status\":\"ZERO_RESULTS\",\"results\":[]}";
@@ -944,11 +1178,13 @@ class GeocodingClientTest {
 
             List<PlaceCandidate> result = client.batchGeocode("owner-a", List.of(first, second, repeated));
 
-            assertEquals(3, requests.get());
+            assertEquals(4, requests.get());
+            assertEquals(List.of(firstAddress, missingAddress, "54321 E OTHER ROAD, OTHER CITY, OH", missingAddress), lookups);
             assertEquals(List.of(firstAddress, missingAddress, firstAddress), result.stream().map(PlaceCandidate::text).toList());
             assertEquals(List.of("z.png", "a.png", "b.png"), result.stream().map(PlaceCandidate::sourceImage).toList());
             assertEquals("first", result.get(0).pid());
             assertNull(result.get(1).pid());
+            assertEquals(LocationResolution.Status.NO_MATCH, result.get(1).resolution().status());
             assertEquals("first", result.get(2).pid());
             assertEquals(42.1, result.get(2).lat());
         } finally {
@@ -1176,6 +1412,14 @@ class GeocodingClientTest {
         return okAddress(id, streetNumber, longRoute, lat, lon, false, locality, state)
                 .replace("\"long_name\":\"" + longRoute + "\",\"short_name\":\"" + longRoute + "\"",
                         "\"long_name\":\"" + longRoute + "\",\"short_name\":\"" + shortRoute + "\"");
+    }
+
+    private static String townshipAddress(String id, String neighborhood, String township) {
+        return okAddress(id, "456", "Countryside Lane", 42.3, -83.2, false, null, "MI")
+                .replace("],\"geometry\"", ",{\"long_name\":\"" + neighborhood + "\",\"short_name\":\""
+                        + neighborhood + "\",\"types\":[\"neighborhood\",\"political\"]},"
+                        + "{\"long_name\":\"" + township + "\",\"short_name\":\"" + township
+                        + "\",\"types\":[\"administrative_area_level_3\",\"political\"]}],\"geometry\"");
     }
 
     private static String partialCityResult() {

@@ -7,6 +7,19 @@ import java.util.List;
 
 public class AddressExtractorTest {
     @Test
+    void recognizesTheCompleteSuffixCatalogWithoutMatchingWordPrefixes() {
+        for (String suffix : StreetSuffixCatalog.aliases()) {
+            assertTrue(AddressExtractor.endsWithStreetType("SAMPLE " + suffix), suffix);
+            assertTrue(AddressExtractor.containsStreetType("123 SAMPLE " + suffix + ", TESTVILLE"), suffix);
+            assertFalse(AddressExtractor.endsWithStreetType("SAMPLE " + suffix + "ZZZ"), suffix);
+        }
+        assertEquals(List.of("123 SAMPLE CRST, TESTVILLE, MI"),
+                AddressExtractor.addressLinesFromPlainJoined("123 SAMPLE CRST\nTESTVILLE", "MI"));
+        assertFalse(AddressExtractor.containsStreetType("123 CIRCLEVIEW"));
+        assertFalse(AddressExtractor.containsStreetType("123 POINTSMITH"));
+    }
+
+    @Test
     void routeCodesAreNotHouseNumbersAndHashUnitsRemainAddresses() {
         for (String code : List.of("# FR.038", "# B.L28.OV", "# B.L28.0V",
                 "# B L28 OV", "# 8 L28 OV", "# UNASSIGNED_SORT_LOCATION",

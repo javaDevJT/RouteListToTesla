@@ -7,8 +7,8 @@ TAP-managed sign-in and stable-subject authorization replace independent Google 
 ### October 17 address recovery and image concurrency
 
 The current parser keeps complex labels separate from the following city and
-rejects Expected-by/time/route-code rows. Extraction version `ocr-consensus-v6`
-and geocoding policy `street-address-v4` invalidate incompatible image results.
+rejects Expected-by/time/route-code rows. Extraction version `ocr-consensus-v7`
+and geocoding policy `street-address-v5` invalidate incompatible image results.
 The browser runs at most two single-image requests at once and the server admits
 two OCR jobs, each retaining all three engines. Results merge in selected-image
 order. See [address recovery and native measurements](address-recovery-2026-10-17.md).
@@ -194,10 +194,28 @@ Image upload does not automatically dispatch vehicle commands. The reviewed send
 
 ## Cache, geocoding, and route state
 
-Geocoding validates typed long and short route names and conservative suffix
-equivalences, including terminal TR/TRL/TRAIL. It first looks up the complete
-reviewed address, including apartment/unit information. Bounded unit-preserving
-cleanup precedes a building fallback, retaining the unit in UI/session text.
+Extraction and geocoding share the checked-in USPS C1 catalog at
+`src/main/resources/address/street-suffixes.tsv`: 206 primary suffixes and 550
+recognized spellings. Suffix equivalence applies only at suffix position;
+distinct official primary names remain distinct, including separate singular/
+plural entries. Typed short names cannot bridge
+incompatible long suffixes. All eight compass directions normalize only at the
+route ends, and leading ST/MT/FT titles have explicit aliases. Internal name
+words and arbitrary compound-name spacing are preserved.
+
+Geocoding first looks up the complete reviewed address, including apartment/unit
+information. Bounded unit-preserving cleanup and official full/standard suffix
+queries precede structured locality and then a building fallback, retaining the
+unit in UI/session text. Six forms/eight total attempts remain the ceilings;
+structured and unitless forms keep reserved slots. Ambiguous suffix abbreviations
+can match their listed primary meanings in a provider response, but do not cause
+queries that arbitrarily choose one primary family. A valid original response
+returns immediately.
+
+An unincorporated community can match an exact neighborhood plus same-named
+typed US township when strong city fields are absent. Township base short names
+cannot bypass that gate; county proximity or a neighborhood alone is insufficient.
+See [suffix coverage and supplied-case diagnosis](address-aliases-2026-10-17.md).
 The TAP waypoint payload carries coordinates and place ID, not apartment text.
 Required house/street/direction/locality/state constraints always come from the
 original address. Conflicting units, partial matches and city/road centers cannot

@@ -6,6 +6,7 @@ import tools.jackson.databind.ObjectMapper;
 import com.jtdev.routelisttotesla.model.LocationResolution;
 import com.jtdev.routelisttotesla.model.PlaceCandidate;
 import com.jtdev.routelisttotesla.util.AddressExtractor;
+import com.jtdev.routelisttotesla.util.StreetSuffixCatalog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,7 +41,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class GeocodingClient {
-    public static final String GEOCODING_VERSION = "street-address-v4";
+    public static final String GEOCODING_VERSION = "street-address-v5";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GeocodingClient.class);
     private static final String CONFLICTING_UNIT = "\u0000";
@@ -67,7 +68,8 @@ public class GeocodingClient {
             "(?i)(?:^|\\s)" + AddressExtractor.UNIT_LABELS + "\\.?\\s*#?\\s*"
                     + "((?:[A-Z]?\\d+[A-Z0-9-]*|[A-Z](?:-\\d+[A-Z]?)?))(?=\\s|$)");
     private static final Pattern TRAILING_POSTAL_CODE = Pattern.compile("(?i)^(.*?)(?:\\s+)?(\\d{5}(?:-\\d{4})?)$");
-    private static final Set<String> CARDINAL_DIRECTIONS = Set.of("N", "S", "E", "W", "NORTH", "SOUTH", "EAST", "WEST");
+    private static final Set<String> CARDINAL_DIRECTIONS = Set.of("N", "S", "E", "W", "NE", "NW", "SE", "SW",
+            "NORTH", "SOUTH", "EAST", "WEST", "NORTHEAST", "NORTHWEST", "SOUTHEAST", "SOUTHWEST");
     private static final Pattern EXPLICIT_COMPLEX_MARKER = Pattern.compile(
             "(?i)(?:^|\\s)(?:APARTMENTS?|RESIDENCES?|TOWNHOMES?|CONDOMINIUMS?|CONDOS?|"
                     + "VILLAGES?|VILLAS|GARDENS|MANOR|ESTATES|TOWERS|CROSSING|LANDING|COMPLEX)\\.?$");
@@ -538,6 +540,11 @@ public class GeocodingClient {
         }
 
         String components = structuredComponents(expected.localityHint());
+        int reservedForms = (components == null ? 0 : 1) + (expected.unit() == null ? 0 : 1);
+        for (String spelling : suffixQueryAlternatives(normalizedUnit, expected.route())) {
+            if (forms.size() >= MAX_QUERY_FORMS_PER_STOP - reservedForms) break;
+            addForm(forms, new LookupForm(spelling, null, "street_suffix", false));
+        }
         if (components != null) {
             addForm(forms, new LookupForm(withoutComplex, components, "structured_locality", false));
         }
@@ -549,6 +556,30 @@ public class GeocodingClient {
             }
         }
         return List.copyOf(forms.values().stream().limit(MAX_QUERY_FORMS_PER_STOP).toList());
+    }
+
+    private static List<String> suffixQueryAlternatives(String address, String route) {
+        List<String> routeWords = routeWords(route);
+        int suffixIndex = suffixIndex(routeWords);
+        if (suffixIndex < 0) return List.of();
+        String suffix = routeWords.get(suffixIndex);
+        if (!StreetSuffixCatalog.isKnown(suffix)) return List.of();
+        Matcher house = HOUSE_NUMBER.matcher(address);
+        if (!house.find()) return List.of();
+        Matcher words = ROUTE_TOKEN.matcher(address);
+        words.region(house.end(), address.length());
+        for (int index = 0; index <= suffixIndex; index++) if (!words.find()) return List.of();
+        if (!suffix.equalsIgnoreCase(words.group())) return List.of();
+        int suffixStart = words.start();
+        int suffixEnd = words.end();
+        if (suffixEnd < address.length() && address.charAt(suffixEnd) == '.') suffixEnd++;
+        List<String> alternatives = new ArrayList<>();
+        for (String spelling : StreetSuffixCatalog.preferredSpellings(suffix)) {
+            if (!suffix.equalsIgnoreCase(spelling)) {
+                alternatives.add(address.substring(0, suffixStart) + spelling + address.substring(suffixEnd));
+            }
+        }
+        return List.copyOf(alternatives);
     }
 
     private static void addForm(Map<String, LookupForm> forms, LookupForm form) {
@@ -698,7 +729,10 @@ public class GeocodingClient {
 
             int localityStart = end;
             if (localityStart < tokens.length && CARDINAL_DIRECTIONS.contains(tokens[localityStart])) {
-                route += " " + tokens[localityStart++];
+                int directionLength = localityStart + 1 < tokens.length
+                        && diagonalDirection(tokens[localityStart], tokens[localityStart + 1]) != null ? 2 : 1;
+                route += " " + String.join(" ", java.util.Arrays.copyOfRange(tokens, localityStart, localityStart + directionLength));
+                localityStart += directionLength;
             }
             String locality = String.join(" ", java.util.Arrays.copyOfRange(tokens, localityStart, tokens.length));
             candidates.add(new AddressParts(route, flatLocalityHint(locality)));
@@ -712,10 +746,10 @@ public class GeocodingClient {
 
     private static boolean hasStreetSuffix(String route) {
         if (AddressExtractor.endsWithStreetType(route)) return true;
-        String normalized = AddressExtractor.normalize(route);
-        int lastSpace = normalized.lastIndexOf(' ');
-        if (lastSpace < 0 || !CARDINAL_DIRECTIONS.contains(normalized.substring(lastSpace + 1))) return false;
-        return AddressExtractor.endsWithStreetType(normalized.substring(0, lastSpace));
+        List<String> words = routeWords(route);
+        int suffix = suffixIndex(words);
+        return suffix >= 0 && suffix < words.size() - 1
+                && AddressExtractor.endsWithStreetType(String.join(" ", words.subList(0, suffix + 1)));
     }
 
     private static UnitBoundary unitBoundary(String tail) {
@@ -893,6 +927,14 @@ public class GeocodingClient {
                     String shortName = component.path("short_name").asString("");
                     boolean componentMatches = expectedCity.equals(canonicalLocality(longName))
                             || expectedCity.equals(canonicalLocality(shortName));
+                    if (type.equals("administrative_area_level_3")
+                            && canonicalTownshipName(longName) != null
+                            && !expectedCity.equals(canonicalLocality(longName))) {
+                        // A shortened township base is allowed only through the
+                        // neighborhood/strong-locality checks below. An explicit
+                        // full township name can still match its typed level.
+                        componentMatches = false;
+                    }
                     matchedAtLevel |= componentMatches;
                     differentAtLevel |= !componentMatches;
                 }
@@ -901,7 +943,7 @@ public class GeocodingClient {
                 if (matchedAtLevel && differentAtLevel) return false;
                 found |= matchedAtLevel;
             }
-            if (!found) return false;
+            if (!found && !matchesTownshipWithoutCity(match, hint.city())) return false;
         }
         if (hint.state() != null) {
             List<String> returnedStates = componentValues(match, "administrative_area_level_1");
@@ -914,6 +956,39 @@ public class GeocodingClient {
                     .anyMatch(country -> !hint.country().equals(canonicalCountryValue(country)))) return false;
         }
         return true;
+    }
+
+    private static boolean matchesTownshipWithoutCity(JsonNode match, String city) {
+        // An unincorporated postal community may have no locality/postal_town.
+        // Require BOTH an exact neighborhood name and its same-named township;
+        // a neighborhood alone must never override a conflicting city result.
+        if (!componentValues(match, "locality").isEmpty() || !componentValues(match, "postal_town").isEmpty()
+                || !componentValues(match, "sublocality").isEmpty()
+                || !componentValues(match, "sublocality_level_1").isEmpty()) return false;
+        String expected = canonicalLocality(city);
+        List<String> neighborhoods = componentValues(match, "neighborhood");
+        if (neighborhoods.isEmpty() || neighborhoods.stream()
+                .anyMatch(value -> !expected.equals(canonicalLocality(value)))) return false;
+        boolean townshipFound = false;
+        for (JsonNode component : match.path("address_components")) {
+            if (!hasType(component, "administrative_area_level_3")) continue;
+            townshipFound = true;
+            String longName = component.path("long_name").asString("");
+            String shortName = component.path("short_name").asString("");
+            if (!expected.equals(canonicalTownshipName(longName))) return false;
+            if (!shortName.isBlank() && !expected.equals(canonicalLocality(shortName))
+                    && !expected.equals(canonicalTownshipName(shortName))) return false;
+        }
+        if (!townshipFound) return false;
+        List<String> countries = componentValues(match, "country");
+        return !countries.isEmpty() && countries.stream().allMatch(value -> "US".equals(canonicalCountryValue(value)));
+    }
+
+    private static String canonicalTownshipName(String value) {
+        String normalized = AddressExtractor.normalize(value);
+        String name = normalized.replaceFirst("^(?:CHARTER\\s+)?(?:TOWNSHIP|TWP)\\.?\\s+OF\\s+", "")
+                .replaceFirst("\\s+(?:CHARTER\\s+)?(?:TOWNSHIP|TWP)\\.?$", "");
+        return name.equals(normalized) ? null : canonicalLocality(name);
     }
 
     private static List<String> localityComponentValues(JsonNode result) {
@@ -962,54 +1037,104 @@ public class GeocodingClient {
     }
 
     private static boolean streetsMatch(String requestedRoute, JsonNode result) {
-        List<String> returnedRoutes = componentValues(result, "route");
-        return !returnedRoutes.isEmpty() && returnedRoutes.stream()
-                .anyMatch(route -> canonicalStreet(requestedRoute).equals(canonicalStreet(route)));
+        List<String> requestedWords = routeWords(requestedRoute);
+        int requestedSuffix = suffixIndex(requestedWords);
+        if (requestedSuffix < 0) return false;
+        for (JsonNode component : result.path("address_components")) {
+            if (!hasType(component, "route")) continue;
+            String longRoute = component.path("long_name").asString("");
+            String shortRoute = component.path("short_name").asString("");
+            if (streetRoutesMatch(requestedRoute, longRoute)) return true;
+            List<String> longWords = routeWords(longRoute);
+            List<String> shortWords = routeWords(shortRoute);
+            int longSuffix = suffixIndex(longWords);
+            int shortSuffix = suffixIndex(shortWords);
+            // A shared abbreviation must not bridge incompatible explicit
+            // suffixes (for example PARK versus PARKS).
+            if (longSuffix >= 0 && shortSuffix >= 0
+                    && StreetSuffixCatalog.equivalent(requestedWords.get(requestedSuffix), longWords.get(longSuffix))
+                    && StreetSuffixCatalog.equivalent(longWords.get(longSuffix), shortWords.get(shortSuffix))
+                    && streetRoutesMatch(requestedRoute, shortRoute)) return true;
+        }
+        return false;
     }
 
-    private static String canonicalStreet(String route) {
+    private static boolean streetRoutesMatch(String requested, String returned) {
+        List<String> requestedWords = canonicalStreetWords(requested);
+        List<String> returnedWords = canonicalStreetWords(returned);
+        if (requestedWords.size() != returnedWords.size() || requestedWords.isEmpty()) return false;
+        int suffix = suffixIndex(requestedWords);
+        if (suffix != suffixIndex(returnedWords) || suffix < 0) return false;
+        for (int index = 0; index < requestedWords.size(); index++) {
+            if (index == suffix) {
+                if (!StreetSuffixCatalog.equivalent(requestedWords.get(index), returnedWords.get(index))) return false;
+            } else if (!requestedWords.get(index).equals(returnedWords.get(index))) return false;
+        }
+        return true;
+    }
+
+    private static List<String> routeWords(String route) {
         List<String> tokens = new ArrayList<>();
         Matcher matcher = ROUTE_TOKEN.matcher(route.toUpperCase(Locale.ROOT));
-        while (matcher.find()) {
-            String token = matcher.group().replace('’', '\'');
-            token = switch (token) {
-                case "NORTH" -> "N";
-                case "SOUTH" -> "S";
-                case "EAST" -> "E";
-                case "WEST" -> "W";
-                default -> token;
-            };
-            tokens.add(token);
-        }
-        // In a leading street-name position, ST commonly abbreviates SAINT; a terminal ST stays a suffix.
-        if (tokens.size() > 1 && "ST".equals(tokens.getFirst())) tokens.set(0, "SAINT");
-        if (!tokens.isEmpty()) {
-            int suffixIndex = tokens.size() - 1;
-            if (suffixIndex > 0 && CARDINAL_DIRECTIONS.contains(tokens.get(suffixIndex))) suffixIndex--;
-            tokens.set(suffixIndex, canonicalStreetSuffix(tokens.get(suffixIndex)));
-        }
-        return String.join(" ", tokens);
+        while (matcher.find()) tokens.add(matcher.group().replace('’', '\''));
+        return tokens;
     }
 
-    private static String canonicalStreetSuffix(String suffix) {
-        return switch (suffix) {
-            case "ST" -> "STREET";
-            case "RD" -> "ROAD";
-            case "AVE", "AV" -> "AVENUE";
-            case "BLVD" -> "BOULEVARD";
-            case "DR" -> "DRIVE";
-            case "LN" -> "LANE";
-            case "CT" -> "COURT";
-            case "CIR" -> "CIRCLE";
-            case "PL" -> "PLACE";
-            case "PKWY" -> "PARKWAY";
-            case "HWY" -> "HIGHWAY";
-            case "TER" -> "TERRACE";
-            case "TR", "TRL" -> "TRAIL";
-            case "SQ" -> "SQUARE";
-            case "RTE" -> "ROUTE";
-            default -> suffix;
+    private static List<String> canonicalStreetWords(String route) {
+        List<String> tokens = routeWords(route);
+        if (tokens.size() > 2 && diagonalDirection(tokens.get(0), tokens.get(1)) != null) {
+            tokens.set(0, diagonalDirection(tokens.get(0), tokens.get(1)));
+            tokens.remove(1);
+        } else if (!tokens.isEmpty() && CARDINAL_DIRECTIONS.contains(tokens.getFirst())) {
+            tokens.set(0, canonicalDirection(tokens.getFirst()));
+        }
+        int last = tokens.size() - 1;
+        if (last > 1 && diagonalDirection(tokens.get(last - 1), tokens.get(last)) != null) {
+            tokens.set(last - 1, diagonalDirection(tokens.get(last - 1), tokens.get(last)));
+            tokens.remove(last);
+        } else if (last >= 0 && CARDINAL_DIRECTIONS.contains(tokens.get(last))) {
+            tokens.set(last, canonicalDirection(tokens.get(last)));
+        }
+        // These title abbreviations apply only to the first name token. A
+        // terminal ST/MT/FT remains a suffix, with its own catalog identity.
+        int nameStart = !tokens.isEmpty() && CARDINAL_DIRECTIONS.contains(tokens.getFirst()) ? 1 : 0;
+        if (tokens.size() > nameStart + 1) {
+            tokens.set(nameStart, switch (tokens.get(nameStart)) {
+                case "ST" -> "SAINT";
+                case "MT" -> "MOUNT";
+                case "FT" -> "FORT";
+                default -> tokens.get(nameStart);
+            });
+        }
+        return tokens;
+    }
+
+    private static int suffixIndex(List<String> words) {
+        int index = words.size() - 1;
+        if (index > 1 && diagonalDirection(words.get(index - 1), words.get(index)) != null) index -= 2;
+        else if (index > 0 && CARDINAL_DIRECTIONS.contains(words.get(index))) index--;
+        return index;
+    }
+
+    private static String canonicalDirection(String token) {
+        return switch (token) {
+            case "NORTH" -> "N";
+            case "SOUTH" -> "S";
+            case "EAST" -> "E";
+            case "WEST" -> "W";
+            case "NORTHEAST" -> "NE";
+            case "NORTHWEST" -> "NW";
+            case "SOUTHEAST" -> "SE";
+            case "SOUTHWEST" -> "SW";
+            default -> token;
         };
+    }
+
+    private static String diagonalDirection(String first, String second) {
+        String northSouth = canonicalDirection(first);
+        String eastWest = canonicalDirection(second);
+        return (northSouth.equals("N") || northSouth.equals("S"))
+                && (eastWest.equals("E") || eastWest.equals("W")) ? northSouth + eastWest : null;
     }
 
     private static String houseNumber(String address) {
