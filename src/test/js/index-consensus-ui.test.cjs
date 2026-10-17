@@ -94,6 +94,8 @@ class FakeElement {
         this.dataset = {};
         this.listeners = {};
         this.value = '';
+        this.selectionStart = 0;
+        this.selectionEnd = 0;
         this.style = {};
         this._textContent = '';
         this.attributes = {};
@@ -293,17 +295,19 @@ function createLocationHarness(addresses, apiFetch, overrides = {}) {
     const notice = new FakeElement('div');
     const document = {
         createElement: tagName => new FakeElement(tagName),
-        getElementById: id => id === 'locationResolutionNotice' ? notice : new FakeElement('div')
+        getElementById: id => id === 'locationResolutionNotice' ? notice : new FakeElement('div'),
+        ...(overrides.document || {})
     };
     const context = loadUi(addressUiSource, {
+        ...overrides,
         document,
         extractedAddresses: addresses,
+        currentVin: overrides.currentVin || '',
         apiFetch,
-        sendStatus: {},
-        showStatus() {},
-        populateAddressList() {},
-        updateManualCommandHoldControls() {},
-        ...overrides
+        sendStatus: overrides.sendStatus || {},
+        showStatus: overrides.showStatus || (() => {}),
+        populateAddressList: overrides.populateAddressList || (() => {}),
+        updateManualCommandHoldControls: overrides.updateManualCommandHoldControls || (() => {})
     });
     return { context, notice };
 }
@@ -514,20 +518,21 @@ test('shows OCR support and literal engine readings, then confirms the current r
     assert.match(statuses[0].message, /confirmed/);
 });
 
-test('editing an unresolved row clears its review requirement; legacy rows show no score', () => {
+test('editing an unresolved row clears its review requirement; legacy rows show no score', async () => {
     const address = candidate();
-    const context = loadUi(addressUiSource, {
-        document: { createElement: tagName => new FakeElement(tagName) },
-        extractedAddresses: [address],
-        sendStatus: {},
-        showStatus: () => {}
+    const editedText = '123 corrected Main St, Ann Arbor MI';
+    const harness = createLocationHarness([address], async (url, options) => {
+        assert.equal(url, '/route/resolve');
+        assert.equal(JSON.parse(options.body).candidates[0].text, editedText);
+        return { ok: true, json: async () => ({ candidates: [resolvedCandidate({ text: editedText })] }) };
     });
+    const context = harness.context;
 
     const row = context.ui.createAddressItem(address, 0);
     const input = row.querySelector('.address-input');
-    input.value = '123 corrected Main St, Ann Arbor MI';
-    input.listeners.change();
-    assert.equal(address.text, '123 corrected Main St, Ann Arbor MI');
+    input.value = editedText;
+    await input.listeners.change();
+    assert.equal(address.text, editedText);
     assert.equal(address.ocrReviewRequired, false);
     assert.equal(row.querySelector('.ocr-review'), null);
 
@@ -555,6 +560,42 @@ test('location preflight skips verified rows and merges only the matching fresh 
     assert.equal(unresolved.ocrReviewRequired, true);
     assert.equal(harness.context.ui.getLocationResolutionState(unresolved).status, 'located');
     assert.equal(harness.notice.className, 'status hidden');
+});
+
+test('another row resolving preserves a focused textarea draft, caret, and active element', async () => {
+    const resolving = unlocatedCandidate({ text: '101 First Rd' });
+    const editing = unlocatedCandidate({ text: '120 Main St, Ann Arbor MI' });
+    let finishLookup;
+    let listRebuilds = 0;
+    const harness = createLocationHarness([resolving, editing], () => new Promise(resolve => { finishLookup = resolve; }), {
+        populateAddressList: () => { listRebuilds++; }
+    });
+    const resolvingRow = harness.context.ui.createAddressItem(resolving, 0);
+    const editingRow = harness.context.ui.createAddressItem(editing, 1);
+    const input = editingRow.querySelector('.address-input');
+    input.value = '120 Main St, Ann Arbor MI, Apt 331';
+    input.selectionStart = 9;
+    input.selectionEnd = 24;
+    harness.context.document.activeElement = input;
+
+    const lookup = harness.context.ui.resolveLocationCandidates([resolving]);
+    assert.equal(resolvingRow.querySelector('.address-meta').textContent.includes('Checking location'), true);
+    assert.equal(resolvingRow.querySelector('.location-retry-button').disabled, true);
+    assert.equal(harness.context.document.activeElement, input);
+    assert.equal(input.value, '120 Main St, Ann Arbor MI, Apt 331');
+    assert.equal(input.selectionStart, 9);
+    assert.equal(input.selectionEnd, 24);
+    assert.equal(listRebuilds, 0);
+
+    finishLookup({ ok: true, json: async () => ({ candidates: [resolvedCandidate(resolving)] }) });
+    await lookup;
+    assert.equal(resolvingRow.querySelector('.address-meta').textContent.includes('Location verified'), true);
+    assert.equal(resolvingRow.querySelector('.location-retry-button'), null);
+    assert.equal(harness.context.document.activeElement, input);
+    assert.equal(input.value, '120 Main St, Ann Arbor MI, Apt 331');
+    assert.equal(input.selectionStart, 9);
+    assert.equal(input.selectionEnd, 24);
+    assert.equal(listRebuilds, 0);
 });
 
 test('failed location lookups can be retried from their row without creating a command hold', async () => {
@@ -633,6 +674,7 @@ test('late location responses cannot overwrite edited text and reordered or remo
 test('restoring a session re-resolves unresolved rows before saving their updated locations', async () => {
     const unresolved = unlocatedCandidate({ text: '120 Main St Apt 330, Ann Arbor MI' });
     const saved = [];
+    let resolveCalls = 0;
     const elements = { vin: new FakeElement('select'), defaultState: new FakeElement('select') };
     const context = vm.createContext({
         ...({ extractedAddresses: [], imageHashes: [], currentVin: '', autoNavSessionId: null }),
@@ -642,10 +684,12 @@ test('restoring a session re-resolves unresolved rows before saving their update
             return { ok: true, json: async () => ({ valid: true, candidates: [unresolved], imageHashes: ['hash'], vin: 'VIN-TEST', defaultState: 'MI' }) };
         },
         apiFetch: async (url, options) => {
+            resolveCalls++;
             assert.equal(url, '/route/resolve');
             assert.deepEqual(JSON.parse(options.body).candidates.map(row => row.text), [unresolved.text]);
             return { ok: true, json: async () => ({ candidates: [resolvedCandidate(unresolved, 'restored-place')] }) };
         },
+        sendStatus: {}, updateManualCommandHoldControls() {},
         processStatus: {}, showStatus() {}, dismissSessionRecovery() {}, setCookie() {}, showStep2() {},
         saveCurrentSession: async () => { saved.push(unresolved.pid); }
     });
@@ -653,6 +697,7 @@ test('restoring a session re-resolves unresolved rows before saving their update
         + '\nglobalThis.restore = loadPreviousSession;').runInContext(context);
 
     await context.restore();
+    assert.equal(resolveCalls, 1);
     assert.equal(context.extractedAddresses[0], unresolved);
     assert.equal(unresolved.pid, 'restored-place');
     assert.deepEqual(saved, ['restored-place']);

@@ -75,3 +75,21 @@ on this workload, not an unrestricted upload pool or a general latency promise.
 The prototype used the existing immutable runtime with candidate parser classes
 overlaid; final immutable-image qualification remains a release prerequisite.
 Evidence: `prototype-speed.runner.json` under the private directory above.
+
+The full native source preview passed 13/13 ordered-exact screenshots (including
+both new HEICs) and 36 Python checks, with all three OCR engines. The final clean
+package passed 167 Java tests. Mobile Chrome verification caught a background
+lookup replacing another row's active textarea; the follow-up updates status and
+retry controls in place. Its regression and all 23 frontend tests pass. The real
+browser preview verifies overlapping-image dedupe, cached upload recovery,
+apartment preservation, unresolved/pending send blocking, location retry, and
+preservation of a different row's draft, focus and selection. API responses in
+that browser check are mocked; it sends no Google or vehicle requests.
+
+Source commit `0d3ed90` contains the parser/geocoding/concurrency work; the focus
+correction follows it before deployment. CI image publication, security gates,
+final immutable-image OCR qualification and production verification remain
+required. The current build's cache import is missing; the preceding successful
+image build spent about 44 minutes compiling OpenCV. The runner coordinator
+confirmed ordinary releases should reuse those layers, but has not established
+why this import was unavailable. Shared infrastructure and gates are unchanged.

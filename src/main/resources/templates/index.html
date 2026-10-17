@@ -251,6 +251,7 @@
         let autoNavPollInterval = null;
         let availableVehicles = [];
         const locationResolutionStates = new WeakMap();
+        const locationAddressRows = new WeakMap();
         const LOCATION_RESOLVE_BATCH_SIZE = 500;
         const LOCATION_RESOLVE_MAX_TEXT_LENGTH = 1000;
         const MANUAL_COMMAND_HOLD_PREFIX = 'route-list-to-tesla:manual-command-hold:';
@@ -892,7 +893,42 @@
 
         function refreshLocationPresentation() {
             updateLocationResolutionNotice();
-            if (typeof populateAddressList === 'function') populateAddressList();
+            extractedAddresses.forEach(updateAddressLocationPresentation);
+            updateManualCommandHoldControls(currentVin, sendStatus);
+        }
+
+        function updateAddressLocationPresentation(address) {
+            const row = locationAddressRows.get(address);
+            if (!row) return;
+
+            const metadata = row.querySelector('.address-meta');
+            if (metadata) {
+                const located = isLocated(address);
+                const state = getLocationResolutionState(address);
+                const label = located ? 'Location verified'
+                    : state.status === 'pending' ? 'Checking location…'
+                        : 'Location not found — retry lookup or edit this address';
+                metadata.textContent = `Source: ${address.sourceImage || 'Unknown'} | Line: ${(address.lineIndex || 0) + 1} | ${label}`;
+            }
+
+            let retryButton = row.querySelector('.location-retry-button');
+            if (isLocated(address)) {
+                retryButton?.remove();
+                return;
+            }
+
+            if (!retryButton) {
+                retryButton = document.createElement('button');
+                retryButton.type = 'button';
+                retryButton.className = 'btn btn-secondary location-retry-button';
+                retryButton.dataset.action = 'retryLocationLookup';
+                retryButton.addEventListener('click', () => { void resolveLocationCandidates([address]); });
+                row.appendChild(retryButton);
+            }
+            const state = getLocationResolutionState(address);
+            retryButton.textContent = state.status === 'pending' ? 'Checking location…' : 'Retry location lookup';
+            retryButton.disabled = state.status === 'pending' || !String(address.text || '').trim()
+                || String(address.text || '').length > LOCATION_RESOLVE_MAX_TEXT_LENGTH;
         }
 
         function isCurrentLocationTarget(target) {
@@ -1051,12 +1087,6 @@
 
             const metadata = document.createElement('div');
             metadata.className = 'address-meta';
-            const located = isLocated(address);
-            const resolutionState = getLocationResolutionState(address);
-            const locationLabel = located ? 'Location verified'
-                : resolutionState.status === 'pending' ? 'Checking location…'
-                    : 'Location not found — retry lookup or edit this address';
-            metadata.textContent = `Source: ${address.sourceImage || 'Unknown'} | Line: ${(address.lineIndex || 0) + 1} | ${locationLabel}`;
 
             const input = document.createElement('textarea');
             input.className = 'address-input';
@@ -1065,21 +1095,12 @@
             input.value = address.text || address.normalized || '';
             input.addEventListener('change', () => {
                 div.querySelector('.ocr-review')?.remove();
-                updateAddress(index, input.value);
+                return updateAddress(index, input.value);
             });
 
             div.append(removeButton, metadata, input);
-            if (!located) {
-                const retryButton = document.createElement('button');
-                retryButton.type = 'button';
-                retryButton.className = 'btn btn-secondary location-retry-button';
-                retryButton.dataset.action = 'retryLocationLookup';
-                retryButton.textContent = resolutionState.status === 'pending' ? 'Checking location…' : 'Retry location lookup';
-                retryButton.disabled = resolutionState.status === 'pending' || !String(address.text || '').trim()
-                    || String(address.text || '').length > LOCATION_RESOLVE_MAX_TEXT_LENGTH;
-                retryButton.addEventListener('click', () => { void resolveLocationCandidates([address]); });
-                div.appendChild(retryButton);
-            }
+            locationAddressRows.set(address, div);
+            updateAddressLocationPresentation(address);
             const agreement = Number.isInteger(address.ocrAgreement) ? address.ocrAgreement : 0;
             if (agreement > 0) {
                 const agreementLabel = document.createElement('small');
