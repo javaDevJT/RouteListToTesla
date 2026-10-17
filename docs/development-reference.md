@@ -4,6 +4,15 @@ TAP-managed sign-in and stable-subject authorization replace independent Google 
 
 ## Source flow
 
+### October 17 address recovery and image concurrency
+
+The current parser keeps complex labels separate from the following city and
+rejects Expected-by/time/route-code rows. Extraction version `ocr-consensus-v6`
+and geocoding policy `street-address-v3` invalidate incompatible image results.
+The browser runs at most two single-image requests at once and the server admits
+two OCR jobs, each retaining all three engines. Results merge in selected-image
+order. See [address recovery and native measurements](address-recovery-2026-10-17.md).
+
 ### September 30 route-code filtering
 
 The shared `AddressExtractor.addressCandidateText` rejects hash-prefixed itinerary metadata and standalone dotted/underscored identifiers before scanning for house numbers. OCR can turn a route-code token into an apparent house number. A hash used as OCR decoration remains valid when it directly precedes a numeric street address with a recognized street type. Inline and wrapped units such as `123 MAIN ST #212` remain supported. Extraction version `ocr-consensus-v5` invalidates screenshot entries produced by the older parser without deleting saved routes or cache storage. See [native OCR capacity evidence](ocr-route-codes-2026-09-30.md).
@@ -34,7 +43,7 @@ checks before deployment. Per-suite native reports are retained under
 The execution worker completed its handoff and timeout-test correction; the
 primary owns native qualification and deployment of release `20260929-parallel-ocr`.
 
-The browser preserves the selected image order, calculates each image's SHA-256, and checks the compatible cache before upload. Uncached images are processed in sequential single-image requests so completed images remain reusable when a later image fails. Successful OCR is persisted before geocoding under an extraction-only cache entry; a retry can reuse it after restart, without advertising it as a completed browser cache hit. See [October 4 reliability changes](reliability-2026-10-04.md). Cache identity includes the extraction version and default state as well as image content; file names remain display metadata. Uncached images are uploaded to the application server.
+The browser preserves the selected image order, calculates each image's SHA-256, and checks the compatible cache before upload. Uncached images use an ordered two-worker pool of single-image requests, so completed images remain reusable when a later image fails. In-flight requests settle before a failed batch can be retried. Successful OCR is persisted before geocoding under an extraction-only cache entry; a retry can reuse it after restart, without advertising it as a completed browser cache hit. Only images with all street destinations resolved become completed cache hits. See [October 4 reliability changes](reliability-2026-10-04.md) and [October 17 changes](address-recovery-2026-10-17.md). Cache identity includes extraction and geocoding versions, default state, and image content; file names remain display metadata. Uncached images are uploaded to the application server.
 
 `AddressOcrService` invokes `ocr/run`, which runs Tesseract, PaddleOCR through RapidOCR, and EasyOCR locally.
 It requires strict consensus JSON with observed per-engine line evidence; plain Tesseract TSV is supported
@@ -86,11 +95,10 @@ field and ISO date formats. Run from the repository root:
 ./mvnw spring-boot:run
 ```
 
-Image publication uses the private `truenas-routelisttotesla-storage-32g` runner
-class, with the existing disk build cache and GitHub cache fallback. This class
-selects 32 GiB of runner storage; the deployed application's resources are
-configured separately. The operator observed roughly 26 GB peak runner usage
-before requesting this reduction from the 64 GiB class.
+Image publication currently uses the private `truenas-routelisttotesla-storage-40g`
+runner class and its disk build cache. The label describes runner storage;
+application CPU and memory are configured separately. The workflow is the source
+of truth for current runner selection and cache behavior.
 
 The Dockerfile builds the JAR from source in a JDK stage, derives modules with
 `jdeps`, and creates a stripped `jlink` runtime. The final Ubuntu 26.04 image runs
@@ -100,8 +108,9 @@ runtime needs writable `/app/cache` and `/tmp`; production uses a retained data
 volume and a temporary filesystem with a read-only image filesystem. The release
 configuration and candidate qualification harness use eight CPUs and an 8 GiB
 memory limit. OCR uses two Torch/OpenMP/BLAS compute threads while Torch interop
-stays at one. All three engines still run in parallel; preprocessing, quality
-gates and admission control are unchanged. The October 4 reliability patch allows a 60-second shared Python engine deadline inside a 75-second Java subprocess deadline; worker cleanup remains bounded and all three engines are required.
+stays at one. All three engines still run in parallel; preprocessing and quality
+gates are unchanged. Two screenshot jobs may run concurrently; a third immediate
+job receives HTTP 429. The October 4 reliability patch allows a 60-second shared Python engine deadline inside a 75-second Java subprocess deadline; worker cleanup remains bounded and all three engines are required.
 
 Use native amd64 hardware for OCR performance qualification. Running this amd64
 image on Apple Silicon uses emulation and does not establish production timings.
@@ -138,7 +147,7 @@ Spring Security CSRF protection is enabled; preserve token handling for browser 
 TAP callback over HTTPS except in loopback tests. Keep credentials out of source, command arguments, logs,
 browser code, and docs. Browser/background authority is bound to the establishing grant fingerprint;
 replacement grants cannot silently revive old authority. Dispatch and client replacement share a lock.
-The image installs pinned OCR packages/models outside the JAR. One OCR job is admitted at a time, with
+The image installs pinned OCR packages/models outside the JAR. At most two OCR jobs are admitted at a time, with
 bounded input/output and process-tree cleanup. Disagreements require confirmation before dispatch.
 
 For local setup see [TAP delegated login setup](../OAUTH_SETUP.md). Google Maps geocoding remains separately configured and is unchanged by the TAP login migration.
@@ -159,7 +168,7 @@ Run decoder tests inside the release image: mount `ocr/` read-only at `/tests`, 
 The EasyOCR detector is bounded to a 1280-pixel longest side and an 800,000-pixel
 working area. It returns boxes in original-image coordinates; Tesseract and
 PaddleOCR retain their existing preprocessing. This leaves memory for Spring
-inside the 8 GiB container. Image input limits remain unchanged. OCR has a 60-second shared engine deadline and a 75-second outer process deadline. Extraction cache version `ocr-consensus-v5` invalidates older
+inside the 8 GiB container. Image input limits remain unchanged. OCR has a 60-second shared engine deadline and a 75-second outer process deadline. Extraction cache version `ocr-consensus-v6` invalidates older
 readings without deleting saved routes. Bare clock fragments such as `10 PM`
 are excluded by the shared address parser; names such as `10 PM ROAD` remain
 address candidates.
@@ -168,6 +177,7 @@ address candidates.
 | --- | --- | --- |
 | `GET` | `/route/vehicles` | List vehicles available to the signed-in TAP owner. |
 | `POST` | `/route/places` | Upload images, run local OCR, and geocode address candidates. Does not send a route. |
+| `POST` | `/route/resolve` | Resolve 1–500 existing candidate rows for the current authorized vehicle grant. Requires CSRF; does not confirm OCR or send a route. |
 | `POST` | `/route/places/{vin}` | Retired legacy extract-and-send route; returns HTTP 410. |
 | `POST` | `/route/send/{vin}` | Send 1–8 reviewed stops with an idempotency key. |
 | `POST` | `/route/cache/check` | Check a SHA-256 image and default-state cache entry. |
@@ -184,15 +194,22 @@ Image upload does not automatically dispatch vehicle commands. The reviewed send
 ## Cache, geocoding, and route state
 
 Geocoding first looks up the full reviewed address, including apartment/unit
-information. If it returns no acceptable destination, one fallback lookup omits
-the recognized unit suffix. Both attempts reject broad city/road matches,
-partial matches, mismatched house numbers, and invalid coordinates or place IDs.
-Stops remain unresolved if neither attempt succeeds; their original text is
+information. If it returns no acceptable destination, a recognized middle complex
+label can be omitted while preserving the unit and final city/state. A final
+fallback omits a recognized unit; there are at most three distinct query variants.
+All variants reject broad city/road matches, partial matches, mismatched house
+numbers, streets, cities or states, and invalid coordinates or place IDs.
+Stops remain unresolved if no variant succeeds; their original text is
 preserved. Transient transport errors, HTTP 408/500/502/503/504, and Google `UNKNOWN_ERROR` receive at most three application-owned attempts of the unchanged address, with 100/200 ms backoff. Each extra attempt reserves owner/global usage and uses the 60 ms pacing gate. Permanent, quota, malformed, and definitive no-match responses do not retry. JDK-internal recovery of idempotent GET connections can add wire activity within one application attempt; the application counter is not an exact billing meter. Service failures do not cause unit omission. Fallback
 calls use the existing pacing and count against owner/global quotas only when
-needed. The `street-address-v2` policy version participates in image-cache keys.
+needed. The `street-address-v3` policy version participates in image-cache keys.
 Reviewed addresses are resolved again before dispatch so older drafts and
 browser-supplied place IDs cannot bypass current validation.
+
+Unresolved uploads, restored rows and edits receive an early location check.
+Pending or unresolved stops block the affected send controls and automatic
+navigation, with a visible retry action. Background checks update row status in
+place, preserving another row's active text, focus and selection.
 
 
 New cache identities include owner, extraction version, normalized default state, and image content hash.

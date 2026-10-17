@@ -73,7 +73,7 @@ was 2,679,484,416 bytes, with zero OOM/limit events and zero leftover OCR jobs.
 The disposable app and inputs were removed. This qualifies the two-image limit
 on this workload, not an unrestricted upload pool or a general latency promise.
 The prototype used the existing immutable runtime with candidate parser classes
-overlaid; final immutable-image qualification remains a release prerequisite.
+overlaid; final immutable-image qualification is recorded below.
 Evidence: `prototype-speed.runner.json` under the private directory above.
 
 The full native source preview passed 13/13 ordered-exact screenshots (including
@@ -86,10 +86,85 @@ apartment preservation, unresolved/pending send blocking, location retry, and
 preservation of a different row's draft, focus and selection. API responses in
 that browser check are mocked; it sends no Google or vehicle requests.
 
-Source commit `0d3ed90` contains the parser/geocoding/concurrency work; the focus
-correction follows it before deployment. CI image publication, security gates,
-final immutable-image OCR qualification and production verification remain
-required. The current build's cache import is missing; the preceding successful
-image build spent about 44 minutes compiling OpenCV. The runner coordinator
-confirmed ordinary releases should reuse those layers, but has not established
-why this import was unavailable. Shared infrastructure and gates are unchanged.
+Source commit `0d3ed90` contains the parser/geocoding/concurrency work; `fcf21f5`
+adds the focus correction. The final release below binds that corrected source
+to CI, security gates, native OCR and production verification. The preceding
+successful image build imported no cache and spent about
+44 minutes compiling OpenCV, then completed a mode=max cache export. The runner
+coordinator confirmed ordinary releases should reuse those layers. Client export
+does not establish controller acceptance or future cache availability. Shared
+infrastructure and gates are unchanged.
+
+Run `39046684715` (`0d3ed90`) completed its publish job successfully. Its log
+confirmed `/ci-cache-import/missing`, zero cached steps, OpenCV compilation of
+2,121.9 seconds, and a completed mode=max export of 114.4 seconds. This is evidence
+of a client export, not controller acceptance. The corrected source is `fcf21f5`,
+run `39048490852`; only that corrected image is eligible for this deployment.
+
+Independent operational review found a missing explicit comparison between the
+selected deployment digest and CI's scanned digest; the private deployment
+adapter now requires equality before credentials or mutation. QA cleanup checks
+the sole task-owned service, non-root/read-only/network-disabled configuration,
+no added capabilities/configs/devices/ports, and exact read-only temporary mounts.
+An isolated guard check accepts both sanctioned layouts and rejects eight unsafe
+variants. No production mutation occurred during these checks.
+
+The corrected push's first attempt stalled after concurrency handoff: its job
+was queued while the workflow was pending. The coordinator observed zero workers,
+zero reserved storage/memory and a registered 40 GiB pool reporting fresh zero
+demand, ruling out ordinary capacity contention. Cancellation exposed another
+stalled queued cleanup job. No jobs executed and the artifact inventory was
+empty; forced cancellation completed that cancellation, then the same push run
+was retried exactly once. Attempt 2, job `117450159762`, began building at
+16:52:59 UTC. No workflow, cache, admission, resource or infrastructure setting
+was changed for this recovery.
+
+The coordinator reproduced a separate omission of pending workflow runs in the
+installed scanner's source lineage. Its isolated fix passed three regressions
+and the existing WorkflowDiscovery suite, and was handed to the infrastructure
+owner for review without requesting live changes. It is not deployed and does
+not fully explain the queued-state stalls. Cache acceptance/rejection/pruning
+cause also remains unproved. These infrastructure findings do not waive any
+application release gate.
+
+## Verified release
+
+Source `fcf21f50fe9c9a44e38271576ab323cf63ba548e` passed
+[CI run 39048490852, attempt 2](https://github.com/javaDevJT/RouteListToTesla/actions/runs/39048490852/attempts/2),
+including artifact cleanup. The retained report binds the revision and image to
+zero High/Critical findings; storage and publication gates passed. The build
+step took 41 minutes 14 seconds and the scan took 4 minutes 43 seconds.
+
+The immutable image is
+`ghcr.io/javadevjt/routelisttotesla@sha256:cbb7cf3d6c1cb26645397c39dd99176d56e498fd2d1944461abbb2e9ed0efe56`.
+Its native run used no parser overlays and passed 13/13 ordered-exact screenshots
+and 36 Python checks with all three engines. The final paired comparison took
+35.426 seconds sequentially and 22.616 seconds with two image jobs, preserving
+text, agreement and review decisions. Peak memory was 2,720,223,232 bytes, all
+memory-limit/OOM counters were zero, and no OCR jobs remained. The disposable app
+and input files were removed. Native report SHA-256:
+`a0d287ca2ba3f7872b1d5ebee034515a5b04fe7ef9ad34ec1a6fb8dad1e558c9`.
+
+TrueNAS job **18850** deployed release **20261017-address-recovery** successfully
+at [TeslaRouter](https://teslarouter.javadevjt.tech). Direct configuration and
+workload checks confirmed the selected digest, eight CPUs/8 GiB, UID 10001,
+read-only root, no host ports, and unchanged retained volume mounts. Only the two
+service-image fields and `APP_RELEASE` changed. The configured `/login` health
+probe returned HTTP 200; TrueNAS did not expose a separate container-health
+field. TAP redirect and signed-out endpoint/CSRF protections passed, including
+the new `/route/resolve` endpoint.
+
+Mobile Chrome at 390×844 verified the public release identity and exercised the
+exact template extracted from this immutable image (SHA-256
+`a878dce7d29a365ae1a1b3cdf501a7e8778fc70209303b8a4af78061e966ed74`).
+Upload retry/cache reuse, screenshot-seam dedupe, apartment retention, unresolved
+send blocking, location retry, and draft/focus/selection preservation passed
+without page errors. These interaction APIs were mocked; the approved single
+Fordline lookup separately tested the real Google client. No vehicle commands
+were issued. The public deployment remains available until a later update; this
+was desktop mobile-viewport verification, not physical iPhone testing.
+
+Final evidence under `output/private/address-recovery-20261017/` includes
+`ci-verification.json`, `registry-verification.json`, `ui-image-verification.json`,
+`native.runner.json`, `native-completion.json`, `deployment.json`,
+`production-verification.json` and `browser-verification.json`.

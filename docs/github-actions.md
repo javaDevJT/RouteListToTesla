@@ -4,17 +4,24 @@ Objective: build this repository on the owner's private runner and publish the
 container to GHCR on every push to `main`. GitHub stores workflows under
 `.github/workflows/`. This publishing workflow does not deploy to TrueNAS.
 
-The workflow uses `truenas-routelisttotesla`, the repository-specific scale set
-already present in the private runner controller's target list. Each job gets an
+The workflow currently uses `truenas-routelisttotesla-storage-40g`, the
+repository-specific private runner class. Each job gets an
 ephemeral runner and a private remote BuildKit instance at `tcp://buildkit:1234`,
 authenticated with its mounted per-job TLS certificates. Builds target native
-`linux/amd64` and use a GitHub Actions cache shared across this repository's runs.
+`linux/amd64` and use the runner-managed local disk build cache. Runtime and OCR
+assembly stages are refreshed for security; the independent OpenCV build stage
+can reuse compatible cached layers. The workflow is the source of truth for
+runner labels and cache configuration.
 
 Successful builds publish `ghcr.io/javadevjt/routelisttotesla:latest` and
 `ghcr.io/javadevjt/routelisttotesla:sha-<full-commit-sha>`. The image revision label
 records that same source commit. The Dockerfile runs Maven tests and checks the
 Python dependency/model setup as part of the build. Publishing uses the job's
 short-lived `GITHUB_TOKEN` with `packages: write`; no personal token is configured.
+The untagged digest is scanned with Syft/Grype before release tags are promoted.
+High or Critical findings fail publication, and the existing storage hooks must
+complete successfully. The retained security artifact contains minimized findings
+bound to repository, revision, image digest and platform.
 
 Pushes to `main` trigger the build without path filters. Manual dispatch is also
 available on `main`; other branches cannot publish through this workflow.

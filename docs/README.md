@@ -37,7 +37,26 @@
 - [Local OCR benchmark](../output/ocr-benchmark/README.md) : image and OCR row-matching records, including the
   Linux application-image check.
 
-## Verified deployment (2026-09-28)
+## Verified deployment (2026-10-17)
+
+TrueNAS job **18850** deployed release **20261017-address-recovery**, source
+`fcf21f5`, immutable image
+`sha256:cbb7cf3d6c1cb26645397c39dd99176d56e498fd2d1944461abbb2e9ed0efe56`.
+[CI attempt 2](https://github.com/javaDevJT/RouteListToTesla/actions/runs/39048490852/attempts/2)
+passed all gates with zero High/Critical findings. Native qualification passed
+13/13 screenshots and 36 Python checks, with all three OCR engines and no
+overlays. The final two-image comparison was 35.4 seconds sequentially versus
+22.6 seconds concurrently, with matching text and review decisions.
+
+The [public app](https://teslarouter.javadevjt.tech) serves the verified release.
+Eight CPUs/8 GiB, UID 10001, read-only root, no host ports and retained data mounts
+are preserved. The health probe, TAP redirect, signed-out route/CSRF boundaries
+and mobile browser checks passed. Local checks passed 167 Java and 23 frontend
+tests. The browser interactions used mocked APIs; one approved address separately
+resolved through Google. No vehicle commands were issued. See the
+[release and infrastructure findings](address-recovery-2026-10-17.md).
+
+## Historical deployment (2026-09-28)
 
 TrueNAS job **212741** deployed `20260928-jlink`, source commit `0fbb774`, image
 `sha256:a62e3e8ff5390d2665030bd3306b7608c42bb0cde49acaad505e6bfd70df34bd`.
