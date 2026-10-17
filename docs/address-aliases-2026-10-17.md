@@ -99,3 +99,12 @@ The four shared-suffix negatives pass, and a focused independent closure review
 found no remaining blocker. The final clean package again passed all 203 tests.
 Mobile Chrome preflight passed using the newly built template and mocked route
 APIs; it is not yet immutable-image or deployed UI evidence.
+
+A final compatibility review found that v4 accepted exact township long/short
+names even when Google omitted the optional neighborhood. The v5 fallback now
+retains that shape only with a nonblank matching short name, a descriptor-bearing
+same-named US township and no strong city fields. A present conflicting
+neighborhood remains rejected. Regression coverage includes missing/wrong short
+names, wrong township/state/country, partial and broad results and conflicting
+city fields. Independent closure found no blocker; clean package passed all
+204 Java tests with zero failures/errors/skips.

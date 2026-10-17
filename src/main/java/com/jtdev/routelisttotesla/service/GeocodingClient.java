@@ -931,7 +931,7 @@ public class GeocodingClient {
                             && canonicalTownshipName(longName) != null
                             && !expectedCity.equals(canonicalLocality(longName))) {
                         // A shortened township base is allowed only through the
-                        // neighborhood/strong-locality checks below. An explicit
+                        // township/strong-locality checks below. An explicit
                         // full township name can still match its typed level.
                         componentMatches = false;
                     }
@@ -960,14 +960,15 @@ public class GeocodingClient {
 
     private static boolean matchesTownshipWithoutCity(JsonNode match, String city) {
         // An unincorporated postal community may have no locality/postal_town.
-        // Require BOTH an exact neighborhood name and its same-named township;
-        // a neighborhood alone must never override a conflicting city result.
+        // Require its same-named township and reject any conflicting neighborhood.
+        // When Google omits the neighborhood, require a corroborating short name.
+        // Neither shape may override a conflicting city result.
         if (!componentValues(match, "locality").isEmpty() || !componentValues(match, "postal_town").isEmpty()
                 || !componentValues(match, "sublocality").isEmpty()
                 || !componentValues(match, "sublocality_level_1").isEmpty()) return false;
         String expected = canonicalLocality(city);
         List<String> neighborhoods = componentValues(match, "neighborhood");
-        if (neighborhoods.isEmpty() || neighborhoods.stream()
+        if (neighborhoods.stream()
                 .anyMatch(value -> !expected.equals(canonicalLocality(value)))) return false;
         boolean townshipFound = false;
         for (JsonNode component : match.path("address_components")) {
@@ -976,6 +977,7 @@ public class GeocodingClient {
             String longName = component.path("long_name").asString("");
             String shortName = component.path("short_name").asString("");
             if (!expected.equals(canonicalTownshipName(longName))) return false;
+            if (neighborhoods.isEmpty() && shortName.isBlank()) return false;
             if (!shortName.isBlank() && !expected.equals(canonicalLocality(shortName))
                     && !expected.equals(canonicalTownshipName(shortName))) return false;
         }

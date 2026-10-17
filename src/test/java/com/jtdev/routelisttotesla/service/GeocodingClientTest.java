@@ -993,6 +993,45 @@ class GeocodingClientTest {
     }
 
     @Test
+    void acceptsCorroboratedTownshipWithoutNeighborhoodAndRejectsUnsafeResults() throws Exception {
+        String noNeighborhood = townshipAddress("township-only", "TESTHILL", "TESTHILL Township")
+                .replace("{\"long_name\":\"TESTHILL\",\"short_name\":\"TESTHILL\","
+                        + "\"types\":[\"neighborhood\",\"political\"]},", "");
+        for (String[] sample : List.of(new String[]{"TESTHILL", "township-only"},
+                new String[]{"TESTHILL Township", "township-only"},
+                new String[]{"", null}, new String[]{"OTHER", null})) {
+            String response = noNeighborhood.replace("\"short_name\":\"TESTHILL Township\"",
+                    "\"short_name\":\"" + sample[0] + "\"");
+            HttpServer server = server(exchange -> respond(exchange, response));
+            server.start();
+            try {
+                PlaceCandidate result = client(server, 20, 20, 1, 1).batchGeocode("owner-a",
+                        List.of(place("456 COUNTRYSIDE LN, TESTHILL, MI", "scan.png", 0))).getFirst();
+                assertEquals(sample[1], result.pid(), sample[0]);
+                assertEquals(sample[1] == null ? LocationResolution.Status.NO_MATCH
+                        : LocationResolution.Status.VERIFIED_BUILDING, result.resolution().status(), sample[0]);
+            } finally { server.stop(0); }
+        }
+        for (String response : List.of(
+                noNeighborhood.replace("TESTHILL Township", "OTHER Township"),
+                noNeighborhood.replace("\"MI\"", "\"OH\""),
+                noNeighborhood.replace("\"US\"", "\"CA\""),
+                noNeighborhood.replace("\"partial_match\":false", "\"partial_match\":true"),
+                noNeighborhood.replace("\"types\":[\"street_address\"]", "\"types\":[\"locality\"]"),
+                noNeighborhood.replace("],\"geometry\"", ",{\"long_name\":\"OTHER CITY\","
+                        + "\"short_name\":\"OTHER CITY\",\"types\":[\"locality\"]}],\"geometry\""))) {
+            HttpServer server = server(exchange -> respond(exchange, response));
+            server.start();
+            try {
+                PlaceCandidate result = client(server, 20, 20, 1, 1).batchGeocode("owner-a",
+                        List.of(place("456 COUNTRYSIDE LN, TESTHILL, MI", "scan.png", 0))).getFirst();
+                assertNull(result.pid(), response);
+                assertEquals(LocationResolution.Status.NO_MATCH, result.resolution().status());
+            } finally { server.stop(0); }
+        }
+    }
+
+    @Test
     void acceptsOnlyMatchingTownshipAdminAreaShortNameBase() throws Exception {
         for (String[] sample : List.of(new String[]{"TESTHILL", "short-base"},
                 new String[]{"OTHER", null})) {
