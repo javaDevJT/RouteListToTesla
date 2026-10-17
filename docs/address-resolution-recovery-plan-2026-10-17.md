@@ -11,8 +11,8 @@ OCR or OpenAI key. The initial investigation was plan-only; the user subsequentl
 authorized implementation, commit, push and deployment. No vehicle commands are
 authorized as part of qualification.
 
-Status: implemented with local qualification complete; CI publication and native
-image qualification/deployment are pending. Base: main `9a3471b`; unrelated
+Status: deployed and verified as `20261017-location-recovery`, application source
+`48f86f2`. Implementation base: main `9a3471b`; unrelated
 AGENTS.md is preserved.
 
 ## Authorized execution
@@ -22,7 +22,7 @@ Execution uses main. Primary owns model/controller integration, checks, release
 helpers and deployment. Independent write scopes: geocoder and its test; UI and
 its JS test; OCR cache and its test; automatic navigation and its tests. Model
 selection checked against the native catalog: the single current Luna entry is
-`gpt-6-luna`, maximum effort `max`; explicit fields will be set for all workers.
+`gpt-6-luna`, maximum effort `max`; both fields were explicit for all workers.
 Workers may not commit, use real providers/NAS, modify infrastructure, or issue
 vehicle commands; primary serializes Maven writes and external actions.
 
@@ -36,27 +36,17 @@ metadata for command authorization. Its existing batchGeocode(owner, rows) stays
 an overload batchGeocode(owner, rows, absoluteDeadlineNanos) supports parent
 request deadlines. Primary owns these model classes and controller calls.
 
-Queued workers (consumer: primary integration/release; base main 9a3471b):
-geocoder-builder, feedback-builder, cache-builder, auto-navigation-builder.
-Each must hand off a diff and focused checks, then naturally complete/release.
+The four scoped builders completed their handoffs and released their workers.
+Primary integrated the model/controller contracts and serialized the build checks.
+Independent reviews covered saved-session command boundaries, cache trust,
+geocoder locality/unit validation, cancellation and the retry UI. Their findings
+were corrected and closure reviews found no remaining concrete blocker.
 
-Execution handles: `/root/recovery_geocoder_builder` and
-`/root/recovery_feedback_builder` are running. `/root/recovery_cache_builder`
-and `/root/recovery_autonav_builder` handed off their scoped implementations and
-whitespace checks; primary accepted their interfaces and is reviewing integration
-before serialized Maven. Native completion released both workers. A read-only
-review of saved-route, cache and command-boundary safety is queued for primary
-integration; geocoder/UI review follows their completed diffs.
-
-Geocoder and UI handoffs are now ready for primary checks; UI worker reported
-29/29 JS checks. Independent boundary review found a restart-held accepted-session
-resume gap and an inaccessible location-retry path. The original automatic-route
-owner is correcting its guard/model/tests; primary owns the guarded retry API/UI.
-A separate read-only geocoder/UI safety review is queued against completed code.
-First primary compilation caught an invalid checked IOException catch in the
-cache slice; primary corrected it. Browser preflight exposed an outdated harness
-state assertion, which was updated; marked obsolete send feedback now clears its
-text and styling as well as visibility.
+Restart-held accepted sessions cannot resume through the generic start path.
+Location-validation pauses have a dedicated guarded retry endpoint and UI action;
+it returns to telemetry monitoring without immediately issuing a command. Marked
+obsolete location errors clear their text and styling after successful recovery,
+while command holds remain intact.
 
 Primary integration checks passed: 191 Java tests in a clean package, 29 JS
 tests, and mobile Chrome at 390×844 with mocked route APIs. The actual recorded
@@ -71,6 +61,70 @@ The native image suite now includes all three supplied HEICs (16 cases total).
 Existing image concurrency and all three OCR engines are retained; latency gains
 here primarily remove rejected valid matches, duplicate lookups and OCR rereads.
 
+## Native baseline
+
+The prior deployed image `sha256:cbb7cf3d6c1cb26645397c39dd99176d56e498fd2d1944461abbb2e9ed0efe56`
+passed the expanded 16-case suite, including all three supplied HEICs, on native
+TrueNAS hardware with eight CPUs, 8 GiB and two OCR threads. All 36 Python checks
+passed; all three engines ran. Peak memory was 2.23 GiB with no memory events or
+leftover OCR jobs; the isolated QA app and fixtures were removed afterward.
+
+One three-image timing trial took 63.10 seconds sequentially and 42.42 seconds
+at image concurrency two, a 32.8% elapsed-time reduction with identical ordered
+text, engine agreement and review flags. This measures existing concurrency on
+the supplied HEICs, not a new OCR algorithm or an end-to-end Google lookup time.
+The release image must pass its own qualification before deployment.
+
+## Release qualification
+
+Application source `48f86f2419c81e8f316e9145e6bbe03477092736` is committed and
+pushed to main. [CI run 39067020403](https://github.com/javaDevJT/RouteListToTesla/actions/runs/39067020403),
+attempt 1, passed build/tests, SBOM/vulnerability checks with zero High/Critical
+findings, existing storage hooks, publication and artifact cleanup. This does
+not independently calibrate runner storage capacity.
+
+Published image:
+`ghcr.io/javadevjt/routelisttotesla@sha256:a0c46d17ed8e10afac9deacfc9ced42dd13c5213d0ef5f2b5321bd5ff7c6ac13`.
+Its OCI source revision matches the application commit and its packaged frontend
+template matches the tested local build. Native qualification of this image passed
+16/16 ordered-exact screenshots and 36 Python tests with all three local engines,
+no parser overlays and no memory events or leftover OCR jobs. Peak memory was
+2,571,866,112 bytes (2.40 GiB). Task-owned QA resources were cleaned up afterward.
+
+The three supplied HEICs took 64.34 seconds sequentially and 40.90 seconds at
+image concurrency two in one timing trial (36.4% less elapsed time). Ordered text,
+engine agreement and review decisions matched exactly. The existing two-image
+concurrency remains enabled; these timings exclude Google lookup and are not a
+claim of a new OCR algorithm. The two actual recorded Google responses separately
+passed against the final packaged geocoder in one query each, using offline
+replay with zero new provider or vehicle requests.
+
+TrueNAS update job **19348** succeeded. The router runs that exact image and
+serves release **20261017-location-recovery** at
+[teslarouter.javadevjt.tech](https://teslarouter.javadevjt.tech). Full configuration
+readback preserved every setting except the two image references and APP_RELEASE;
+data mounts remain unchanged. Eight CPUs/8 GiB, UID 10001, a read-only root and
+no published host ports remain in effect. The public HTTP health probe returned
+200; TrueNAS did not expose a separate health field.
+
+Live login identity, TAP authorization redirect, signed-out read protection and
+CSRF protection (including the new retry endpoint) passed. Chrome at 390×844
+verified the digest-proven packaged template with mocked route APIs: explicit
+retry success, aggregate/row feedback, stale location-error removal, retained
+draft/caret/focus, overlap dedupe and the guarded automatic-route retry. There
+were no browser script errors. These interactions do not constitute a live
+provider/vehicle or physical-iPhone test; no Google request or vehicle command
+was issued during release qualification or deployment.
+
+Private evidence is under `output/private/location-recovery-20261017/`: CI,
+registry, packaged-template, native completion, deployment, production and browser
+verification JSON; native reports/logs; recorded-response replay and rendered
+screenshots. Deployment requires the selected digest to match the CI-scanned
+digest and native report hash. Final runtime/browser proofs also cross-check the
+same source, image and release. The old-image baseline report cannot satisfy the
+new-image deployment gate. The later documentation commit records this evidence;
+the deployed application source remains `48f86f2`.
+
 ## Investigation ownership
 
 Primary inspected the original images, integrated evidence and prepared this
@@ -84,15 +138,16 @@ the centralized swarm model policy; provider internals are unexposed. Workers
 completed with source-backed handoffs. A third read-only worker independently
 reviewed destination safety, cache trust, saved sessions and deadline behavior;
 the substantive findings are incorporated below. A focused closure review found
-no remaining concrete blocker; the proposed timing budgets still require runtime
-qualification before release.
+no remaining concrete blocker. Mocked timing/cancellation checks and native image
+qualification subsequently passed. A real provider-outage load test was not run.
 
 ## Confirmed evidence
 
 All three original HEICs were converted locally and visually inspected without
 changing the originals. Their 12 visible addresses match the rows in IMG_0633.PNG,
-including both unresolved stops and Apt 104. This is a visual comparison, not a
-new OCR qualification run.
+including both unresolved stops and Apt 104. This initial visual comparison did
+not run OCR; the native release qualification above covers the same HEICs through
+all three engines.
 
 The user approved bounded Google tests for the two failed stops. Three requests
 were made: both original queries and the existing St Clair unitless fallback.
@@ -100,7 +155,7 @@ All returned HTTP 200 / OK, non-partial rooftop street-address results with the
 expected house number, Howell, MI, coordinates and place ID. The original
 St Clair response also contains apartment 104.
 
-| Case | Google response | Current rejection | Required behavior |
+| Case | Google response | Baseline rejection | Implemented behavior |
 | --- | --- | --- | --- |
 | St Clair Court | Long route `Saint Clair Court`, short route `St Clair Ct` | Only long name is checked; leading `ST` is not equivalent to `SAINT` | Compare both typed route names and keep the original unit-specific result |
 | Knotty Pine Trail | Both route names use `Knotty Pine Tr` | Terminal `TRL` becomes `TRAIL`, but `TR` is absent from the suffix map | Add this controlled terminal suffix equivalence |
@@ -121,7 +176,7 @@ Private evidence, excluded from Git:
 - Converted originals: `/private/tmp/routelist-0629.png`,
   `/private/tmp/routelist-0630.png`, `/private/tmp/routelist-0631.png`.
 
-## Current limits
+## Baseline limits before this release
 
 `GeocodingClient.addressVariants()` tries the original, optionally removes a
 marked intermediate complex while retaining a separate locality, then removes
@@ -265,9 +320,9 @@ parallel UI/recovery-ladder implementation. Integrate cache compatibility and
 independently review safety before release. Preserve TAP stable-sub entitlement,
 CSRF, eight-stop grouping, command idempotency and uncertainty holds throughout.
 
-The image key currently combines extraction and geocoding versions. Separate OCR
-identity from location-policy identity, with a tested legacy read path, so a
-geocoder fix can reuse OCR. Existing OCR entries use the combined image key plus
+Before this release the image key combined extraction and geocoding versions.
+OCR identity is now separate from location-policy identity, with a tested legacy
+read path, so a geocoder fix can reuse OCR. Legacy OCR entries use the combined image key plus
 `.ocr`; derive the old combined key with the original geocoding version and read
 that exact entry before writing a new OCR-only key. Do not accept old geocoded
 results through the OCR migration path. Test owner/state/extraction isolation and
@@ -279,10 +334,10 @@ cached validation as command authority. Never trust browser-supplied coordinates
 place IDs. Avoid repeating this work on every telemetry poll or after an uncertain
 command; existing idempotency and command holds take precedence.
 
-`AutoNavigationService.prepareCurrentGroup()` currently skips geocoding for saved
-coordinates. Remove that bypass for new dispatches, including legacy sessions.
-Retain sessions and their original text; require current-policy street validation
-before a pending group can be sent, and hold that group if validation fails.
+`AutoNavigationService.prepareCurrentGroup()` previously skipped geocoding for
+saved coordinates. The bypass is removed for new dispatches, including legacy
+sessions. Sessions and original text remain; a pending group requires fresh
+current-policy street validation and is held if validation fails.
 Migration/revalidation must not resume paused, cancelled, completed or uncertain
 sessions, reissue an accepted group, or change vehicle preferences.
 

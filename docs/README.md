@@ -1,6 +1,6 @@
 # Documentation
 
-- [Automatic address recovery (2026-10-17)](address-resolution-recovery-plan-2026-10-17.md): original HEIC review, street-name validation, bounded recovery, clear outcomes and guarded saved-route retries; implementation qualified locally, release pending.
+- [Automatic address recovery (2026-10-17)](address-resolution-recovery-plan-2026-10-17.md): deployed street-name validation, bounded recovery, clear outcomes and guarded saved-route retries; original HEIC review and complete release evidence.
 - [Address recovery and processing improvements (2026-10-17)](address-recovery-2026-10-17.md): complex names, time-label filtering, pre-send resolution and native speed qualification.
 - [Container vulnerability repair (2026-10-10)](security-release-2026-10-10.md): unused Pebble runtime removal and release verification.
 - [CI recovery (2026-10-05)](ci-recovery-2026-10-05.md): vulnerability remediation, runner storage sizing, and release acceptance evidence.
@@ -40,22 +40,25 @@
 
 ## Verified deployment (2026-10-17)
 
-TrueNAS job **18850** deployed release **20261017-address-recovery**, source
-`fcf21f5`, immutable image
-`sha256:cbb7cf3d6c1cb26645397c39dd99176d56e498fd2d1944461abbb2e9ed0efe56`.
-[CI attempt 2](https://github.com/javaDevJT/RouteListToTesla/actions/runs/39048490852/attempts/2)
+TrueNAS job **19348** deployed release **20261017-location-recovery**, application
+source `48f86f2`, immutable image
+`sha256:a0c46d17ed8e10afac9deacfc9ced42dd13c5213d0ef5f2b5321bd5ff7c6ac13`.
+[CI attempt 1](https://github.com/javaDevJT/RouteListToTesla/actions/runs/39067020403)
 passed all gates with zero High/Critical findings. Native qualification passed
-13/13 screenshots and 36 Python checks, with all three OCR engines and no
-overlays. The final two-image comparison was 35.4 seconds sequentially versus
-22.6 seconds concurrently, with matching text and review decisions.
+16/16 screenshots and 36 Python checks, including the three newly supplied HEICs,
+with all three OCR engines and no overlays. One three-image trial took 64.34
+seconds sequentially versus 40.90 seconds at image concurrency two, with identical
+text and review decisions; these timings exclude Google lookup.
 
 The [public app](https://teslarouter.javadevjt.tech) serves the verified release.
 Eight CPUs/8 GiB, UID 10001, read-only root, no host ports and retained data mounts
 are preserved. The health probe, TAP redirect, signed-out route/CSRF boundaries
-and mobile browser checks passed. Local checks passed 167 Java and 23 frontend
-tests. The browser interactions used mocked APIs; one approved address separately
-resolved through Google. No vehicle commands were issued. See the
-[release and infrastructure findings](address-recovery-2026-10-17.md).
+and mobile browser checks passed. Local checks passed 191 Java and 29 frontend
+tests. The browser interactions used the digest-proven packaged template with
+mocked APIs; live login release and runtime image were checked separately. Both
+recorded failing Google responses resolve against the packaged geocoder in one
+query each using offline replay. No new Google requests or vehicle commands were
+issued during this release. See the [complete release record](address-resolution-recovery-plan-2026-10-17.md).
 
 ## Historical deployment (2026-09-28)
 
