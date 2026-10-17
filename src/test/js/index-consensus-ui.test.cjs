@@ -15,6 +15,11 @@ function extractBetween(startMarker, endMarker) {
     return template.slice(start, end);
 }
 
+const locationCoreSource = [
+    extractBetween('const locationResolutionStates = new WeakMap();', 'const MANUAL_COMMAND_HOLD_PREFIX'),
+    extractBetween('function isLocated(address) {', 'function updateLocationResolutionNotice() {')
+].join('\n');
+
 const addressUiSource = [
     extractBetween('const locationResolutionStates = new WeakMap();', 'const MANUAL_COMMAND_HOLD_PREFIX'),
     extractBetween('function isLocated(address) {', 'function populateAddressList() {'),
@@ -102,6 +107,16 @@ class FakeElement {
         this.disabled = false;
         this.classList = {
             contains: name => this.className.split(/\s+/).includes(name),
+            add: (...names) => {
+                const classes = new Set(this.className.split(/\s+/).filter(Boolean));
+                names.forEach(name => classes.add(name));
+                this.className = [...classes].join(' ');
+            },
+            remove: (...names) => {
+                const classes = new Set(this.className.split(/\s+/).filter(Boolean));
+                names.forEach(name => classes.delete(name));
+                this.className = [...classes].join(' ');
+            },
             toggle: (name, force) => {
                 const shouldAdd = force === undefined ? !this.classList.contains(name) : force;
                 const classes = new Set(this.className.split(/\s+/).filter(Boolean));
@@ -254,11 +269,17 @@ function loadUi(source, globals) {
     new vm.Script(source + `
         globalThis.ui = {
             createAddressItem: typeof createAddressItem === 'function' ? createAddressItem : null,
+            isLocated: typeof isLocated === 'function' ? isLocated : null,
+            hasCurrentLocationResolution: typeof hasCurrentLocationResolution === 'function' ? hasCurrentLocationResolution : null,
             confirmOcrReading: typeof confirmOcrReading === 'function' ? confirmOcrReading : null,
             updateAddress: typeof updateAddress === 'function' ? updateAddress : null,
             resolveLocationCandidates: typeof resolveLocationCandidates === 'function' ? resolveLocationCandidates : null,
             getLocationResolutionState: typeof getLocationResolutionState === 'function' ? getLocationResolutionState : null,
-            setLocationResolutionState: typeof setLocationResolutionState === 'function' ? setLocationResolutionState : null
+            setLocationResolutionState: typeof setLocationResolutionState === 'function' ? setLocationResolutionState : null,
+            updateLocationResolutionNotice: typeof updateLocationResolutionNotice === 'function' ? updateLocationResolutionNotice : null,
+            refreshLocationPresentation: typeof refreshLocationPresentation === 'function' ? refreshLocationPresentation : null,
+            showLocationBlockedSendStatus: typeof showLocationBlockedSendStatus === 'function' ? showLocationBlockedSendStatus : null,
+            clearResolvedLocationBlockedSendError: typeof clearResolvedLocationBlockedSendError === 'function' ? clearResolvedLocationBlockedSendError : null
         };`)
         .runInContext(context);
     return context;
@@ -279,16 +300,26 @@ function candidate(overrides = {}) {
             'Tesseract CLI: 123 Main St, Ann Arbor MI',
             'Vision engine: 123 Main St, Ann Arbor MI'
         ],
+        resolution: {
+            status: 'VERIFIED_UNIT', strategy: 'original', reasonCode: 'street_match', attempts: 1,
+            policyVersion: 'street-address-v4', retryAfterSeconds: null
+        },
         ...overrides
     };
 }
 
 function unlocatedCandidate(overrides = {}) {
-    return candidate({ lat: 0, lon: 0, pid: null, ocrReviewRequired: false, ...overrides });
+    return candidate({ lat: 0, lon: 0, pid: null, ocrReviewRequired: false, resolution: null, ...overrides });
 }
 
 function resolvedCandidate(address, placeId = 'resolved-place') {
-    return { text: address.text, lat: 42.31, lon: -83.81, pid: placeId };
+    return {
+        text: address.text, lat: 42.31, lon: -83.81, pid: placeId,
+        resolution: {
+            status: 'VERIFIED_UNIT', strategy: 'original', reasonCode: 'street_match', attempts: 1,
+            policyVersion: 'street-address-v4', retryAfterSeconds: null
+        }
+    };
 }
 
 function createLocationHarness(addresses, apiFetch, overrides = {}) {
@@ -296,6 +327,7 @@ function createLocationHarness(addresses, apiFetch, overrides = {}) {
     const document = {
         createElement: tagName => new FakeElement(tagName),
         getElementById: id => id === 'locationResolutionNotice' ? notice : new FakeElement('div'),
+        activeElement: null,
         ...(overrides.document || {})
     };
     const context = loadUi(addressUiSource, {
@@ -306,6 +338,7 @@ function createLocationHarness(addresses, apiFetch, overrides = {}) {
         apiFetch,
         sendStatus: overrides.sendStatus || {},
         showStatus: overrides.showStatus || (() => {}),
+        hideStatus: overrides.hideStatus || (() => {}),
         populateAddressList: overrides.populateAddressList || (() => {}),
         updateManualCommandHoldControls: overrides.updateManualCommandHoldControls || (() => {})
     });
@@ -490,6 +523,53 @@ test('ignores a second upload submission while the first cache check is pending'
     assert.equal(requestCount, 1);
 });
 
+test('new-policy upload shows screenshot and lookup progress without an immediate duplicate resolve pass', async () => {
+    let finishUpload;
+    let resolveCalls = 0;
+    const address = candidate({ text: '120 Main St Apt 104, Ann Arbor MI' });
+    const harness = createUploadHarness(url => {
+        if (url === '/route/cache/check') return Promise.resolve({ ok: true, json: async () => ({ cached: false }) });
+        if (url === '/route/places') return new Promise(resolve => { finishUpload = resolve; });
+        if (url === '/route/resolve') resolveCalls++;
+        throw new Error(`Unexpected request: ${url}`);
+    });
+    harness.context.configureUpload([{ file: {}, hash: 'fresh-hash', name: 'route.png' }]);
+
+    const pending = harness.context.uploadUi.submit({ preventDefault() {} });
+    for (let spin = 0; spin < 20 && !finishUpload; spin++) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(typeof finishUpload, 'function');
+    const progress = harness.statuses.find(status => status.type === 'loading' && /Reading screenshots/.test(status.message));
+    assert.ok(progress);
+    assert.match(progress.message, /street addresses and tries safe alternatives/);
+
+    finishUpload({ ok: true, json: async () => ({ candidates: [address], imageCandidates: [[address]] }) });
+    await pending;
+    assert.equal(resolveCalls, 0);
+    assert.match(harness.statuses.at(-1).message, /1 of 1 stops verified/);
+});
+
+test('terminal upload outcomes do not trigger an automatic second lookup', async () => {
+    for (const status of ['NO_MATCH', 'DEFERRED', 'LOOKUP_UNAVAILABLE']) {
+        let resolveCalls = 0;
+        const outcome = unlocatedCandidate({
+            text: `120 Main St Apt 104, Ann Arbor MI ${status}`,
+            resolution: {
+                status, strategy: 'bounded_recovery', reasonCode: status.toLowerCase(), attempts: 8,
+                policyVersion: 'street-address-v4', retryAfterSeconds: status === 'DEFERRED' ? 30 : null
+            }
+        });
+        const harness = createUploadHarness(async url => {
+            if (url === '/route/cache/check') return { ok: true, json: async () => ({ cached: true, candidates: [outcome] }) };
+            if (url === '/route/resolve') resolveCalls++;
+            throw new Error(`Unexpected request: ${url}`);
+        });
+        harness.context.configureUpload([{ file: {}, hash: `${status}-hash`, name: 'route.png' }]);
+        await harness.context.uploadUi.submit({ preventDefault() {} });
+        assert.equal(resolveCalls, 0, `${status} must remain terminal until manual retry`);
+        assert.match(harness.statuses.at(-1).message, /0 of 1 stops verified/);
+    }
+});
+
 test('shows OCR support and literal engine readings, then confirms the current reading', () => {
     const unsafeReading = '<img src=x onerror=alert(1)>';
     const address = candidate({
@@ -559,7 +639,30 @@ test('location preflight skips verified rows and merges only the matching fresh 
     assert.equal(unresolved.pid, 'resolved-place');
     assert.equal(unresolved.ocrReviewRequired, true);
     assert.equal(harness.context.ui.getLocationResolutionState(unresolved).status, 'located');
-    assert.equal(harness.notice.className, 'status hidden');
+    assert.equal(harness.notice.className, 'status success');
+    assert.match(harness.notice.textContent, /2 of 2 stops verified/);
+});
+
+test('legacy coordinates are cleared and remain blocked until a current policy outcome arrives', async () => {
+    const legacy = candidate({ text: '120 Main St Apt 104, Ann Arbor MI', resolution: null });
+    let finishLookup;
+    const harness = createLocationHarness([legacy], () => new Promise(resolve => { finishLookup = resolve; }));
+    const row = harness.context.ui.createAddressItem(legacy, 0);
+    assert.equal(harness.context.ui.isLocated(legacy), false);
+    assert.match(row.querySelector('.location-status').textContent, /No current street-location verification/);
+
+    const lookup = harness.context.ui.resolveLocationCandidates([legacy]);
+    assert.equal(legacy.lat, 0);
+    assert.equal(legacy.lon, 0);
+    assert.equal(legacy.pid, null);
+    assert.equal(row.querySelector('.location-retry-button').disabled, true);
+    finishLookup({ ok: true, json: async () => ({ candidates: [{ ...resolvedCandidate(legacy), resolution: null }] }) });
+    await lookup;
+
+    assert.equal(harness.context.ui.isLocated(legacy), false);
+    assert.equal(row.querySelector('.location-retry-button').disabled, false);
+    assert.match(row.querySelector('.location-status').textContent, /No current street-location verification/);
+    assert.match(harness.notice.textContent, /0 of 1 stops verified/);
 });
 
 test('another row resolving preserves a focused textarea draft, caret, and active element', async () => {
@@ -579,7 +682,7 @@ test('another row resolving preserves a focused textarea draft, caret, and activ
     harness.context.document.activeElement = input;
 
     const lookup = harness.context.ui.resolveLocationCandidates([resolving]);
-    assert.equal(resolvingRow.querySelector('.address-meta').textContent.includes('Checking location'), true);
+    assert.equal(resolvingRow.querySelector('.location-status').textContent.includes('Checking street address'), true);
     assert.equal(resolvingRow.querySelector('.location-retry-button').disabled, true);
     assert.equal(harness.context.document.activeElement, input);
     assert.equal(input.value, '120 Main St, Ann Arbor MI, Apt 331');
@@ -589,7 +692,7 @@ test('another row resolving preserves a focused textarea draft, caret, and activ
 
     finishLookup({ ok: true, json: async () => ({ candidates: [resolvedCandidate(resolving)] }) });
     await lookup;
-    assert.equal(resolvingRow.querySelector('.address-meta').textContent.includes('Location verified'), true);
+    assert.equal(resolvingRow.querySelector('.location-status').textContent.includes('verified'), true);
     assert.equal(resolvingRow.querySelector('.location-retry-button'), null);
     assert.equal(harness.context.document.activeElement, input);
     assert.equal(input.value, '120 Main St, Ann Arbor MI, Apt 331');
@@ -611,7 +714,7 @@ test('failed location lookups can be retried from their row without creating a c
     }, { persistManualCommandHold: () => { holdWrites++; } });
 
     await harness.context.ui.resolveLocationCandidates([unresolved]);
-    assert.equal(harness.context.ui.getLocationResolutionState(unresolved).status, 'failed');
+    assert.equal(harness.context.ui.getLocationResolutionState(unresolved).status, 'unavailable');
     assert.equal(harness.notice.className, 'status error');
 
     const row = harness.context.ui.createAddressItem(unresolved, 0);
@@ -628,6 +731,125 @@ test('failed location lookups can be retried from their row without creating a c
     assert.equal(harness.context.ui.getLocationResolutionState(unresolved).status, 'located');
     assert.equal(unresolved.pid, 'retry-place');
     assert.equal(holdWrites, 0);
+    assert.match(pendingRow.querySelector('.location-status').textContent, /Apartment or suite verified/);
+    assert.equal(pendingRow.querySelector('.location-status').className.includes('success'), true);
+    assert.equal(pendingRow.querySelector('.location-status').getAttribute('aria-live'), 'polite');
+});
+
+test('every terminal location outcome stays visible and only verified unit/building rows remove retry', () => {
+    const statuses = ['VERIFIED_UNIT', 'VERIFIED_BUILDING', 'NO_MATCH', 'AMBIGUOUS', 'DEFERRED', 'LOOKUP_UNAVAILABLE'];
+    const addresses = statuses.map(status => {
+        const resolution = {
+            status, strategy: 'bounded_recovery', reasonCode: status.toLowerCase(), attempts: 4,
+            policyVersion: 'street-address-v4', retryAfterSeconds: status === 'DEFERRED' ? 30 : null
+        };
+        if (status === 'VERIFIED_UNIT') return candidate({ text: '120 Main St Apt 104, Ann Arbor MI', resolution });
+        if (status === 'VERIFIED_BUILDING') return candidate({ text: '120 Main St Apt 104, Ann Arbor MI', resolution });
+        return unlocatedCandidate({ text: `120 Main St Apt 104, Ann Arbor MI ${status}`, resolution });
+    });
+    const harness = createLocationHarness(addresses, async () => { throw new Error('unexpected retry'); });
+    const rows = addresses.map((address, index) => harness.context.ui.createAddressItem(address, index));
+    const messages = rows.map(row => row.querySelector('.location-status').textContent);
+
+    assert.match(messages[0], /Apartment or suite verified/);
+    assert.match(messages[1], /Building verified — Apt 104 retained/);
+    assert.match(messages[1], /unit was not verified/);
+    assert.match(messages[2], /No safe street match after automatic attempts/);
+    assert.match(messages[3], /Several street matches remain/);
+    assert.match(messages[4], /try again in about 30 seconds/);
+    assert.match(messages[5], /temporarily unavailable/);
+    assert.equal(rows[0].querySelector('.location-retry-button'), null);
+    assert.equal(rows[1].querySelector('.location-retry-button'), null);
+    for (const row of rows.slice(2)) {
+        const status = row.querySelector('.location-status');
+        const retry = row.querySelector('.location-retry-button');
+        assert.equal(status.getAttribute('role'), 'status');
+        assert.equal(status.getAttribute('aria-live'), 'polite');
+        assert.equal(retry.disabled, false);
+    }
+
+    harness.context.ui.updateLocationResolutionNotice();
+    assert.match(harness.notice.textContent, /2 of 6 stops verified/);
+    assert.match(harness.notice.textContent, /1 no safe match, 1 ambiguous, 1 deferred, 1 temporarily unavailable/);
+});
+
+test('retry keeps focus on the active retry row after success and does not steal another row focus', async () => {
+    const address = unlocatedCandidate({ text: '120 Main St Apt 104, Ann Arbor MI' });
+    let finishLookup;
+    const harness = createLocationHarness([address], () => new Promise(resolve => { finishLookup = resolve; }));
+    const row = harness.context.ui.createAddressItem(address, 0);
+    const retry = row.querySelector('.location-retry-button');
+    const status = row.querySelector('.location-status');
+    status.focus = () => { harness.context.document.activeElement = status; };
+    harness.context.document.activeElement = retry;
+
+    retry.listeners.click();
+    assert.equal(harness.context.document.activeElement, retry);
+    assert.equal(retry.disabled, true);
+    finishLookup({ ok: true, json: async () => ({ candidates: [resolvedCandidate(address)] }) });
+    await new Promise(resolve => setImmediate(resolve));
+
+    assert.equal(row.querySelector('.location-retry-button'), null);
+    assert.equal(harness.context.document.activeElement, status);
+    assert.match(status.textContent, /verified/);
+});
+
+test('resolving stops clears only its marked location-blocked send error and leaves unrelated errors or holds visible', async () => {
+    const locationBlocked = unlocatedCandidate({ text: '120 Main St, Ann Arbor MI' });
+    const sendStatus = new FakeElement('div');
+    const harness = createLocationHarness([locationBlocked], async () => ({
+        ok: true, json: async () => ({ candidates: [resolvedCandidate(locationBlocked)] })
+    }), {
+        sendStatus,
+        getManualCommandHold: () => null,
+        showStatus: (message, type, target) => {
+            target.textContent = message;
+            target.className = `status ${type}`;
+            target.classList.remove('hidden');
+        },
+        hideStatus: target => target.classList.add('hidden')
+    });
+    harness.context.ui.createAddressItem(locationBlocked, 0);
+    harness.context.ui.showLocationBlockedSendStatus('Resolve a verified location first.', [locationBlocked]);
+    const editedLookup = harness.context.ui.updateAddress(0, '121 Main St, Ann Arbor MI');
+    await editedLookup;
+    assert.equal(sendStatus.classList.contains('hidden'), true);
+    assert.equal(sendStatus.dataset.locationBlocked, undefined);
+    assert.equal(sendStatus.textContent, '');
+    assert.equal(sendStatus.classList.contains('error'), false);
+
+    const unrelated = unlocatedCandidate({ text: '200 Oak St, Ann Arbor MI' });
+    const unrelatedStatus = new FakeElement('div');
+    const unrelatedHarness = createLocationHarness([unrelated], async () => ({
+        ok: true, json: async () => ({ candidates: [resolvedCandidate(unrelated)] })
+    }), {
+        sendStatus: unrelatedStatus,
+        getManualCommandHold: () => null,
+        showStatus: (message, type, target) => { target.textContent = message; target.className = `status ${type}`; },
+        hideStatus: target => target.classList.add('hidden')
+    });
+    unrelatedStatus.textContent = 'TAP authorization expired.';
+    unrelatedStatus.className = 'status error';
+    await unrelatedHarness.context.ui.resolveLocationCandidates([unrelated]);
+    assert.equal(unrelatedStatus.textContent, 'TAP authorization expired.');
+
+    const held = unlocatedCandidate({ text: '300 Pine St, Ann Arbor MI' });
+    const holdStatus = new FakeElement('div');
+    const hold = { vin: 'VIN-TEST', state: 'PENDING', idempotencyKey: 'kept' };
+    const holdHarness = createLocationHarness([held], async () => ({
+        ok: true, json: async () => ({ candidates: [resolvedCandidate(held)] })
+    }), {
+        sendStatus: holdStatus,
+        getManualCommandHold: () => hold,
+        showStatus: (message, type, target) => { target.textContent = message; target.className = `status ${type}`; },
+        hideStatus: target => target.classList.add('hidden')
+    });
+    holdStatus.textContent = 'Vehicle route command outcome is unconfirmed.';
+    holdStatus.className = 'status error';
+    holdStatus.dataset.manualCommandHold = 'true';
+    await holdHarness.context.ui.resolveLocationCandidates([held]);
+    assert.equal(holdStatus.textContent, 'Vehicle route command outcome is unconfirmed.');
+    assert.equal(holdStatus.dataset.manualCommandHold, 'true');
 });
 
 test('late location responses cannot overwrite edited text and reordered or removed rows stay identity-bound', async () => {
@@ -671,8 +893,8 @@ test('late location responses cannot overwrite edited text and reordered or remo
     assert.equal(removed.pid, null);
 });
 
-test('restoring a session re-resolves unresolved rows before saving their updated locations', async () => {
-    const unresolved = unlocatedCandidate({ text: '120 Main St Apt 330, Ann Arbor MI' });
+test('restoring a session re-resolves legacy coordinate rows before saving current-policy locations', async () => {
+    const unresolved = candidate({ text: '120 Main St Apt 330, Ann Arbor MI', resolution: null });
     const saved = [];
     let resolveCalls = 0;
     const elements = { vin: new FakeElement('select'), defaultState: new FakeElement('select') };
@@ -704,7 +926,7 @@ test('restoring a session re-resolves unresolved rows before saving their update
 });
 
 test('pre-send validation stays retryable while uncertain outcomes remain held', async () => {
-  const source = extractBetween('function isLocated(address) {', 'function getLocationResolutionState(address) {')
+  const source = locationCoreSource
     + extractBetween('async function sendGroupToTesla(', 'function showStatus(');
   for (const [ok, status, body, held] of [
     [false, 400, { state: 'NOT_SENT', accepted: false, message: 'Stop 1 needs review.' }, false],
@@ -768,18 +990,18 @@ test('clear-hold button removes the stored pause and permits a retry', () => {
 });
 
 test('unlocated addresses explain the problem instead of showing zero coordinates', () => {
-  const address = candidate({ lat: 0, lon: 0, pid: null });
+  const address = unlocatedCandidate({ lat: 0, lon: 0, pid: null });
   const context = loadUi(addressUiSource, {
     document: { createElement: tagName => new FakeElement(tagName) }, extractedAddresses: [address],
     sendStatus: {}, showStatus() {}
   });
   const row = context.ui.createAddressItem(address, 0);
-  assert.match(row.querySelector('.address-meta').textContent, /Location not found/);
+  assert.match(row.querySelector('.location-status').textContent, /No current street-location verification/);
   assert.doesNotMatch(row.querySelector('.address-meta').textContent, /0\.0000/);
 });
 
 test('manual and automatic route sends stop before API dispatch when any route row needs review', async () => {
-    const locationCheck = extractBetween('function isLocated(address) {', 'function getLocationResolutionState(address) {');
+    const locationCheck = locationCoreSource;
     const sendSource = locationCheck + extractBetween('async function sendGroupToTesla(', 'function showStatus(');
     const autoSource = locationCheck + extractBetween('async function startAutoNavigation(', 'function startAutoNavPolling(');
     const pending = candidate();
@@ -811,9 +1033,10 @@ test('manual and automatic route sends stop before API dispatch when any route r
 });
 
 test('manual and automatic sends stay blocked on unresolved locations without dispatch or command holds', async () => {
-    const locationCheck = extractBetween('function isLocated(address) {', 'function getLocationResolutionState(address) {');
-    const sendSource = locationCheck + extractBetween('async function sendGroupToTesla(', 'function showStatus(');
-    const autoSource = locationCheck + extractBetween('async function startAutoNavigation(', 'function startAutoNavPolling(');
+    const locationCheck = locationCoreSource;
+    const locationStatusHelpers = extractBetween('function locationTarget(address) {', 'function updateAddressLocationPresentation(address) {');
+    const sendSource = locationCheck + locationStatusHelpers + extractBetween('async function sendGroupToTesla(', 'function showStatus(');
+    const autoSource = locationCheck + locationStatusHelpers + extractBetween('async function startAutoNavigation(', 'function startAutoNavPolling(');
     const statuses = [];
     let apiCalls = 0;
     let holdWrites = 0;
@@ -845,7 +1068,7 @@ test('manual and automatic sends stay blocked on unresolved locations without di
 });
 
 test('clearing a command hold does not reenable location-blocked route buttons', () => {
-    const source = extractBetween('function isLocated(address) {', 'function getLocationResolutionState(address) {')
+    const source = locationCoreSource
         + extractBetween('function updateManualCommandHoldControls(vin, statusElement) {', 'async function loadVehicles(');
     const groupButton = new FakeElement('button');
     groupButton.disabled = true;
@@ -874,7 +1097,9 @@ test('clearing a command hold does not reenable location-blocked route buttons',
     assert.equal(autoButton.disabled, true);
     assert.equal(autoButton.title, 'Resolve every stop to a verified location before starting.');
 
-    Object.assign(addresses[0], { lat: 42.31, lon: -83.81, pid: 'resolved-place' });
+    Object.assign(addresses[0], {
+        lat: 42.31, lon: -83.81, pid: 'resolved-place', resolution: candidate().resolution
+    });
     context.refresh('VIN-TEST');
     assert.equal(groupButton.disabled, false);
     assert.equal(autoButton.disabled, false);
@@ -910,7 +1135,10 @@ test('merges screenshot seams and contained captures while preserving meaningful
 });
 
 test('cached captures followed by a multi-image upload retain each image boundary', async () => {
-    const row = text => ({ text, normalized: text, pid: text, ocrAgreement: 3, ocrReviewRequired: false });
+    const row = text => ({
+        text, normalized: text, pid: text, lat: 42.31, lon: -83.81,
+        resolution: candidate().resolution, ocrAgreement: 3, ocrReviewRequired: false
+    });
     const first = ['101 First Rd', '202 Second Rd', '303 Third Rd', '404 Fourth Rd'];
     const images = [['202 Second Rd', '303 Third Rd'], ['303 Third Rd', '404 Fourth Rd', '505 Fifth Rd']];
     const harness = createUploadHarness(async (url, options) => ({
@@ -942,7 +1170,10 @@ test('an overlapping complete reading replaces the partial copy and retains its 
 });
 
 test('overlap removal spans cached and uploaded screenshot groups in selection order', async () => {
-    const row = text => ({ text, normalized: text, ocrReviewRequired: false, ocrAgreement: 3 });
+    const row = text => ({
+        text, normalized: text, ocrReviewRequired: false, ocrAgreement: 3,
+        lat: 42.31, lon: -83.81, pid: text, resolution: candidate().resolution
+    });
     const first = ['101 First Rd', '202 Second Rd', '303 Third Rd'];
     const fresh = ['202 Second Rd', '303 Third Rd', '404 Fourth Rd'];
     const last = ['404 Fourth Rd', '505 Fifth Rd'];

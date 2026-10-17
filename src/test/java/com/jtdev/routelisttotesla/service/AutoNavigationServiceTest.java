@@ -3,7 +3,9 @@ package com.jtdev.routelisttotesla.service;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.cfg.DateTimeFeature;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 import com.jtdev.routelisttotesla.model.AutoNavSession;
+import com.jtdev.routelisttotesla.model.LocationResolution;
 import com.jtdev.routelisttotesla.model.PlaceCandidate;
 import com.jtdev.routelisttotesla.service.TapVehicleClient.CommandResult;
 import com.jtdev.routelisttotesla.service.TapVehicleClient.Telemetry;
@@ -52,6 +54,8 @@ class AutoNavigationServiceTest {
     void setUp() throws IOException {
         vehicleClient = mock(TapVehicleClient.class);
         geocodingClient = mock(GeocodingClient.class);
+        when(geocodingClient.batchGeocode(anyString(), anyList()))
+                .thenAnswer(invocation -> currentPolicyMatches(invocation.getArgument(1)));
         sessionsDirectory = tempDir.resolve("sessions");
         service = newService(sessionsDirectory);
         when(vehicleClient.sendRoute(any(TapAccessService.GrantIdentity.class), anyString(), anyList(), anyString()))
@@ -72,7 +76,16 @@ class AutoNavigationServiceTest {
 
     @Test
     void sendsInitialBatchOnlyFromFreshParkedBaseline() {
-        AutoNavSession session = startSession(2);
+        PlaceCandidate original = new PlaceCandidate("Address 0", "ADDRESS 0", "scan-0.png", 4,
+                42.0, -83.0, "legacy-place-0", 2, true, List.of("Address Zero"));
+        AutoNavSession session = service.createSession(VIN, IDENTITY, List.of(original));
+        service.startSession(session.getSessionId(), IDENTITY);
+        PlaceCandidate freshResult = new PlaceCandidate(original.text(), "SERVER NORMALIZED", "server.png", 99,
+                42.25, -83.25, "fresh-place-0", 3, false, List.of(), new LocationResolution(
+                LocationResolution.Status.VERIFIED_BUILDING, "test-building", "verified", 1,
+                GeocodingClient.GEOCODING_VERSION, null));
+        List<PlaceCandidate> cleanQueries = locationQueries(List.of(original));
+        when(geocodingClient.batchGeocode(USER, cleanQueries)).thenReturn(List.of(freshResult));
         Telemetry snapshot = telemetry(1, "P", 0, NOW.minusSeconds(2), NOW.minusSeconds(2));
         when(vehicleClient.telemetry(eq(IDENTITY), eq(VIN), isNull()))
                 .thenReturn(new TelemetryPage(List.of(), snapshot, 1, false, false, NOW));
@@ -84,6 +97,170 @@ class AutoNavigationServiceTest {
         assertEquals(0, session.getCurrentWaypointIndex());
         verify(vehicleClient).sendRoute(eq(IDENTITY), eq(VIN), anyList(), anyString());
         assertNotNull(session.getPendingCommandIdempotencyKey());
+        verify(geocodingClient).batchGeocode(eq(USER), argThat(inputs -> inputs.size() == 1
+                && original.text().equals(inputs.get(0).text())
+                && inputs.get(0).lat() == 0.0 && inputs.get(0).lon() == 0.0
+                && inputs.get(0).pid() == null && inputs.get(0).resolution() == null
+                && inputs.get(0).sourceImage() == null && inputs.get(0).ocrAgreement() == original.ocrAgreement()));
+        PlaceCandidate saved = session.getAllAddresses().get(0);
+        assertEquals("Address 0", saved.text());
+        assertEquals("ADDRESS 0", saved.normalized());
+        assertEquals("scan-0.png", saved.sourceImage());
+        assertEquals(4, saved.lineIndex());
+        assertEquals(2, saved.ocrAgreement());
+        assertTrue(saved.ocrReviewRequired());
+        assertEquals(List.of("Address Zero"), saved.ocrAlternatives());
+        assertEquals(42.25, saved.lat(), 0.0);
+        assertEquals(-83.25, saved.lon(), 0.0);
+        assertEquals("fresh-place-0", saved.pid());
+        assertEquals(LocationResolution.Status.VERIFIED_BUILDING, saved.resolution().status());
+    }
+
+    @Test
+    void freshValidationRejectsLegacyCityCenterCoordinatesAndHoldsWithoutRouteCommand() throws IOException {
+        PlaceCandidate original = addresses(1).get(0)
+                .withLatLonPid(42.3314, -83.0458, "legacy-city-center");
+        AutoNavSession saved = new AutoNavSession("123e4567-e89b-12d3-a456-426614174021",
+                VIN, USER, IDENTITY.grantId(), List.of(original));
+        writeSession(saved);
+        service = newService(sessionsDirectory);
+        AutoNavSession session = service.getSession(saved.getSessionId());
+        service.startSession(session.getSessionId(), IDENTITY);
+        PlaceCandidate cityCenter = original.withResolution(new LocationResolution(
+                LocationResolution.Status.NO_MATCH, "test-city", "city-center", 1,
+                GeocodingClient.GEOCODING_VERSION, null));
+        List<PlaceCandidate> cleanQueries = locationQueries(List.of(original));
+        when(geocodingClient.batchGeocode(USER, cleanQueries)).thenReturn(List.of(cityCenter));
+        when(vehicleClient.telemetry(eq(IDENTITY), eq(VIN), isNull()))
+                .thenReturn(new TelemetryPage(List.of(),
+                        telemetry(1, "P", 0, NOW.minusSeconds(2), NOW.minusSeconds(2)),
+                        1, false, false, NOW));
+
+        service.pollRunningSessions();
+
+        assertEquals(AutoNavSession.Status.PAUSED, session.getStatus());
+        assertEquals(AutoNavSession.PauseReason.LOCATION_VALIDATION, session.getPauseReason());
+        assertTrue(session.canRetryLocationValidation());
+        assertTrue(session.getLastError().contains("Retry location"));
+        assertEquals(original, session.getAllAddresses().get(0), "failed validation must preserve the saved row");
+        verify(geocodingClient).batchGeocode(USER, cleanQueries);
+        verify(vehicleClient, never()).sendRoute(any(TapAccessService.GrantIdentity.class), anyString(), anyList(), anyString());
+    }
+
+    @Test
+    void locationValidationRetryOnlyReentersTelemetryGateAndFreshLookup() {
+        AutoNavSession session = startSession(1);
+        PlaceCandidate original = session.getAllAddresses().get(0);
+        PlaceCandidate cityCenter = original.withResolution(new LocationResolution(
+                LocationResolution.Status.NO_MATCH, "test-city", "city-center", 1,
+                GeocodingClient.GEOCODING_VERSION, null));
+        List<PlaceCandidate> cleanQueries = locationQueries(List.of(original));
+        when(geocodingClient.batchGeocode(USER, cleanQueries)).thenReturn(List.of(cityCenter));
+        Telemetry baseline = telemetry(1, "P", 0, NOW.minusSeconds(2), NOW.minusSeconds(2));
+        when(vehicleClient.telemetry(eq(IDENTITY), eq(VIN), isNull()))
+                .thenReturn(new TelemetryPage(List.of(), baseline, 1, false, false, NOW));
+
+        service.pollRunningSessions();
+
+        assertTrue(session.canRetryLocationValidation());
+        assertThrows(IllegalStateException.class, () -> service.startSession(session.getSessionId(), IDENTITY));
+        when(geocodingClient.batchGeocode(USER, cleanQueries))
+                .thenReturn(currentPolicyMatches(cleanQueries));
+        AutoNavSession retryResponse = service.retryLocationValidation(session.getSessionId(), IDENTITY);
+        assertSame(session, retryResponse);
+        assertEquals(AutoNavSession.Status.RUNNING, session.getStatus());
+        assertNull(session.getPauseReason());
+        clearInvocations(geocodingClient);
+        verify(geocodingClient, never()).batchGeocode(anyString(), anyList());
+
+        when(vehicleClient.telemetry(eq(IDENTITY), eq(VIN), eq(1L)))
+                .thenReturn(new TelemetryPage(List.of(), baseline, 1, false, false, NOW));
+        when(vehicleClient.telemetry(eq(IDENTITY), eq(VIN), isNull()))
+                .thenReturn(new TelemetryPage(List.of(), baseline, 1, false, false, NOW));
+
+        service.pollRunningSessions();
+
+        verify(geocodingClient).batchGeocode(USER, cleanQueries);
+        verify(vehicleClient).sendRoute(eq(IDENTITY), eq(VIN), anyList(), anyString());
+        assertEquals(AutoNavSession.CommandState.ACCEPTED, session.getCommandState());
+    }
+
+    @Test
+    void incompleteOrReorderedValidationBatchCannotPartiallyReplaceSavedRows() {
+        AutoNavSession session = startSession(2);
+        List<PlaceCandidate> originalGroup = List.copyOf(session.getCurrentGroup());
+        PlaceCandidate changedFirst = currentPolicyMatches(List.of(originalGroup.get(0)
+                .withLatLonPid(42.5, -83.5, "fresh-first"))).get(0);
+        PlaceCandidate wrongText = new PlaceCandidate("Different stop", "DIFFERENT STOP", "server.png", 1,
+                42.5, -83.5, "fresh-second", 3, false, List.of(), new LocationResolution(
+                LocationResolution.Status.VERIFIED_UNIT, "test-unit", "verified", 1,
+                GeocodingClient.GEOCODING_VERSION, null));
+        when(geocodingClient.batchGeocode(USER, locationQueries(originalGroup)))
+                .thenReturn(List.of(changedFirst, wrongText));
+        when(vehicleClient.telemetry(eq(IDENTITY), eq(VIN), isNull()))
+                .thenReturn(new TelemetryPage(List.of(),
+                        telemetry(1, "P", 0, NOW.minusSeconds(2), NOW.minusSeconds(2)),
+                        1, false, false, NOW));
+
+        service.pollRunningSessions();
+
+        assertEquals(AutoNavSession.Status.PAUSED, session.getStatus());
+        assertEquals(originalGroup, session.getAllAddresses().subList(0, 2),
+                "a malformed later result must not persist an earlier replacement");
+        verify(vehicleClient, never()).sendRoute(any(TapAccessService.GrantIdentity.class), anyString(), anyList(), anyString());
+    }
+
+    @Test
+    void shortValidationBatchHoldsGroupWithoutReplacingSavedRows() {
+        AutoNavSession session = startSession(2);
+        List<PlaceCandidate> originalGroup = List.copyOf(session.getCurrentGroup());
+        when(geocodingClient.batchGeocode(USER, locationQueries(originalGroup)))
+                .thenReturn(currentPolicyMatches(locationQueries(List.of(originalGroup.get(0)))));
+        when(vehicleClient.telemetry(eq(IDENTITY), eq(VIN), isNull()))
+                .thenReturn(new TelemetryPage(List.of(),
+                        telemetry(1, "P", 0, NOW.minusSeconds(2), NOW.minusSeconds(2)),
+                        1, false, false, NOW));
+
+        service.pollRunningSessions();
+
+        assertEquals(AutoNavSession.Status.PAUSED, session.getStatus());
+        assertEquals(originalGroup, session.getAllAddresses().subList(0, 2));
+        verify(vehicleClient, never()).sendRoute(any(TapAccessService.GrantIdentity.class), anyString(), anyList(), anyString());
+    }
+
+    @Test
+    void restoredLaterGroupGetsFreshValidationBeforeDispatch() throws IOException {
+        AutoNavSession persisted = new AutoNavSession("123e4567-e89b-12d3-a456-426614174020",
+                VIN, USER, IDENTITY.grantId(), addresses(9));
+        persisted.setStatus(AutoNavSession.Status.PAUSED);
+        persisted.setPauseReason(AutoNavSession.PauseReason.LOCATION_VALIDATION);
+        persisted.setCurrentGroupIndex(1);
+        persisted.setCurrentWaypointIndex(8);
+        persisted.setCompletedAddresses(8);
+        persisted.setLastArrivedWaypointIndex(7);
+        persisted.setLastParkTransitionAt(NOW.minusSeconds(2));
+        persisted.setCommandSubmittedAt(NOW.minusSeconds(4));
+        persisted.setCommandState(AutoNavSession.CommandState.NONE);
+        persisted.setTelemetryCursor(73L);
+        writeSession(persisted);
+
+        AutoNavigationService restarted = newService(sessionsDirectory);
+        AutoNavSession restored = restarted.getSession(persisted.getSessionId());
+        assertTrue(restored.canRetryLocationValidation());
+        restarted.retryLocationValidation(restored.getSessionId(), IDENTITY);
+        List<PlaceCandidate> expectedInput = locationQueries(List.of(restored.getAllAddresses().get(8)));
+        Telemetry boundary = telemetry(73, "P", 7, NOW.minusSeconds(1), NOW.minusSeconds(1));
+        when(vehicleClient.telemetry(eq(IDENTITY), eq(VIN), eq(73L)))
+                .thenReturn(new TelemetryPage(List.of(), boundary, 73, false, false, NOW));
+        when(vehicleClient.telemetry(eq(IDENTITY), eq(VIN), isNull()))
+                .thenReturn(new TelemetryPage(List.of(), boundary, 73, false, false, NOW));
+
+        restarted.pollRunningSessions();
+
+        verify(geocodingClient).batchGeocode(USER, expectedInput);
+        verify(vehicleClient).sendRoute(eq(IDENTITY), eq(VIN), argThat(group -> group.size() == 1
+                && "Address 8".equals(group.get(0).text())), anyString());
+        assertEquals(AutoNavSession.CommandState.ACCEPTED, restored.getCommandState());
     }
 
     @Test
@@ -145,6 +322,7 @@ class AutoNavigationServiceTest {
         assertEquals(1, session.getCurrentWaypointIndex());
         assertEquals(AutoNavSession.CommandState.ACCEPTED, session.getCommandState());
         verify(vehicleClient, times(1)).sendRoute(eq(IDENTITY), eq(VIN), anyList(), anyString());
+        verify(geocodingClient, times(1)).batchGeocode(eq(USER), anyList());
     }
 
     @Test
@@ -554,17 +732,61 @@ class AutoNavigationServiceTest {
         AutoNavSession restored = restarted.getSession(persisted.getSessionId());
 
         assertEquals(AutoNavSession.Status.PAUSED, restored.getStatus());
+        assertEquals(AutoNavSession.PauseReason.RESTART, restored.getPauseReason());
         assertEquals(AutoNavSession.CommandState.ACCEPTED, restored.getCommandState());
         assertEquals(1, restored.getAllAddresses().size(), "computed collection must not append persisted addresses");
         assertNull(restored.getPendingParkTransitionAt(), "a restart must discard unconfirmed arrival evidence");
 
-        restarted.startSession(restored.getSessionId());
-        when(vehicleClient.telemetry(eq(IDENTITY), eq(VIN), eq(1L)))
-                .thenReturn(new TelemetryPage(List.of(),
-                        telemetry(1, "P", 0, NOW.minusSeconds(2), NOW.minusSeconds(2)),
-                        1, false, false, NOW));
+        assertThrows(IllegalStateException.class, () -> restarted.startSession(restored.getSessionId()));
         restarted.pollRunningSessions();
 
+        verify(vehicleClient, never()).sendRoute(any(TapAccessService.GrantIdentity.class), anyString(), anyList(), anyString());
+        verify(geocodingClient, never()).batchGeocode(anyString(), anyList());
+    }
+
+    @Test
+    void acceptedCommandWithoutSavedCursorIsNotRevalidatedOrReplayed() throws IOException {
+        AutoNavSession persisted = new AutoNavSession("123e4567-e89b-12d3-a456-426614174022",
+                VIN, USER, IDENTITY.grantId(), addresses(1));
+        persisted.setStatus(AutoNavSession.Status.RUNNING);
+        persisted.setCommandState(AutoNavSession.CommandState.ACCEPTED);
+        persisted.setPendingCommandIdempotencyKey("accepted-command-key");
+        persisted.setCommandSubmittedAt(NOW.minusSeconds(5));
+        writeSession(persisted);
+
+        service = newService(sessionsDirectory);
+        AutoNavSession restored = service.getSession(persisted.getSessionId());
+        assertEquals(AutoNavSession.PauseReason.RESTART, restored.getPauseReason());
+        assertThrows(IllegalStateException.class, () -> service.startSession(restored.getSessionId(), IDENTITY));
+
+        service.pollRunningSessions();
+
+        assertEquals(AutoNavSession.CommandState.ACCEPTED, restored.getCommandState());
+        assertEquals("accepted-command-key", restored.getPendingCommandIdempotencyKey());
+        verify(geocodingClient, never()).batchGeocode(anyString(), anyList());
+        verify(vehicleClient, never()).sendRoute(any(TapAccessService.GrantIdentity.class), anyString(), anyList(), anyString());
+    }
+
+    @Test
+    void uncertainPausedSessionCannotUseLocationRetryEvenWithWrongPauseReason() throws IOException {
+        AutoNavSession persisted = new AutoNavSession("123e4567-e89b-12d3-a456-426614174023",
+                VIN, USER, IDENTITY.grantId(), addresses(1));
+        persisted.setStatus(AutoNavSession.Status.PAUSED);
+        persisted.setPauseReason(AutoNavSession.PauseReason.LOCATION_VALIDATION);
+        persisted.setCommandState(AutoNavSession.CommandState.UNKNOWN);
+        persisted.setPendingCommandIdempotencyKey("uncertain-command-key");
+        writeSession(persisted);
+
+        service = newService(sessionsDirectory);
+        AutoNavSession restored = service.getSession(persisted.getSessionId());
+
+        assertEquals(AutoNavSession.PauseReason.RESTART, restored.getPauseReason(),
+                "invalid retry metadata must be downgraded to a restart hold");
+        assertFalse(restored.canRetryLocationValidation());
+        assertThrows(IllegalStateException.class, () -> service.startSession(restored.getSessionId(), IDENTITY));
+        assertThrows(IllegalStateException.class,
+                () -> service.retryLocationValidation(restored.getSessionId(), IDENTITY));
+        verify(geocodingClient, never()).batchGeocode(anyString(), anyList());
         verify(vehicleClient, never()).sendRoute(any(TapAccessService.GrantIdentity.class), anyString(), anyList(), anyString());
     }
 
@@ -825,6 +1047,30 @@ class AutoNavigationServiceTest {
         return result;
     }
 
+    private List<PlaceCandidate> currentPolicyMatches(List<PlaceCandidate> inputs) {
+        return inputs.stream()
+                .map(input -> input.withLatLonPid(latitudeForTestAddress(input.text()), -83.0,
+                                "test-place-" + Integer.toUnsignedString(input.text().hashCode()))
+                        .withResolution(new LocationResolution(LocationResolution.Status.VERIFIED_UNIT,
+                                "test-unit", "verified", 1, GeocodingClient.GEOCODING_VERSION, null)))
+                .toList();
+    }
+
+    private List<PlaceCandidate> locationQueries(List<PlaceCandidate> originals) {
+        return originals.stream().map(original -> new PlaceCandidate(original.text(), null, null, 0,
+                0.0, 0.0, null, original.ocrAgreement(), original.ocrReviewRequired(),
+                original.ocrAlternatives(), null)).toList();
+    }
+
+    private double latitudeForTestAddress(String text) {
+        if (text != null && text.startsWith("Address ")) {
+            try {
+                return 42.0 + Integer.parseInt(text.substring("Address ".length())) * 0.001;
+            } catch (NumberFormatException ignored) { }
+        }
+        return 42.0;
+    }
+
     private Path sessionFile(AutoNavSession session) {
         return sessionsDirectory.resolve(session.getSessionId() + ".json");
     }
@@ -842,6 +1088,9 @@ class AutoNavigationServiceTest {
                 .disable(DateTimeFeature.WRITE_DATES_AS_TIMESTAMPS)
                 .build();
         Files.createDirectories(sessionsDirectory);
-        mapper.writeValue(sessionFile(session).toFile(), session);
+        ObjectNode persisted = mapper.valueToTree(session);
+        if (session.getGrantId() == null) persisted.putNull("grantId");
+        else persisted.put("grantId", session.getGrantId());
+        mapper.writeValue(sessionFile(session).toFile(), persisted);
     }
 }

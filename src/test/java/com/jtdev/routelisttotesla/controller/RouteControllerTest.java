@@ -4,6 +4,7 @@ import tools.jackson.databind.ObjectMapper;
 import com.jtdev.routelisttotesla.config.SecurityConfig;
 import com.jtdev.routelisttotesla.model.AutoNavSession;
 import com.jtdev.routelisttotesla.model.PlaceCandidate;
+import com.jtdev.routelisttotesla.model.LocationResolution;
 import com.jtdev.routelisttotesla.model.PlaceCandidatesResponse;
 import com.jtdev.routelisttotesla.service.AddressOcrService;
 import com.jtdev.routelisttotesla.service.AutoNavigationService;
@@ -26,6 +27,7 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.eq;
@@ -67,7 +69,11 @@ class RouteControllerTest {
     @BeforeEach
     void useCurrentGrant() {
         when(tapAccess.grantIdentity(any())).thenReturn(IDENTITY);
-        when(cache.getCachedOcrResults(anyString())).thenReturn(null);
+        when(cache.calculateImageHash(any(byte[].class), anyString()))
+                .thenAnswer(call -> call.getArgument(1, String.class) + "-content");
+        when(cache.getCachedOcrResults(anyString(), anyString(), anyString())).thenReturn(null);
+        when(geocoder.batchGeocode(anyString(), anyList(), anyLong())).thenAnswer(call ->
+                geocoder.batchGeocode(call.getArgument(0), call.getArgument(1)));
     }
 
     @Test
@@ -80,9 +86,10 @@ class RouteControllerTest {
         when(cache.calculateImageHash(any(byte[].class), anyString(), eq("MI"), eq(OWNER)))
                 .thenAnswer(call -> call.getArgument(1, String.class) + "-key");
         when(cache.getCachedResults(anyString())).thenReturn(null);
-        when(cache.getCachedOcrResults(anyString())).thenAnswer(call -> extractedCache.get(call.getArgument(0)));
-        doAnswer(call -> { extractedCache.put(call.getArgument(0), call.getArgument(2)); return null; })
-                .when(cache).cacheOcrResults(anyString(), anyString(), anyList());
+        when(cache.getCachedOcrResults(anyString(), eq("MI"), eq(OWNER)))
+                .thenAnswer(call -> extractedCache.get(call.getArgument(0)));
+        doAnswer(call -> { extractedCache.put(call.getArgument(0), call.getArgument(4)); return null; })
+                .when(cache).cacheOcrResults(anyString(), eq("MI"), eq(OWNER), anyString(), anyList());
         when(ocr.extractAddressCandidates(any(byte[].class), eq("first.png"), eq("MI"))).thenReturn(List.of(first));
         when(ocr.extractAddressCandidates(any(byte[].class), eq("second.png"), eq("MI")))
                 .thenThrow(new IllegalStateException("OCR engines timed out")).thenReturn(List.of(second));
@@ -115,7 +122,7 @@ class RouteControllerTest {
         when(cache.calculateImageHash(any(byte[].class), eq("new-name.heic"), eq("MI"), eq(OWNER)))
                 .thenReturn("scoped-hash");
         when(cache.getCachedResults("scoped-hash")).thenReturn(null);
-        when(cache.getCachedOcrResults("scoped-hash")).thenReturn(List.of(saved));
+        when(cache.getCachedOcrResults("new-name.heic-content", "MI", OWNER)).thenReturn(List.of(saved));
         when(geocoder.batchGeocode(eq(OWNER), anyList())).thenAnswer(call -> {
             List<PlaceCandidate> rows = call.getArgument(1);
             assertEquals("new-name.heic", rows.getFirst().sourceImage());
@@ -132,7 +139,7 @@ class RouteControllerTest {
                 .andExpect(jsonPath("$.candidates[0].ocrReviewRequired").value(true))
                 .andExpect(jsonPath("$.candidates[0].ocrAlternatives.length()").value(2));
         verify(ocr, never()).extractAddressCandidates(any(byte[].class), anyString(), anyString());
-        verify(cache, never()).cacheOcrResults(anyString(), anyString(), anyList());
+        verify(cache, never()).cacheOcrResults(anyString(), anyString(), anyString(), anyString(), anyList());
     }
 
     @Test
@@ -275,11 +282,60 @@ class RouteControllerTest {
     }
 
     @Test
+    void processingKeepsSuccessfulRowsAndVisibleFailureMetadataWithoutCachingIncompleteLocations() throws Exception {
+        PlaceCandidate first = unresolved("123 FIRST ST, SAMPLE CITY, MI", "capture.png", 0);
+        PlaceCandidate second = unresolved("456 SECOND RD APT 104, SAMPLE CITY, MI", "capture.png", 1);
+        PlaceCandidate located = first.withLatLonPid(42.1, -83.1, "verified-street").withResolution(verified());
+        PlaceCandidate deferred = second.withResolution(new LocationResolution(
+                LocationResolution.Status.LOOKUP_UNAVAILABLE, "original", "provider_transient", 3,
+                GeocodingClient.GEOCODING_VERSION, 10));
+        when(cache.calculateImageHash(any(byte[].class), eq("capture.png"), eq("MI"), eq(OWNER)))
+                .thenReturn("scoped-image");
+        when(cache.getCachedResults("scoped-image")).thenReturn(null);
+        when(ocr.extractAddressCandidates(any(byte[].class), eq("capture.png"), eq("MI")))
+                .thenReturn(List.of(first, second));
+        when(geocoder.batchGeocode(OWNER, List.of(first, second))).thenReturn(List.of(located, deferred));
+        long started = System.nanoTime();
+
+        mvc.perform(multipart("/route/places").file(image("capture.png")).param("defaultState", "MI")
+                        .with(csrf()).with(login()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.candidates[0].pid").value("verified-street"))
+                .andExpect(jsonPath("$.candidates[0].resolution.status").value("VERIFIED_BUILDING"))
+                .andExpect(jsonPath("$.candidates[1].text").value(second.text()))
+                .andExpect(jsonPath("$.candidates[1].resolution.status").value("LOOKUP_UNAVAILABLE"))
+                .andExpect(jsonPath("$.imageCandidates[0][1].resolution.attempts").value(3));
+        verify(cache, never()).cacheImageResults(anyString(), anyString(), anyList());
+        verify(geocoder).batchGeocode(eq(OWNER), eq(List.of(first, second)),
+                org.mockito.ArgumentMatchers.longThat(deadline -> deadline > started
+                        && deadline <= System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(85)));
+    }
+
+    @Test
+    void temporaryPerStopLookupOutcomeIsNotMisreportedAsAnInvalidAddressOrSent() throws Exception {
+        when(vehicles.vehicles(IDENTITY)).thenReturn(List.of(new TapVehicleClient.Vehicle(VIN, "test car", true, true)));
+        PlaceCandidate reviewed = resolved("123 MAIN ST APT 104, SAMPLE CITY, MI", "route.png", 0);
+        PlaceCandidate failed = reviewed.withLatLonPid(0, 0, null).withResolution(new LocationResolution(
+                LocationResolution.Status.DEFERRED, "original", "deadline", 2,
+                GeocodingClient.GEOCODING_VERSION, 10));
+        when(geocoder.batchGeocode(OWNER, List.of(reviewed))).thenReturn(List.of(failed));
+        mvc.perform(post("/route/send/" + VIN).with(csrf()).with(login())
+                        .header("Idempotency-Key", IDEMPOTENCY_KEY).contentType("application/json")
+                        .content(mapper.writeValueAsString(new PlaceCandidatesResponse(List.of(reviewed)))))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.state").value("NOT_SENT"))
+                .andExpect(jsonPath("$.accepted").value(false))
+                .andExpect(jsonPath("$.message").value("Location lookup is temporarily unavailable for stop 1. Try again shortly. No route was sent."));
+        verify(navigation, never()).sendManualRoute(any(), anyString(), anyList(), anyString());
+    }
+
+    @Test
     void validClientCoordinatesAndPlaceIdAreReGeocodedBeforeSending() throws Exception {
         when(vehicles.vehicles(IDENTITY)).thenReturn(List.of(new TapVehicleClient.Vehicle(VIN, "test car", true, true)));
         PlaceCandidate stale = unresolved("12345 Sample St W Apt 212, Sample City, MI", "route.png", 0)
                 .withLatLonPid(42.3369816, -83.2732627, "old-city-pid");
-        PlaceCandidate fresh = stale.withLatLonPid(42.3533364, -83.3125193, "fresh-street-pid");
+        PlaceCandidate fresh = stale.withLatLonPid(42.3533364, -83.3125193, "fresh-street-pid")
+                .withResolution(verified());
         when(geocoder.batchGeocode(eq(OWNER), eq(List.of(stale)))).thenReturn(List.of(fresh));
         when(navigation.sendManualRoute(IDENTITY, VIN, List.of(fresh), IDEMPOTENCY_KEY))
                 .thenReturn(new TapVehicleClient.CommandResult("PENDING", null, "pending"));
@@ -311,7 +367,7 @@ class RouteControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.state").value("NOT_SENT"))
                 .andExpect(jsonPath("$.accepted").value(false))
-                .andExpect(jsonPath("$.message").value("Stop 1 could not be matched to a street address. Check its address or remove that stop, then try again. No route was sent."));
+                .andExpect(jsonPath("$.message").value("Stop 1 has no unambiguous street location after automatic address recovery. Review its lookup status. No route was sent."));
 
         verify(geocoder).batchGeocode(OWNER, List.of(stale));
         verify(navigation, never()).sendManualRoute(any(), anyString(), anyList(), anyString());
@@ -378,8 +434,8 @@ class RouteControllerTest {
         when(vehicles.vehicles(IDENTITY)).thenReturn(List.of(new TapVehicleClient.Vehicle(VIN, "test car", true, true)));
         PlaceCandidate first = unresolved("same address", "first.png", 1);
         PlaceCandidate repeated = unresolved("same address", "second.png", 2);
-        PlaceCandidate resolvedFirst = first.withLatLonPid(42.1, -83.1, "same-id");
-        PlaceCandidate resolvedRepeated = repeated.withLatLonPid(42.1, -83.1, "same-id");
+        PlaceCandidate resolvedFirst = first.withLatLonPid(42.1, -83.1, "same-id").withResolution(verified());
+        PlaceCandidate resolvedRepeated = repeated.withLatLonPid(42.1, -83.1, "same-id").withResolution(verified());
         TapVehicleClient.CommandResult pending = new TapVehicleClient.CommandResult("PENDING", null, "pending");
         when(geocoder.batchGeocode(eq(OWNER), eq(List.of(first, repeated))))
                 .thenReturn(List.of(resolvedFirst, resolvedRepeated));
@@ -451,6 +507,50 @@ class RouteControllerTest {
     }
 
     @Test
+    void locationRetryRequiresCsrfCurrentCommandAccessAndAnEligibleOwnedSession() throws Exception {
+        AutoNavSession paused = new AutoNavSession("retry-session", VIN, OWNER, IDENTITY.grantId(),
+                List.of(resolved("123 MAIN ST, SAMPLE CITY, MI", "route.png", 0)));
+        paused.setStatus(AutoNavSession.Status.PAUSED);
+        paused.setPauseReason(AutoNavSession.PauseReason.LOCATION_VALIDATION);
+        paused.setCommandState(AutoNavSession.CommandState.NONE);
+        paused.setNextGroupReady(true);
+        when(navigation.getSession("retry-session", IDENTITY)).thenReturn(paused);
+        when(vehicles.vehicles(IDENTITY)).thenReturn(List.of(new TapVehicleClient.Vehicle(VIN, "test car", true, true)));
+        when(navigation.retryLocationValidation("retry-session", IDENTITY)).thenReturn(paused);
+
+        mvc.perform(post("/route/auto-navigate/retry-location/retry-session").with(login()))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/route/auto-navigate/retry-location/retry-session").with(csrf()))
+                .andExpect(status().is3xxRedirection());
+        mvc.perform(post("/route/auto-navigate/retry-location/retry-session").with(csrf()).with(login()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pauseReason").value("LOCATION_VALIDATION"))
+                .andExpect(jsonPath("$.canRetryLocationValidation").value(true));
+        verify(navigation, times(1)).retryLocationValidation("retry-session", IDENTITY);
+        verify(geocoder, never()).batchGeocode(anyString(), anyList());
+        verify(navigation, never()).sendManualRoute(any(), anyString(), anyList(), anyString());
+
+        paused.setPauseReason(AutoNavSession.PauseReason.RESTART);
+        paused.setCommandState(AutoNavSession.CommandState.ACCEPTED);
+        mvc.perform(post("/route/auto-navigate/retry-location/retry-session").with(csrf()).with(login()))
+                .andExpect(status().isConflict());
+        verify(navigation, times(1)).retryLocationValidation("retry-session", IDENTITY);
+    }
+
+    @Test
+    void locationRetryDoesNotReachServiceForMissingOwnershipOrVehicleCommandGrant() throws Exception {
+        mvc.perform(post("/route/auto-navigate/retry-location/not-owned").with(csrf()).with(login()))
+                .andExpect(status().isNotFound());
+        AutoNavSession session = new AutoNavSession("owned-session", VIN, OWNER, IDENTITY.grantId(),
+                List.of(resolved("123 MAIN ST, SAMPLE CITY, MI", "route.png", 0)));
+        when(navigation.getSession("owned-session", IDENTITY)).thenReturn(session);
+        when(vehicles.vehicles(IDENTITY)).thenReturn(List.of(new TapVehicleClient.Vehicle(VIN, "test car", true, false)));
+        mvc.perform(post("/route/auto-navigate/retry-location/owned-session").with(csrf()).with(login()))
+                .andExpect(status().isForbidden());
+        verify(navigation, never()).retryLocationValidation(anyString(), any());
+    }
+
+    @Test
     void locationPreflightUsesCurrentGrantAndPreservesUnconfirmedOcrWithoutSending() throws Exception {
         PlaceCandidate row = new PlaceCandidate("11570 FORDLINE ST APT 201, JAMESTOWN VILLAGE, ALLEN PARK, MI",
                 "EXTRACTED", "capture.heic", 0, 0, 0, null, 2, true, List.of("literal reading"));
@@ -514,7 +614,7 @@ class RouteControllerTest {
         when(cache.calculateImageHash(any(byte[].class), eq("capture.png"), eq("MI"), eq(OWNER)))
                 .thenReturn("retry-hash");
         when(cache.getCachedResults("retry-hash")).thenReturn(null);
-        when(cache.getCachedOcrResults("retry-hash")).thenReturn(null, List.of(row));
+        when(cache.getCachedOcrResults("capture.png-content", "MI", OWNER)).thenReturn(null, List.of(row));
         when(ocr.extractAddressCandidates(any(byte[].class), eq("capture.png"), eq("MI"))).thenReturn(List.of(row));
         when(geocoder.batchGeocode(OWNER, List.of(row))).thenReturn(List.of(row), List.of(located));
         for (int attempt = 0; attempt < 2; attempt++) {
@@ -523,7 +623,7 @@ class RouteControllerTest {
                     .andExpect(status().isOk());
         }
         verify(ocr, times(1)).extractAddressCandidates(any(byte[].class), eq("capture.png"), eq("MI"));
-        verify(cache, times(1)).cacheOcrResults("retry-hash", "capture.png", List.of(row));
+        verify(cache, times(1)).cacheOcrResults("capture.png-content", "MI", OWNER, "capture.png", List.of(row));
         verify(cache, times(1)).cacheImageResults("retry-hash", "capture.png", List.of(located));
         verify(cache, never()).cacheImageResults("retry-hash", "capture.png", List.of(row));
     }
@@ -537,7 +637,13 @@ class RouteControllerTest {
     }
 
     private static PlaceCandidate resolved(String text, String filename, int line) {
-        return new PlaceCandidate(text, text, filename, line, 42.1, -83.1, text.replace(' ', '-'));
+        return new PlaceCandidate(text, text, filename, line, 42.1, -83.1, text.replace(' ', '-'))
+                .withResolution(verified());
+    }
+
+    private static LocationResolution verified() {
+        return new LocationResolution(LocationResolution.Status.VERIFIED_BUILDING,
+                "original", null, 1, GeocodingClient.GEOCODING_VERSION, null);
     }
 
     private static org.springframework.test.web.servlet.request.RequestPostProcessor login() {

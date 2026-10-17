@@ -254,6 +254,11 @@
         const locationAddressRows = new WeakMap();
         const LOCATION_RESOLVE_BATCH_SIZE = 500;
         const LOCATION_RESOLVE_MAX_TEXT_LENGTH = 1000;
+        const LOCATION_POLICY_VERSION = 'street-address-v4';
+        const LOCATION_RESOLUTION_STATUSES = new Set([
+            'VERIFIED_UNIT', 'VERIFIED_BUILDING', 'NO_MATCH', 'AMBIGUOUS', 'DEFERRED', 'LOOKUP_UNAVAILABLE'
+        ]);
+        let locationBlockedSendTargets = null;
         const MANUAL_COMMAND_HOLD_PREFIX = 'route-list-to-tesla:manual-command-hold:';
         const manualCommandHolds = new Map();
         const manualCommandInFlight = new Set();
@@ -345,6 +350,8 @@
             statusElement.replaceChildren();
             statusElement.className = 'status error';
             statusElement.classList.remove('hidden');
+            delete statusElement.dataset.locationBlocked;
+            locationBlockedSendTargets = null;
             statusElement.dataset.manualCommandHold = 'true';
             statusElement.dataset.manualCommandHoldVin = vin;
 
@@ -625,7 +632,7 @@
 
         function showImageProcessingStatus(imageCount) {
             const imageLabel = imageCount === 1 ? 'image' : 'images';
-            showStatus(`Reading addresses from ${imageCount} new ${imageLabel}. This may take a minute or more; keep this page open.`, 'loading', processStatus);
+            showStatus(`Reading screenshots from ${imageCount} new ${imageLabel}… The server then checks street addresses and tries safe alternatives. This may take a minute or more; keep this page open.`, 'loading', processStatus);
         }
 
         function appendImageCandidates(candidates) {
@@ -808,9 +815,13 @@
                     await uploadImages(filesToUpload, defaultState);
                 }
 
-                // `/route/places` already performed normal address lookup. Resolve only rows
-                // that still lack a verified place so successful first lookups are not repeated.
-                await resolveLocationCandidates(extractedAddresses.filter(address => !isLocated(address)));
+                // New-policy results already include the server's complete recovery outcome.
+                // Re-resolve legacy cache entries and rows whose policy metadata is absent/stale.
+                const needsLookup = extractedAddresses.filter(address => !hasCurrentLocationResolution(address));
+                if (needsLookup.length > 0) {
+                    showStatus('Checking street addresses and trying safe alternatives for older results…', 'loading', processStatus);
+                    await resolveLocationCandidates(needsLookup);
+                }
 
                 // Store image hashes for session recovery
                 imageHashes = selectedFiles.map(f => f.hash);
@@ -818,7 +829,8 @@
                 // Show final results
                 if (extractedAddresses.length > 0) {
                     const cacheMsg = cachedCount > 0 ? ` (${cachedCount} from cache)` : '';
-                    showStatus(`✅ Found ${extractedAddresses.length} address(es)${cacheMsg}`, 'success', processStatus);
+                    const verifiedCount = extractedAddresses.filter(isLocated).length;
+                    showStatus(`Read ${extractedAddresses.length} address candidate(s)${cacheMsg}. ${verifiedCount} of ${extractedAddresses.length} stops verified; review each lookup result before sending.`, verifiedCount === extractedAddresses.length ? 'success' : 'loading', processStatus);
                     
                     // Save session for recovery
                     await saveCurrentSession();
@@ -855,9 +867,26 @@
         }
 
         function isLocated(address) {
+            if (!hasUsableCoordinates(address)) return false;
+            const resolution = getCurrentLocationResolution(address);
+            return resolution?.status === 'VERIFIED_UNIT' || resolution?.status === 'VERIFIED_BUILDING';
+        }
+
+        function hasUsableCoordinates(address) {
             return Boolean(address?.pid) && Number.isFinite(address.lat) && Number.isFinite(address.lon)
                 && Math.abs(address.lat) <= 90 && Math.abs(address.lon) <= 180
                 && (address.lat !== 0 || address.lon !== 0);
+        }
+
+        function getCurrentLocationResolution(address) {
+            const resolution = address?.resolution;
+            if (!resolution || resolution.policyVersion !== LOCATION_POLICY_VERSION
+                || !LOCATION_RESOLUTION_STATUSES.has(resolution.status)) return null;
+            return resolution;
+        }
+
+        function hasCurrentLocationResolution(address) {
+            return getCurrentLocationResolution(address) !== null;
         }
 
         function getLocationResolutionState(address) {
@@ -871,30 +900,112 @@
         function updateLocationResolutionNotice() {
             const notice = document.getElementById('locationResolutionNotice');
             if (!notice) return;
-            const unresolved = extractedAddresses.filter(address => !isLocated(address));
-            if (unresolved.length === 0) {
+            const total = extractedAddresses.length;
+            if (total === 0) {
                 notice.textContent = '';
                 notice.className = 'status hidden';
                 return;
             }
 
-            const pendingCount = unresolved.filter(address =>
+            const verifiedCount = extractedAddresses.filter(isLocated).length;
+            const pendingCount = extractedAddresses.filter(address =>
                 getLocationResolutionState(address).status === 'pending').length;
-            const failedCount = unresolved.filter(address =>
-                ['failed', 'invalid'].includes(getLocationResolutionState(address).status)).length;
+            const outcomeCount = status => extractedAddresses.filter(address =>
+                getCurrentLocationResolution(address)?.status === status).length;
+            const counts = [
+                ['no safe match', outcomeCount('NO_MATCH')],
+                ['ambiguous', outcomeCount('AMBIGUOUS')],
+                ['deferred', outcomeCount('DEFERRED')],
+                ['temporarily unavailable', outcomeCount('LOOKUP_UNAVAILABLE')]
+            ].filter(([, count]) => count > 0).map(([label, count]) => `${count} ${label}`);
             const message = pendingCount > 0
-                ? `Checking locations for ${pendingCount} address(es). Routes with unverified locations are paused.`
-                : failedCount === unresolved.length
-                    ? `Location lookup failed for ${unresolved.length} address(es). Retry the lookup or edit the address; routes stay paused until every stop has a verified location.`
-                    : `No verified location for ${unresolved.length} address(es). Retry the lookup or edit the address; routes stay paused until every stop has a verified location.`;
+                ? `${verifiedCount} of ${total} stops verified. Checking locations for ${pendingCount} more; routes with unverified stops are paused.`
+                : verifiedCount === total
+                    ? `${verifiedCount} of ${total} stops verified.`
+                    : `${verifiedCount} of ${total} stops verified. ${counts.length > 0 ? counts.join(', ') + '.' : `${total - verifiedCount} still need a verified location.`} Retry lookup or edit those addresses; routes stay paused until their locations are verified.`;
             notice.textContent = message;
-            notice.className = `status ${pendingCount > 0 ? 'loading' : 'error'}`;
+            notice.className = `status ${verifiedCount === total ? 'success' : pendingCount > 0 ? 'loading' : 'error'}`;
         }
 
         function refreshLocationPresentation() {
             updateLocationResolutionNotice();
             extractedAddresses.forEach(updateAddressLocationPresentation);
+            clearResolvedLocationBlockedSendError();
             updateManualCommandHoldControls(currentVin, sendStatus);
+        }
+
+        function getLocationStatusText(address) {
+            const state = getLocationResolutionState(address);
+            if (state.status === 'pending') return 'Checking street address and trying safe alternatives…';
+            if (state.status === 'invalid') return 'Enter a valid address to check its street location.';
+
+            const resolution = getCurrentLocationResolution(address);
+            if (resolution) {
+                if ((resolution.status === 'VERIFIED_UNIT' || resolution.status === 'VERIFIED_BUILDING')
+                    && !hasUsableCoordinates(address)) {
+                    return 'The lookup result is missing a usable street location. Retry lookup.';
+                }
+                switch (resolution.status) {
+                    case 'VERIFIED_UNIT': return 'Apartment or suite verified.';
+                    case 'VERIFIED_BUILDING': return getBuildingVerificationText(address);
+                    case 'NO_MATCH': return 'No safe street match after automatic attempts. Edit the address or retry lookup.';
+                    case 'AMBIGUOUS': return 'Several street matches remain. Edit the address to clarify it or retry lookup.';
+                    case 'DEFERRED': return `Lookup paused before completion${Number.isFinite(resolution.retryAfterSeconds) ? `; try again in about ${resolution.retryAfterSeconds} seconds` : ''}.`;
+                    case 'LOOKUP_UNAVAILABLE': return 'Address lookup is temporarily unavailable. Retry; the address has not been changed.';
+                }
+            }
+            if (state.status === 'unavailable' || state.status === 'failed') {
+                return 'Address lookup is temporarily unavailable. Retry; the address has not been changed.';
+            }
+            return 'No current street-location verification. Retry lookup or edit this address.';
+        }
+
+        function getBuildingVerificationText(address) {
+            const match = String(address?.text || '').match(/(?:^|[\s,])(?:(APT|APARTMENT|UNIT|STE|SUITE)\.?\s*#?\s*|#\s*)([A-Z0-9][A-Z0-9-]*)\b/i);
+            if (!match) return 'Building verified. No apartment or suite was supplied.';
+            const kind = /^(?:APT|APARTMENT)$/i.test(match[1] || '') ? 'Apt'
+                : /^(?:STE|SUITE)$/i.test(match[1] || '') ? 'Suite'
+                    : match[1] ? 'Unit' : 'Unit';
+            return `Building verified — ${kind} ${match[2]} retained; the unit was not verified.`;
+        }
+
+        function locationTarget(address) {
+            const state = getLocationResolutionState(address);
+            return { address, text: address.text, version: state.version };
+        }
+
+        function updateLocationBlockedSendTarget(address) {
+            if (sendStatus?.dataset?.locationBlocked !== 'true' || !locationBlockedSendTargets) return;
+            const state = getLocationResolutionState(address);
+            locationBlockedSendTargets.forEach(target => {
+                if (target.address === address) {
+                    target.text = address.text;
+                    target.version = state.version;
+                }
+            });
+        }
+
+        function showLocationBlockedSendStatus(message, addresses) {
+            showStatus(message, 'error', sendStatus);
+            if (!sendStatus.dataset) sendStatus.dataset = {};
+            sendStatus.dataset.locationBlocked = 'true';
+            locationBlockedSendTargets = addresses.map(locationTarget);
+        }
+
+        function clearResolvedLocationBlockedSendError() {
+            if (sendStatus?.dataset?.locationBlocked !== 'true' || getManualCommandHold(currentVin)) return;
+            const targets = locationBlockedSendTargets || [];
+            const allNoLongerBlocked = targets.every(target => {
+                if (!extractedAddresses.includes(target.address)) return true;
+                if (target.address.text !== target.text
+                    || getLocationResolutionState(target.address).version !== target.version) return false;
+                return isLocated(target.address);
+            });
+            if (!allNoLongerBlocked) return;
+            delete sendStatus.dataset.locationBlocked;
+            locationBlockedSendTargets = null;
+            sendStatus.textContent = '';
+            sendStatus.className = 'status hidden';
         }
 
         function updateAddressLocationPresentation(address) {
@@ -903,16 +1014,31 @@
 
             const metadata = row.querySelector('.address-meta');
             if (metadata) {
-                const located = isLocated(address);
-                const state = getLocationResolutionState(address);
-                const label = located ? 'Location verified'
-                    : state.status === 'pending' ? 'Checking location…'
-                        : 'Location not found — retry lookup or edit this address';
-                metadata.textContent = `Source: ${address.sourceImage || 'Unknown'} | Line: ${(address.lineIndex || 0) + 1} | ${label}`;
+                metadata.textContent = `Source: ${address.sourceImage || 'Unknown'} | Line: ${(address.lineIndex || 0) + 1}`;
             }
 
+            let locationStatus = row.querySelector('.location-status');
+            if (!locationStatus) {
+                locationStatus = document.createElement('div');
+                locationStatus.className = 'status location-status';
+                locationStatus.setAttribute('role', 'status');
+                locationStatus.setAttribute('aria-live', 'polite');
+                locationStatus.setAttribute('aria-atomic', 'true');
+                locationStatus.tabIndex = -1;
+                locationStatus.style.marginTop = '8px';
+                locationStatus.style.padding = '8px';
+                row.appendChild(locationStatus);
+            }
+            const verified = isLocated(address);
+            const state = getLocationResolutionState(address);
+            locationStatus.textContent = getLocationStatusText(address);
+            locationStatus.className = `status location-status ${verified ? 'success' : state.status === 'pending' ? 'loading' : 'error'}`;
+
             let retryButton = row.querySelector('.location-retry-button');
-            if (isLocated(address)) {
+            if (verified) {
+                if (retryButton && retryButton === document.activeElement) {
+                    try { locationStatus.focus({ preventScroll: true }); } catch (error) { locationStatus.focus(); }
+                }
                 retryButton?.remove();
                 return;
             }
@@ -922,10 +1048,21 @@
                 retryButton.type = 'button';
                 retryButton.className = 'btn btn-secondary location-retry-button';
                 retryButton.dataset.action = 'retryLocationLookup';
-                retryButton.addEventListener('click', () => { void resolveLocationCandidates([address]); });
+                retryButton.addEventListener('click', async () => {
+                    const hadFocus = document.activeElement === retryButton;
+                    await resolveLocationCandidates([address]);
+                    if (!hadFocus || !extractedAddresses.includes(address)) return;
+                    if (document.activeElement && document.activeElement !== document.body
+                        && document.activeElement !== retryButton) return;
+                    const currentRow = locationAddressRows.get(address);
+                    const target = currentRow?.querySelector(isLocated(address)
+                        ? '.location-status' : '.location-retry-button');
+                    if (target) {
+                        try { target.focus({ preventScroll: true }); } catch (error) { target.focus(); }
+                    }
+                });
                 row.appendChild(retryButton);
             }
-            const state = getLocationResolutionState(address);
             retryButton.textContent = state.status === 'pending' ? 'Checking location…' : 'Retry location lookup';
             retryButton.disabled = state.status === 'pending' || !String(address.text || '').trim()
                 || String(address.text || '').length > LOCATION_RESOLVE_MAX_TEXT_LENGTH;
@@ -938,6 +1075,7 @@
 
         async function resolveLocationCandidates(candidates) {
             const targets = [];
+            let changed = false;
             for (const address of [...new Set(candidates || [])]) {
                 if (!address || !extractedAddresses.includes(address) || isLocated(address)) continue;
                 const previous = getLocationResolutionState(address);
@@ -949,6 +1087,13 @@
                 }
                 const target = { address, text, version: previous.version };
                 targets.push(target);
+                changed ||= hasUsableCoordinates(address) || address.resolution != null;
+                // Cached or restored coordinates without a current verified outcome are stale.
+                // Drop only location data while the server performs one fresh recovery pass.
+                address.lat = 0;
+                address.lon = 0;
+                address.pid = null;
+                address.resolution = null;
                 setLocationResolutionState(address, { version: previous.version, status: 'pending' });
             }
 
@@ -958,7 +1103,6 @@
             }
 
             refreshLocationPresentation();
-            let changed = false;
             for (let offset = 0; offset < targets.length; offset += LOCATION_RESOLVE_BATCH_SIZE) {
                 const batch = targets.slice(offset, offset + LOCATION_RESOLVE_BATCH_SIZE);
                 try {
@@ -980,19 +1124,29 @@
                         if (!isCurrentLocationTarget(target)) return;
                         const resolved = result.candidates[index];
                         if (!resolved || resolved.text !== target.text) {
-                            setLocationResolutionState(target.address, { version: target.version, status: 'failed' });
+                            setLocationResolutionState(target.address, { version: target.version, status: 'unavailable' });
                             return;
                         }
-                        const before = [target.address.lat, target.address.lon, target.address.pid];
+                        const before = [target.address.lat, target.address.lon, target.address.pid, target.address.resolution];
                         target.address.lat = Number.isFinite(resolved.lat) ? resolved.lat : 0;
                         target.address.lon = Number.isFinite(resolved.lon) ? resolved.lon : 0;
                         target.address.pid = typeof resolved.pid === 'string' && resolved.pid.trim()
                             ? resolved.pid : null;
+                        target.address.resolution = resolved.resolution || null;
                         changed ||= before[0] !== target.address.lat || before[1] !== target.address.lon
-                            || before[2] !== target.address.pid;
+                            || before[2] !== target.address.pid
+                            || JSON.stringify(before[3] || null) !== JSON.stringify(target.address.resolution);
+                        const finalResolution = getCurrentLocationResolution(target.address);
+                        const verifiedNow = (finalResolution?.status === 'VERIFIED_UNIT'
+                            || finalResolution?.status === 'VERIFIED_BUILDING')
+                            && hasUsableCoordinates(target.address);
                         setLocationResolutionState(target.address, {
                             version: target.version,
-                            status: isLocated(target.address) ? 'located' : 'unresolved'
+                            status: verifiedNow ? 'located'
+                                : finalResolution?.status === 'NO_MATCH' ? 'no-match'
+                                    : finalResolution?.status === 'AMBIGUOUS' ? 'ambiguous'
+                                        : finalResolution?.status === 'DEFERRED' ? 'deferred'
+                                            : finalResolution?.status === 'LOOKUP_UNAVAILABLE' ? 'unavailable' : 'unresolved'
                         });
                     });
                 } catch (error) {
@@ -1000,7 +1154,7 @@
                         if (isCurrentLocationTarget(target)) {
                             setLocationResolutionState(target.address, {
                                 version: target.version,
-                                status: 'failed'
+                                status: 'unavailable'
                             });
                         }
                     });
@@ -1032,6 +1186,7 @@
                     autoStartButton.title = '';
                 }
             }
+            clearResolvedLocationBlockedSendError();
             updateManualCommandHoldControls(currentVin, sendStatus);
         }
 
@@ -1185,7 +1340,9 @@
             address.lat = 0;
             address.lon = 0;
             address.pid = null;
+            address.resolution = null;
             setLocationResolutionState(address, { version: previous.version + 1, status: 'idle' });
+            updateLocationBlockedSendTarget(address);
             return resolveLocationCandidates([address]);
         }
 
@@ -1222,7 +1379,7 @@
             const groupAddresses = extractedAddresses.slice(startIndex, startIndex + groupSize);
 
             if (groupAddresses.some(address => !isLocated(address))) {
-                showStatus('Resolve a verified location for every stop in this route before sending. Retry the lookup or edit the address.', 'error', sendStatus);
+                showLocationBlockedSendStatus('Resolve a verified location for every stop in this route before sending. Retry the lookup or edit the address.', groupAddresses);
                 return;
             }
 
@@ -1335,6 +1492,10 @@
         }
 
         function showStatus(message, type, statusElement) {
+            if (statusElement === sendStatus) {
+                delete sendStatus.dataset.locationBlocked;
+                locationBlockedSendTargets = null;
+            }
             statusElement.textContent = message;
             statusElement.className = `status ${type}`;
             statusElement.classList.remove('hidden');
@@ -1426,7 +1587,7 @@
                         
                         showStep2();
                         const locationUpdated = await resolveLocationCandidates(
-                            extractedAddresses.filter(address => !isLocated(address)));
+                            extractedAddresses.filter(address => !hasCurrentLocationResolution(address)));
                         if (locationUpdated) await saveCurrentSession();
                         if (autoNavSessionId) {
                             showAutoNavPanel();
@@ -1565,6 +1726,19 @@
             }
 
             panel.classList.remove('hidden');
+            let retry = panel.querySelector('.auto-nav-location-retry');
+            if (data.canRetryLocationValidation === true && data.pauseReason === 'LOCATION_VALIDATION'
+                && data.status === 'PAUSED' && data.commandState === 'NONE') {
+                if (!retry || retry.dataset.sessionId !== data.sessionId) {
+                    retry?.remove();
+                    retry = createAutoNavButton('Retry automatic address lookup', 'btn btn-secondary auto-nav-location-retry',
+                        () => retryAutoNavigationLocation(data.sessionId));
+                    retry.dataset.sessionId = data.sessionId;
+                    panel.appendChild(retry);
+                }
+            } else {
+                retry?.remove();
+            }
         }
         
         function showAutoNavPanel() {
@@ -1594,7 +1768,7 @@
             }
 
             if (extractedAddresses.some(address => !isLocated(address))) {
-                showStatus('Resolve a verified location for every stop before starting automatic navigation. Retry the lookup or edit the address.', 'error', sendStatus);
+                showLocationBlockedSendStatus('Resolve a verified location for every stop before starting automatic navigation. Retry the lookup or edit the address.', extractedAddresses);
                 return;
             }
 
@@ -1792,12 +1966,40 @@
                 status.replaceChildren(
                     message,
                     document.createElement('br'),
-                    document.createTextNode(`Completed ${data.completedAddresses} of ${data.totalAddresses} addresses. Stop this session to reconcile and release the vehicle.`)
+                    document.createTextNode(`Completed ${data.completedAddresses} of ${data.totalAddresses} addresses. ${data.canRetryLocationValidation === true ? 'Retry the address lookup to continue this pending batch.' : 'Stop this session to reconcile and release the vehicle.'}`)
                 );
                 if (data.commandState) {
                     status.append(document.createElement('br'), document.createTextNode(`Command state: ${data.commandState}`));
                 }
                 buttons.replaceChildren(createAutoNavButton('⏹️ Stop and reconcile session', 'btn btn-stop', stopAutoNavigation));
+                if (data.canRetryLocationValidation === true && data.pauseReason === 'LOCATION_VALIDATION'
+                    && data.status === 'PAUSED' && data.commandState === 'NONE') {
+                    buttons.replaceChildren(
+                        createAutoNavButton('Retry automatic address lookup', 'btn btn-secondary auto-nav-location-retry',
+                            () => retryAutoNavigationLocation(data.sessionId)),
+                        createAutoNavButton('⏹️ Stop and reconcile session', 'btn btn-stop', stopAutoNavigation));
+                }
+            }
+        }
+
+        async function retryAutoNavigationLocation(sessionId) {
+            if (!sessionId || getManualCommandHold(currentVin) || manualCommandInFlight.has(currentVin)) return;
+            const controls = [...document.querySelectorAll('.auto-nav-location-retry')];
+            controls.forEach(button => { button.disabled = true; button.textContent = 'Requesting location retry…'; });
+            try {
+                const response = await apiFetch(`/route/auto-navigate/retry-location/${encodeURIComponent(sessionId)}`, { method: 'POST' });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'The address lookup could not be retried.');
+                autoNavSessionId = data.sessionId;
+                updateAutoNavUI(data);
+                if (!document.getElementById('activeAutoNavPanel').classList.contains('hidden')) showActiveAutoNavPanel(data);
+                showStatus('Address lookup retry requested. The pending route will be checked again before any new dispatch.', 'loading', sendStatus);
+                startAutoNavPolling();
+            } catch (error) {
+                showStatus(`Address lookup retry failed: ${error.message}`, 'error', sendStatus);
+                controls.filter(button => button.isConnected).forEach(button => {
+                    button.disabled = false; button.textContent = 'Retry automatic address lookup';
+                });
             }
         }
         

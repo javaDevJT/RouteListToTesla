@@ -88,6 +88,19 @@ public class ImageCacheService {
     }
 
     public String calculateClientCacheKey(String contentHash, String defaultState, String ownerSub) {
+        return calculateCacheKey(contentHash, defaultState, ownerSub, GeocodingClient.GEOCODING_VERSION);
+    }
+
+    /**
+     * Calculate an OCR-only identity. Location policy changes must not require
+     * running the local OCR engines again for the same owner's image and state.
+     */
+    public String calculateOcrCacheKey(String contentHash, String defaultState, String ownerSub) {
+        return calculateCacheKey(contentHash, defaultState, ownerSub, null);
+    }
+
+    private String calculateCacheKey(String contentHash, String defaultState, String ownerSub,
+                                     String geocodingVersion) {
         if (contentHash == null || !contentHash.matches("[0-9a-fA-F]{64}")) {
             throw new IllegalArgumentException("Content hash must be a SHA-256 hex digest");
         }
@@ -99,8 +112,10 @@ public class ImageCacheService {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             digest.update(AddressOcrService.EXTRACTION_VERSION.getBytes(StandardCharsets.UTF_8));
             digest.update((byte) 0);
-            digest.update(GeocodingClient.GEOCODING_VERSION.getBytes(StandardCharsets.UTF_8));
-            digest.update((byte) 0);
+            if (geocodingVersion != null) {
+                digest.update(geocodingVersion.getBytes(StandardCharsets.UTF_8));
+                digest.update((byte) 0);
+            }
             String language = ocrLanguage == null || ocrLanguage.isBlank() ? "eng" : ocrLanguage.trim();
             digest.update(language.getBytes(StandardCharsets.UTF_8));
             digest.update((byte) 0);
@@ -147,18 +162,23 @@ public class ImageCacheService {
      * Retrieve cached results for an image hash
      */
     public List<PlaceCandidate> getCachedResults(String imageHash) {
+        CacheEntry entry = readCacheEntry(imageHash);
+        if (entry == null || entry.candidates == null) {
+            return null;
+        }
+        log.info("Retrieved cached results for hash {} with {} candidates",
+                imageHash, entry.candidates.size());
+        return entry.candidates;
+    }
+
+    private CacheEntry readCacheEntry(String imageHash) {
         try {
             Path cacheFile = cacheDirectory.resolve(imageHash + ".json");
             if (!Files.exists(cacheFile)) {
                 return null;
             }
 
-            CacheEntry entry = objectMapper.readValue(cacheFile.toFile(), CacheEntry.class);
-            log.info("Retrieved cached results for hash {} with {} candidates",
-                    imageHash, entry.candidates.size());
-
-            return entry.candidates;
-
+            return objectMapper.readValue(cacheFile.toFile(), CacheEntry.class);
         } catch (JacksonException e) {
             log.warn("Failed to read cached results for hash {}: {}", imageHash, e.getMessage());
             return null;
@@ -259,6 +279,56 @@ public class ImageCacheService {
 
     public List<PlaceCandidate> getCachedOcrResults(String imageHash) {
         return getCachedResults(imageHash + ".ocr");
+    }
+
+    /**
+     * Cache extracted OCR provenance under an identity that is independent of
+     * geocoding policy. Location fields are always cleared before persistence.
+     */
+    public synchronized void cacheOcrResults(String contentHash, String defaultState, String ownerSub,
+                                             String originalFilename, List<PlaceCandidate> candidates) {
+        String ocrKey = calculateOcrCacheKey(contentHash, defaultState, ownerSub);
+        cacheImageResults(ocrKey + ".ocr", originalFilename, ocrOnly(candidates));
+    }
+
+    /**
+     * Read an OCR-only entry. If only the legacy policy-bound OCR entry exists,
+     * copy its OCR provenance to the new key without changing or deleting it.
+     */
+    public synchronized List<PlaceCandidate> getCachedOcrResults(String contentHash, String defaultState,
+                                                                 String ownerSub) {
+        String ocrKey = calculateOcrCacheKey(contentHash, defaultState, ownerSub);
+        Path currentFile = cacheDirectory.resolve(ocrKey + ".ocr.json");
+        if (Files.exists(currentFile)) {
+            CacheEntry entry = readCacheEntry(ocrKey + ".ocr");
+            return entry == null || entry.candidates == null ? null : ocrOnly(entry.candidates);
+        }
+
+        // This is intentionally fixed to the former policy version. Never use
+        // the legacy geocoded image result as an OCR migration source.
+        String legacyCombinedKey = calculateCacheKey(contentHash, defaultState, ownerSub,
+                "street-address-v3");
+        String legacyOcrEntryKey = legacyCombinedKey + ".ocr";
+        CacheEntry legacyEntry = readCacheEntry(legacyOcrEntryKey);
+        if (legacyEntry == null || legacyEntry.candidates == null) {
+            return null;
+        }
+
+        List<PlaceCandidate> rows = ocrOnly(legacyEntry.candidates);
+        String filename = legacyEntry.originalFilename;
+        if (filename == null || filename.isBlank()) {
+            filename = rows.stream().map(PlaceCandidate::sourceImage)
+                    .filter(source -> source != null && !source.isBlank()).findFirst().orElse("unknown");
+        }
+        cacheImageResults(ocrKey + ".ocr", filename, rows);
+        return rows;
+    }
+
+    private List<PlaceCandidate> ocrOnly(List<PlaceCandidate> candidates) {
+        return candidates.stream()
+                .map(row -> new PlaceCandidate(row.text(), row.normalized(), row.sourceImage(), row.lineIndex(),
+                        0, 0, null, row.ocrAgreement(), row.ocrReviewRequired(), row.ocrAlternatives(), null))
+                .toList();
     }
 
     private void writeCacheFile(Path target, Object value) throws IOException {

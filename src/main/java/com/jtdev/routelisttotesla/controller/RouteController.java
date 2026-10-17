@@ -2,6 +2,7 @@ package com.jtdev.routelisttotesla.controller;
 
 import com.jtdev.routelisttotesla.model.AutoNavSession;
 import com.jtdev.routelisttotesla.model.PlaceCandidate;
+import com.jtdev.routelisttotesla.model.LocationResolution;
 import com.jtdev.routelisttotesla.model.PlaceCandidatesResponse;
 import com.jtdev.routelisttotesla.model.UserSession;
 import com.jtdev.routelisttotesla.service.*;
@@ -19,6 +20,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.text.Normalizer;
+import java.time.Duration;
 
 @RestController
 @RequestMapping("/route")
@@ -53,6 +55,8 @@ public class RouteController {
     public PlaceCandidatesResponse places(@RequestPart("images") MultipartFile[] images,
                                           @RequestParam(value = "defaultState", defaultValue = "") String defaultState,
                                           @AuthenticationPrincipal OAuth2User principal) throws Exception {
+        // Leave response headroom inside the proxy's synchronous request window.
+        long lookupDeadline = System.nanoTime() + Duration.ofSeconds(85).toNanos();
         if (images == null || images.length == 0 || images.length > 30) {
             throw new IllegalArgumentException("Choose between 1 and 30 images");
         }
@@ -69,13 +73,14 @@ public class RouteController {
             }
             String filename = Objects.requireNonNullElse(file.getOriginalFilename(), "image");
             byte[] bytes = file.getBytes();
+            String contentHash = cacheService.calculateImageHash(bytes, filename);
             String hash = cacheService.calculateImageHash(bytes, filename, state, owner);
             List<PlaceCandidate> cached = cacheService.getCachedResults(hash);
             if (cached == null) {
-                List<PlaceCandidate> extracted = cacheService.getCachedOcrResults(hash);
+                List<PlaceCandidate> extracted = cacheService.getCachedOcrResults(contentHash, state, owner);
                 if (extracted == null) {
                     extracted = ocr.extractAddressCandidates(bytes, filename, state);
-                    cacheService.cacheOcrResults(hash, filename, extracted);
+                    cacheService.cacheOcrResults(contentHash, state, owner, filename, extracted);
                 }
                 extracted = rebindSource(extracted, filename);
                 int start = misses.size();
@@ -89,7 +94,7 @@ public class RouteController {
         List<PlaceCandidate> geocoded;
         long lookupStarted = System.nanoTime();
         try {
-            geocoded = geocoder.batchGeocode(owner, misses);
+            geocoded = geocoder.batchGeocode(owner, misses, lookupDeadline);
         } catch (RuntimeException exception) {
             log.warn("Screenshot processing failed: stage=geocoding type={} elapsedMs={}",
                     exception.getClass().getSimpleName(), (System.nanoTime() - lookupStarted) / 1_000_000);
@@ -220,6 +225,26 @@ public class RouteController {
         return buildSessionStatusResponse(session);
     }
 
+    /** Retry only a lookup-paused pending group; this never clears a command hold. */
+    @PostMapping("/auto-navigate/retry-location/{sessionId}")
+    public Map<String, Object> retryAutoNavigationLocation(@PathVariable String sessionId,
+                                                           @AuthenticationPrincipal OAuth2User principal) {
+        TapAccessService.GrantIdentity identity = grantIdentity(principal);
+        AutoNavSession session = requireOwnedSession(sessionId, identity);
+        TapAccessService.GrantIdentity currentIdentity = requireCommandAccess(session.getVin(), principal);
+        if (!session.canRetryLocationValidation()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Only a pending route paused for address validation can be retried.");
+        }
+        try {
+            AutoNavSession resumed = autoNavigationService.retryLocationValidation(sessionId, currentIdentity);
+            return buildSessionStatusResponse(resumed);
+        } catch (IllegalStateException exception) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "The session state changed; refresh its status before retrying.");
+        }
+    }
+
     private AutoNavSession requireOwnedSession(String id, TapAccessService.GrantIdentity identity) {
         AutoNavSession session = autoNavigationService.getSession(id, identity);
         if (session == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND);
@@ -239,6 +264,8 @@ public class RouteController {
         response.put("totalAddresses", session.getAllAddresses().size());
         response.put("progressPercentage", session.getProgressPercentage());
         response.put("lastError", session.getLastError());
+        response.put("pauseReason", session.getPauseReason() == null ? null : session.getPauseReason().name());
+        response.put("canRetryLocationValidation", session.canRetryLocationValidation());
         if (session.getLastPollAt() != null) response.put("lastPollAt", session.getLastPollAt().toString());
         if (session.getUpdatedAt() != null) response.put("updatedAt", session.getUpdatedAt().toString());
         if (session.getLastRouteSentAt() != null) {
@@ -303,9 +330,21 @@ public class RouteController {
         }
         for (int index = 0; index < resolved.size(); index++) {
             PlaceCandidate candidate = resolved.get(index);
-            if (!hasResolvedLocation(candidate)) {
+            if (candidate == null || !Objects.equals(candidate.text(), reviewed.get(index).text())) {
+                throw new IllegalStateException("Location lookup returned an inconsistent response. No route was sent.");
+            }
+            if (candidate.resolution() != null && (candidate.resolution().status()
+                    == LocationResolution.Status.LOOKUP_UNAVAILABLE
+                    || candidate.resolution().status()
+                    == LocationResolution.Status.DEFERRED)) {
+                throw new IllegalStateException("Location lookup is temporarily unavailable for stop "
+                        + (index + 1) + ". Try again shortly. No route was sent.");
+            }
+            if (!hasResolvedLocation(candidate) || candidate.resolution() == null
+                    || !candidate.resolution().verified()
+                    || !GeocodingClient.GEOCODING_VERSION.equals(candidate.resolution().policyVersion())) {
                 throw new IllegalArgumentException("Stop " + (index + 1)
-                        + " could not be matched to a street address. Check its address or remove that stop, then try again. No route was sent.");
+                        + " has no unambiguous street location after automatic address recovery. Review its lookup status. No route was sent.");
             }
         }
         return List.copyOf(resolved);
@@ -356,7 +395,7 @@ public class RouteController {
     private List<PlaceCandidate> rebindSource(List<PlaceCandidate> candidates, String filename) {
         return candidates.stream().map(c -> new PlaceCandidate(c.text(), c.normalized(), filename,
                 c.lineIndex(), c.lat(), c.lon(), c.pid(), c.ocrAgreement(),
-                c.ocrReviewRequired(), c.ocrAlternatives())).toList();
+                c.ocrReviewRequired(), c.ocrAlternatives(), c.resolution())).toList();
     }
 
     private void appendImageCandidates(List<PlaceCandidate> results, List<PlaceCandidate> incoming) {

@@ -71,6 +71,51 @@ class AutoNavSessionTest {
         assertFalse(session.hasMoreGroups());
     }
 
+    @Test
+    void currentGroupReplacementChecksSizeAndTextBeforeChangingAnyRows() {
+        AutoNavSession session = new AutoNavSession("session-4", "vin", "driver@example.com", addresses(10));
+        session.setCurrentGroupIndex(1);
+        List<PlaceCandidate> original = List.copyOf(session.getCurrentGroup());
+        PlaceCandidate updatedFirst = original.get(0).withLatLonPid(43.0, -84.0, "fresh-8");
+        PlaceCandidate wrongText = new PlaceCandidate("Different stop", "DIFFERENT STOP", "image.png", 9,
+                43.1, -84.1, "fresh-9");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> session.replaceCurrentGroup(List.of(updatedFirst)));
+        assertEquals(original, session.getCurrentGroup());
+        assertThrows(IllegalArgumentException.class,
+                () -> session.replaceCurrentGroup(List.of(updatedFirst, wrongText)));
+        assertEquals(original, session.getCurrentGroup());
+
+        PlaceCandidate updatedSecond = original.get(1).withLatLonPid(43.1, -84.1, "fresh-9");
+        session.replaceCurrentGroup(List.of(updatedFirst, updatedSecond));
+
+        assertEquals(List.of(updatedFirst, updatedSecond), session.getCurrentGroup());
+        assertEquals("Address 7", session.getAllAddresses().get(7).text(), "rows before the group stay in place");
+    }
+
+    @Test
+    void locationRetryRequiresOnlyAValidationPausedUnsubmittedPendingGroup() {
+        AutoNavSession session = new AutoNavSession("session-5", "vin", "driver@example.com", addresses(1));
+
+        assertFalse(session.canRetryLocationValidation());
+        session.setStatus(AutoNavSession.Status.PAUSED);
+        session.setPauseReason(AutoNavSession.PauseReason.LOCATION_VALIDATION);
+        assertTrue(session.canRetryLocationValidation());
+
+        session.setCommandState(AutoNavSession.CommandState.ACCEPTED);
+        assertFalse(session.canRetryLocationValidation());
+        session.setCommandState(AutoNavSession.CommandState.NONE);
+        session.setPendingCommandIdempotencyKey("command-key");
+        assertFalse(session.canRetryLocationValidation());
+        session.setPendingCommandIdempotencyKey(null);
+        session.setNextGroupReady(false);
+        assertFalse(session.canRetryLocationValidation());
+        session.setNextGroupReady(true);
+        session.setPauseReason(AutoNavSession.PauseReason.RESTART);
+        assertFalse(session.canRetryLocationValidation());
+    }
+
     private static List<PlaceCandidate> addresses(int count) {
         List<PlaceCandidate> addresses = new ArrayList<>();
         for (int i = 0; i < count; i++) {

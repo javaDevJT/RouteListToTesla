@@ -6,6 +6,7 @@ import tools.jackson.databind.cfg.DateTimeFeature;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
 import com.jtdev.routelisttotesla.model.AutoNavSession;
+import com.jtdev.routelisttotesla.model.LocationResolution;
 import com.jtdev.routelisttotesla.model.PlaceCandidate;
 import com.jtdev.routelisttotesla.service.TapVehicleClient.CommandResult;
 import com.jtdev.routelisttotesla.service.TapVehicleClient.Telemetry;
@@ -34,9 +35,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 
 @Service
 public class AutoNavigationService {
@@ -149,6 +150,12 @@ public class AutoNavigationService {
                 throw new IllegalStateException("Another navigation session already owns this vehicle");
             }
             if (session.getStatus() == AutoNavSession.Status.RUNNING) return session;
+            if (session.getStatus() == AutoNavSession.Status.PAUSED) {
+                if (session.canRetryLocationValidation()) {
+                    throw new IllegalStateException("Use the location retry action for this paused waypoint batch.");
+                }
+                throw new IllegalStateException("This saved session is held after a pause or restart; review the vehicle and create a new route.");
+            }
             if (session.getCommandState() == null) {
                 failSession(session, "This saved session predates telemetry progress tracking; stop it and create a new route.");
                 throw new IllegalStateException(session.getLastError());
@@ -158,14 +165,38 @@ public class AutoNavigationService {
                     || session.getCommandState() == AutoNavSession.CommandState.REJECTED) {
                 throw new IllegalStateException("The last route command needs manual review; it will not be retried");
             }
-            if (session.getStatus() != AutoNavSession.Status.CREATED
-                    && session.getStatus() != AutoNavSession.Status.PAUSED) {
+            if (session.getStatus() != AutoNavSession.Status.CREATED) {
                 throw new IllegalStateException("Session cannot be started from status " + session.getStatus());
             }
             session.setStatus(AutoNavSession.Status.RUNNING);
+            session.setPauseReason(null);
             session.setLastError(null);
             persistSession(session);
             return session;
+        }
+    }
+
+    /** Requests a retry only for a location-validation hold; telemetry still gates dispatch. */
+    public AutoNavSession retryLocationValidation(
+            String sessionId, TapAccessService.GrantIdentity identity) {
+        AutoNavSession session = requireOwnedGrant(sessionId, identity);
+        synchronized (userLock(session.getUserId())) {
+            if (hasOtherBlockingSessionForUser(session.getUserId(), sessionId)) {
+                throw new IllegalStateException("Another auto-navigation session already owns this user account");
+            }
+            synchronized (vehicleLock(session.getVin())) {
+                if (hasOtherBlockingSessionForVin(session.getVin(), sessionId)) {
+                    throw new IllegalStateException("Another navigation session already owns this vehicle");
+                }
+                if (!session.canRetryLocationValidation()) {
+                    throw new IllegalStateException("This session is not held for a retryable location-validation failure.");
+                }
+                session.setPauseReason(null);
+                session.setStatus(AutoNavSession.Status.RUNNING);
+                session.setLastError(null);
+                persistSession(session);
+                return session;
+            }
         }
     }
 
@@ -174,6 +205,7 @@ public class AutoNavigationService {
         if (session == null) throw new IllegalArgumentException("Session not found: " + sessionId);
         synchronized (vehicleLock(session.getVin())) {
             session.setStatus(AutoNavSession.Status.STOPPED);
+            session.setPauseReason(null);
             persistSession(session);
             log.info("Stopped auto-navigation session {}", sessionId);
             return session;
@@ -184,6 +216,7 @@ public class AutoNavigationService {
         AutoNavSession session = requireOwnedGrant(sessionId, identity);
         synchronized (vehicleLock(session.getVin())) {
             session.setStatus(AutoNavSession.Status.STOPPED);
+            session.setPauseReason(null);
             persistSession(session);
             log.info("Stopped auto-navigation session {}", sessionId);
             return session;
@@ -660,11 +693,17 @@ public class AutoNavigationService {
     }
 
     private void sendCurrentGroup(AutoNavSession session) {
+        if (session.getStatus() != AutoNavSession.Status.RUNNING
+                || session.getCommandState() != AutoNavSession.CommandState.NONE
+                || !session.isNextGroupReady()) {
+            return;
+        }
+
         List<PlaceCandidate> group;
         try {
             group = prepareCurrentGroup(session);
         } catch (RuntimeException e) {
-            failSession(session, "Waypoint coordinates could not be validated; no route was sent.");
+            holdCurrentGroupForLocationValidation(session);
             return;
         }
         if (group.isEmpty()) {
@@ -721,31 +760,50 @@ public class AutoNavigationService {
         persistBestEffort(session);
     }
 
+    private void holdCurrentGroupForLocationValidation(AutoNavSession session) {
+        session.setStatus(AutoNavSession.Status.PAUSED);
+        session.setPauseReason(AutoNavSession.PauseReason.LOCATION_VALIDATION);
+        session.setLastError("The current waypoint batch could not be verified; no route was sent. Use Retry location to try again.");
+        persistBestEffort(session);
+    }
+
     private List<PlaceCandidate> prepareCurrentGroup(AutoNavSession session) {
         List<PlaceCandidate> group = new ArrayList<>(session.getCurrentGroup());
-        List<PlaceCandidate> toGeocode = group.stream()
-                .filter(candidate -> !hasRouteCoordinates(candidate))
-                .toList();
-        Map<String, PlaceCandidate> geocodedByText = Map.of();
-        if (!toGeocode.isEmpty()) {
-            geocodedByText = geocodingClient.batchGeocode(session.getUserId(), toGeocode).stream()
-                    .collect(Collectors.toMap(candidate -> candidate.text().trim(), candidate -> candidate, (first, ignored) -> first));
+        if (group.isEmpty()) return List.of();
+
+        // Saved coordinates and provider metadata are retained for display only. Every new
+        // command gets a fresh server lookup for the complete pending group.
+        List<PlaceCandidate> queries = group.stream().map(this::locationQuery).toList();
+        List<PlaceCandidate> results = geocodingClient.batchGeocode(session.getUserId(), queries);
+        if (results == null || results.size() != group.size()) {
+            throw new IllegalStateException("Location validation returned an incomplete waypoint batch");
         }
 
-        int startIndex = session.getCurrentGroupIndex() * 8;
         List<PlaceCandidate> prepared = new ArrayList<>(group.size());
         for (int i = 0; i < group.size(); i++) {
-            PlaceCandidate candidate = group.get(i);
-            if (!hasRouteCoordinates(candidate)) {
-                candidate = geocodedByText.get(candidate.text().trim());
+            PlaceCandidate original = group.get(i);
+            PlaceCandidate result = results.get(i);
+            if (result == null || !Objects.equals(original.text(), result.text())) {
+                throw new IllegalStateException("Location validation changed waypoint text or order");
             }
-            if (!hasRouteCoordinates(candidate)) {
-                throw new IllegalStateException("A waypoint has no valid route coordinates");
+            LocationResolution resolution = result.resolution();
+            if (resolution == null || !resolution.verified()
+                    || !GeocodingClient.GEOCODING_VERSION.equals(resolution.policyVersion())
+                    || !hasRouteCoordinates(result)) {
+                throw new IllegalStateException("A waypoint lacks current-policy verified street coordinates");
             }
-            session.replaceAddress(startIndex + i, candidate);
-            prepared.add(candidate);
+            // Keep the saved OCR identity/provenance while accepting only server-returned
+            // location and resolution fields.
+            prepared.add(original.withLocationFrom(result));
         }
+
+        session.replaceCurrentGroup(prepared);
         return prepared;
+    }
+
+    private PlaceCandidate locationQuery(PlaceCandidate candidate) {
+        return new PlaceCandidate(candidate.text(), null, null, 0, 0, 0, null,
+                candidate.ocrAgreement(), candidate.ocrReviewRequired(), candidate.ocrAlternatives(), null);
     }
 
     private boolean isFreshEnvelope(Telemetry telemetry, Instant serverTime, Instant localReceivedAt) {
@@ -815,6 +873,7 @@ public class AutoNavigationService {
 
     private void failSession(AutoNavSession session, String reason) {
         session.setStatus(AutoNavSession.Status.ERROR);
+        session.setPauseReason(null);
         session.setLastError(reason);
         persistBestEffort(session);
     }
@@ -931,22 +990,33 @@ public class AutoNavigationService {
             session.setPendingParkTransitionAt(null);
             if (session.getCommandState() == null && isBlockingStatus(session.getStatus())) {
                 session.setStatus(AutoNavSession.Status.ERROR);
+                session.setPauseReason(null);
                 session.setLastError("Saved session lacks telemetry progress state; stop it and create a new route.");
                 changed = true;
             } else if (session.getStatus() == AutoNavSession.Status.RUNNING) {
                 if (session.getCommandState() == AutoNavSession.CommandState.SUBMITTING) {
                     session.setCommandState(AutoNavSession.CommandState.UNKNOWN);
                     session.setStatus(AutoNavSession.Status.ERROR);
+                    session.setPauseReason(null);
                     session.setLastError("Process restarted during a route command; inspect the vehicle before continuing.");
                 } else if (session.getCommandState() == AutoNavSession.CommandState.UNKNOWN
                         || session.getCommandState() == AutoNavSession.CommandState.REJECTED) {
                     session.setStatus(AutoNavSession.Status.ERROR);
+                    session.setPauseReason(null);
                     session.setLastError("Saved route command needs manual review; it will not be retried.");
                 } else {
                     session.setStatus(AutoNavSession.Status.PAUSED);
+                    session.setPauseReason(AutoNavSession.PauseReason.RESTART);
                     session.setLastError("Paused after restart; inspect the vehicle, stop this session, and review remaining stops before creating a new route.");
                 }
                 changed = true;
+            } else if (session.getStatus() == AutoNavSession.Status.PAUSED
+                    && !session.canRetryLocationValidation()) {
+                if (session.getPauseReason() != AutoNavSession.PauseReason.RESTART) {
+                    session.setPauseReason(AutoNavSession.PauseReason.RESTART);
+                    session.setLastError("Saved session is held after restart or an uncertain command; inspect the vehicle and create a new route.");
+                    changed = true;
+                }
             }
             activeSessions.put(session.getSessionId(), session);
             if (changed) persistSession(session);

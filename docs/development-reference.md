@@ -8,7 +8,7 @@ TAP-managed sign-in and stable-subject authorization replace independent Google 
 
 The current parser keeps complex labels separate from the following city and
 rejects Expected-by/time/route-code rows. Extraction version `ocr-consensus-v6`
-and geocoding policy `street-address-v3` invalidate incompatible image results.
+and geocoding policy `street-address-v4` invalidate incompatible image results.
 The browser runs at most two single-image requests at once and the server admits
 two OCR jobs, each retaining all three engines. Results merge in selected-image
 order. See [address recovery and native measurements](address-recovery-2026-10-17.md).
@@ -178,6 +178,7 @@ address candidates.
 | `GET` | `/route/vehicles` | List vehicles available to the signed-in TAP owner. |
 | `POST` | `/route/places` | Upload images, run local OCR, and geocode address candidates. Does not send a route. |
 | `POST` | `/route/resolve` | Resolve 1–500 existing candidate rows for the current authorized vehicle grant. Requires CSRF; does not confirm OCR or send a route. |
+| `POST` | `/route/auto-navigate/retry-location/{sessionId}` | Retry only an owned lookup-paused pending group under current vehicle command access and CSRF. Restart and uncertain-command holds remain blocked; dispatch still requires fresh telemetry and validation. |
 | `POST` | `/route/places/{vin}` | Retired legacy extract-and-send route; returns HTTP 410. |
 | `POST` | `/route/send/{vin}` | Send 1–8 reviewed stops with an idempotency key. |
 | `POST` | `/route/cache/check` | Check a SHA-256 image and default-state cache entry. |
@@ -193,28 +194,44 @@ Image upload does not automatically dispatch vehicle commands. The reviewed send
 
 ## Cache, geocoding, and route state
 
-Geocoding first looks up the full reviewed address, including apartment/unit
-information. If it returns no acceptable destination, a recognized middle complex
-label can be omitted while preserving the unit and final city/state. A final
-fallback omits a recognized unit; there are at most three distinct query variants.
-All variants reject broad city/road matches, partial matches, mismatched house
-numbers, streets, cities or states, and invalid coordinates or place IDs.
-Stops remain unresolved if no variant succeeds; their original text is
-preserved. Transient transport errors, HTTP 408/500/502/503/504, and Google `UNKNOWN_ERROR` receive at most three application-owned attempts of the unchanged address, with 100/200 ms backoff. Each extra attempt reserves owner/global usage and uses the 60 ms pacing gate. Permanent, quota, malformed, and definitive no-match responses do not retry. JDK-internal recovery of idempotent GET connections can add wire activity within one application attempt; the application counter is not an exact billing meter. Service failures do not cause unit omission. Fallback
-calls use the existing pacing and count against owner/global quotas only when
-needed. The `street-address-v3` policy version participates in image-cache keys.
-Reviewed addresses are resolved again before dispatch so older drafts and
-browser-supplied place IDs cannot bypass current validation.
+Geocoding validates typed long and short route names and conservative suffix
+equivalences, including terminal TR/TRL/TRAIL. It first looks up the complete
+reviewed address, including apartment/unit information. Bounded unit-preserving
+cleanup precedes a building fallback, retaining the unit in UI/session text.
+The TAP waypoint payload carries coordinates and place ID, not apartment text.
+Required house/street/direction/locality/state constraints always come from the
+original address. Conflicting units, partial matches and city/road centers cannot
+become verified destinations. Equal candidates at distinct locations remain
+ambiguous. See the [recovery design and qualification record](address-resolution-recovery-plan-2026-10-17.md).
 
-Unresolved uploads, restored rows and edits receive an early location check.
+Rows carry optional current-policy resolution metadata: VERIFIED_UNIT,
+VERIFIED_BUILDING, NO_MATCH, AMBIGUOUS, DEFERRED or LOOKUP_UNAVAILABLE, with safe
+reason/strategy and attempt counts. Successful rows survive a provider outage.
+Transient retries consume the same request budget and pacing gate; an outage
+does not trigger unit omission or a cascade of spelling queries. HTTP deadlines
+are bounded by remaining stop/batch/request time. The upload controller starts
+an 85-second lookup deadline before OCR, preserving response headroom.
+
+Manual sends and eligible new automatic-navigation groups receive fresh server
+validation, including legacy saved coordinates. Current verified metadata and
+ordered matching text are required before dispatch. Validation failures pause
+the automatic group for explicit recovery; migration does not resume a paused,
+cancelled, completed or uncertain session or replay an accepted group.
+
+Uploads, legacy restored rows and edits receive early location validation.
+New-policy terminal upload results are not immediately queried a second time.
 Pending or unresolved stops block the affected send controls and automatic
-navigation, with a visible retry action. Background checks update row status in
+navigation, with a visible retry action and explicit terminal outcome. Background checks update row status in
 place, preserving another row's active text, focus and selection.
 
 
-New cache identities include owner, extraction version, normalized default state, and image content hash.
-Legacy entries remain untouched and are not shared across owners. A changed default state cannot reuse
-an incompatible entry, and cache hits bind display metadata to the current upload.
+OCR-only cache identity includes owner, extraction version, language, default
+state and image content, independently of geocoding policy. The exact legacy v3
+combined-key `.ocr` entry can migrate without rerunning OCR; its coordinates,
+place ID and resolution metadata are cleared. Existing files remain untouched.
+Geocoded results use the current policy key with no legacy-result fallback.
+Changed owners/states/language/extraction cannot reuse incompatible entries.
+Cache hits bind display metadata to the current upload.
 
 Geocoding retains the 60 ms pause and bounded timeouts, with per-owner/global budgets and concurrency
 limits. Vehicle authorization precedes geocoding for navigation. Provider errors and `ZERO_RESULTS`

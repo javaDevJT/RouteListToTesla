@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /** A persisted, ordered route queue for one vehicle. */
 public class AutoNavSession {
@@ -27,6 +28,11 @@ public class AutoNavSession {
         REJECTED
     }
 
+    public enum PauseReason {
+        LOCATION_VALIDATION,
+        RESTART
+    }
+
     private String sessionId;
     private String vin;
     private String userId;
@@ -36,6 +42,7 @@ public class AutoNavSession {
     private int currentWaypointIndex;
     private int totalGroups;
     private Status status;
+    private PauseReason pauseReason;
     private String lastError;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -108,6 +115,18 @@ public class AutoNavSession {
     public int getTotalGroups() { return totalGroups; }
     public void setTotalGroups(int totalGroups) { this.totalGroups = totalGroups; }
     public Status getStatus() { return status; }
+    public PauseReason getPauseReason() { return pauseReason; }
+    public void setPauseReason(PauseReason pauseReason) { this.pauseReason = pauseReason; }
+
+    /** True only for a pending batch held before any command was submitted. */
+    public boolean canRetryLocationValidation() {
+        return status == Status.PAUSED
+                && pauseReason == PauseReason.LOCATION_VALIDATION
+                && commandState == CommandState.NONE
+                && nextGroupReady
+                && pendingCommandIdempotencyKey == null
+                && !getCurrentGroup().isEmpty();
+    }
 
     public void setStatus(Status status) {
         this.status = status;
@@ -177,6 +196,26 @@ public class AutoNavSession {
 
     public void replaceAddress(int index, PlaceCandidate address) {
         allAddresses.set(index, address);
+        updatedAt = LocalDateTime.now();
+    }
+
+    /** Replaces the pending batch only after every result has been checked in its original order. */
+    public void replaceCurrentGroup(List<PlaceCandidate> replacements) {
+        List<PlaceCandidate> current = getCurrentGroup();
+        if (replacements == null || replacements.size() != current.size()) {
+            throw new IllegalArgumentException("Replacement group must match the current waypoint batch");
+        }
+        for (int i = 0; i < current.size(); i++) {
+            PlaceCandidate replacement = replacements.get(i);
+            if (replacement == null || !Objects.equals(current.get(i).text(), replacement.text())) {
+                throw new IllegalArgumentException("Replacement waypoints must preserve the current batch order and text");
+            }
+        }
+
+        int startIndex = currentGroupIndex * 8;
+        for (int i = 0; i < replacements.size(); i++) {
+            allAddresses.set(startIndex + i, replacements.get(i));
+        }
         updatedAt = LocalDateTime.now();
     }
 

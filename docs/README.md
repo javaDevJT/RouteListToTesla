@@ -1,5 +1,6 @@
 # Documentation
 
+- [Automatic address recovery (2026-10-17)](address-resolution-recovery-plan-2026-10-17.md): original HEIC review, street-name validation, bounded recovery, clear outcomes and guarded saved-route retries; implementation qualified locally, release pending.
 - [Address recovery and processing improvements (2026-10-17)](address-recovery-2026-10-17.md): complex names, time-label filtering, pre-send resolution and native speed qualification.
 - [Container vulnerability repair (2026-10-10)](security-release-2026-10-10.md): unused Pebble runtime removal and release verification.
 - [CI recovery (2026-10-05)](ci-recovery-2026-10-05.md): vulnerability remediation, runner storage sizing, and release acceptance evidence.
