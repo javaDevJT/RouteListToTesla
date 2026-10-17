@@ -46,7 +46,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class AddressOcrService {
-    public static final String EXTRACTION_VERSION = "ocr-consensus-v5";
+    public static final String EXTRACTION_VERSION = "ocr-consensus-v6";
 
     static final int MAX_IMAGE_BYTES = 12 * 1024 * 1024;
     static final long MAX_IMAGE_PIXELS = 20_000_000L;
@@ -55,7 +55,7 @@ public class AddressOcrService {
     static final Duration OUTPUT_DRAIN_TIMEOUT = Duration.ofSeconds(1);
     private static final Duration PROCESS_TERMINATION_GRACE = Duration.ofMillis(150);
     private static final long PROCESS_POLL_INTERVAL_MILLIS = 10;
-    private static final Semaphore OCR_SLOTS = new Semaphore(1, true);
+    private static final Semaphore OCR_SLOTS = new Semaphore(2, true);
     private static final Logger LOG = LoggerFactory.getLogger(AddressOcrService.class);
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final List<String> CONSENSUS_ENGINES = List.of("tesseract", "paddleocr", "easyocr");
@@ -223,12 +223,21 @@ public class AddressOcrService {
                     OcrLine followingLine = lines.get(lastLineIndex + 1);
                     String locality = adjacentLocality(lastAddressLine, followingLine);
                     if (locality != null) {
+                        boolean complexAddress = AddressExtractor.isLikelyComplexName(locality);
                         addressText += ", " + locality;
                         lastLineIndex++;
+                        if (complexAddress && lastLineIndex + 1 < lines.size()) {
+                            OcrLine possibleCityLine = lines.get(lastLineIndex + 1);
+                            String city = adjacentLocality(lines.get(lastLineIndex), possibleCityLine);
+                            if (city != null && !isStateOnlyLine(possibleCityLine.text())) {
+                                addressText += ", " + city;
+                                lastLineIndex++;
+                            }
+                        }
                         if (lastLineIndex + 1 < lines.size()) {
                             OcrLine stateLine = lines.get(lastLineIndex + 1);
                             if (linesAreAdjacent(lines.get(lastLineIndex), stateLine)
-                                    && STATE_ONLY_LINE.matcher(stateLine.text().trim()).matches()
+                                    && isStateOnlyLine(stateLine.text())
                                     && STATE_SUFFIX.matcher(stateLine.text()).find()) {
                                 addressText += " " + stateLine.text().trim();
                                 lastLineIndex++;
@@ -582,6 +591,9 @@ public class AddressOcrService {
         if (rawLocality.matches("(?i)^" + AddressExtractor.UNIT_LABELS + "(?:\\s|#|$).*")) {
             return null;
         }
+        if (AddressExtractor.isRouteCodeText(rawLocality) || AddressExtractor.isRouteUiText(rawLocality)) {
+            return null;
+        }
         boolean stateOrZip = STATE_SUFFIX.matcher(rawLocality).find() || ZIP_SUFFIX.matcher(rawLocality).find();
         if (rawLocality.chars().anyMatch(Character::isDigit) && !stateOrZip) {
             return null;
@@ -594,6 +606,11 @@ public class AddressOcrService {
             return null;
         }
         return linesAreAdjacent(addressLine, followingLine) ? locality : null;
+    }
+
+    private static boolean isStateOnlyLine(String text) {
+        return text != null && (STATE_ONLY_LINE.matcher(text.trim()).matches()
+                || AddressExtractor.isStateOnlyLine(text));
     }
 
     static String addressCandidateText(String text) {

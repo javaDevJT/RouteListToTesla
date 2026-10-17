@@ -270,6 +270,122 @@ class AddressOcrServiceTest {
     }
 
     @Test
+    void retainsApartmentComplexAndFollowingCityWithEvidenceForEveryConsumedLine() throws Exception {
+        String tsv = tsv(
+                word(1, 1, 95, "11570 FORDLINE ST APT 201"),
+                word(2, 1, 95, "JAMESTOWN VILLAGE"),
+                word(3, 1, 95, "ALLEN PARK"));
+        Map<String, Object> lineEvidence = Map.of(
+                "1", evidence(3, false, List.of(
+                        reading("tesseract", "11570 FORDLINE ST APT 201"),
+                        reading("paddleocr", "11570 FORDLINE ST APT 201"),
+                        reading("easyocr", "11570 FORDLINE ST APT 201"))),
+                "2", evidence(2, true, List.of(
+                        reading("tesseract", "JAMESTOWN VILLAGE"),
+                        reading("paddleocr", "JAMESTOWN VILLAGE"))),
+                "3", evidence(3, false, List.of(
+                        reading("tesseract", "ALLEN PARK"),
+                        reading("paddleocr", "ALLEN PARK"),
+                        reading("easyocr", "ALLEN PARK"))));
+        String output = new ObjectMapper().writeValueAsString(Map.of(
+                "schemaVersion", 1,
+                "engines", List.of("tesseract", "paddleocr", "easyocr"),
+                "tsv", tsv,
+                "lineEvidence", lineEvidence));
+        AddressOcrService service = new AddressOcrService("ocr-binary", "eng",
+                ignored -> new AddressOcrService.ProcessResult(0, output, ""), false);
+
+        PlaceCandidate candidate = service.extractAddressCandidates(png(), "complex.png", "MI").get(0);
+
+        assertEquals("11570 FORDLINE ST APT 201, JAMESTOWN VILLAGE, ALLEN PARK, MI", candidate.text());
+        assertEquals(2, candidate.ocrAgreement());
+        assertTrue(candidate.ocrReviewRequired());
+        assertTrue(candidate.ocrAlternatives().stream().anyMatch(value ->
+                value.equals("line 2 tesseract: JAMESTOWN VILLAGE")));
+        assertTrue(candidate.ocrAlternatives().stream().anyMatch(value ->
+                value.equals("line 3 easyocr: ALLEN PARK")));
+    }
+
+    @Test
+    void recognizesNoUnitComplexOnlyWhenAnotherAdjacentCityFollows() throws Exception {
+        String tsv = tsv(
+                word(1, 1, 95, "789 MAPLE ST"),
+                word(2, 1, 95, "OAKRIDGE VILLAGE"),
+                word(3, 1, 95, "ALLEN PARK"),
+                word(4, 1, 95, "1450 MAPLE ST"),
+                word(5, 1, 95, "ELK GROVE VILLAGE"),
+                word(6, 1, 95, "MI"));
+        AddressOcrService service = new AddressOcrService("ocr-binary", "eng",
+                ignored -> new AddressOcrService.ProcessResult(0, tsv, ""));
+
+        assertEquals(List.of(
+                        "789 MAPLE ST, OAKRIDGE VILLAGE, ALLEN PARK, MI",
+                        "1450 MAPLE ST, ELK GROVE VILLAGE MI"),
+                service.extractAddressCandidates(png(), "locality.png", "MI")
+                        .stream().map(PlaceCandidate::text).toList());
+    }
+
+    @Test
+    void extractsTheFive0624AddressesWithoutExpectedTimesBadgesOrCycleCodes() throws Exception {
+        String tsv = tsv(
+                word(1, 1, 95, "1560 CULVER AVE"),
+                word(2, 1, 95, "DEARBORN"),
+                word(3, 1, 95, "8 Expected by 11 : 40 A M"),
+                word(4, 1, 95, "# CYCLE_RUSH_RAPID"),
+                word(5, 1, 95, "18028 SNOW AVE"),
+                word(6, 1, 95, "DEARBORN"),
+                word(7, 1, 95, "9 Expected by 11 : 50 A M"),
+                word(8, 1, 95, "# CYCLE RUSH RAPID"),
+                word(9, 1, 95, "2061 Chestnut St"),
+                word(10, 1, 95, "DEARBORN"),
+                word(11, 1, 95, "10 Expected by 11:50 AM"),
+                word(12, 1, 95, "# CYCIE RUSH RAPI0"),
+                word(13, 1, 95, "17851 SNOW AVE"),
+                word(14, 1, 95, "DEARBORN"),
+                word(15, 1, 95, "11 Expected by 11:50 AM"),
+                word(16, 1, 95, "CYCLE RUSH RAPID"),
+                word(17, 1, 95, "10728 MELBOURNE AVE"),
+                word(18, 1, 95, "ALLEN PARK"));
+        AddressOcrService service = new AddressOcrService("ocr-binary", "eng",
+                ignored -> new AddressOcrService.ProcessResult(0, tsv, ""));
+
+        assertEquals(List.of(
+                "1560 CULVER AVE, DEARBORN, MI",
+                "18028 SNOW AVE, DEARBORN, MI",
+                "2061 Chestnut St, DEARBORN, MI",
+                "17851 SNOW AVE, DEARBORN, MI",
+                "10728 MELBOURNE AVE, ALLEN PARK, MI"),
+                service.extractAddressCandidates(png(), "itinerary.png", "MI")
+                        .stream().map(PlaceCandidate::text).toList());
+    }
+
+    @Test
+    void retainsWrappedUnitAndDoesNotPromoteStateOnlyOrUiLinesToComplexCities() throws Exception {
+        String tsv = tsv(
+                word(1, 1, 95, "789 MAPLE ST"),
+                word(2, 1, 95, "APT 4"),
+                word(3, 1, 95, "OAKRIDGE VILLAGE"),
+                word(4, 1, 95, "MICHIGAN"),
+                word(5, 1, 95, "987 PINE ST"),
+                word(6, 1, 95, "APT 2"),
+                word(7, 1, 95, "OAKRIDGE VILLAS"),
+                word(8, 1, 95, "PACKAGES"));
+        AddressOcrService service = new AddressOcrService("ocr-binary", "eng",
+                ignored -> new AddressOcrService.ProcessResult(0, tsv, ""));
+
+        assertEquals(List.of(
+                        "789 MAPLE ST APT 4, OAKRIDGE VILLAGE MICHIGAN",
+                        "987 PINE ST APT 2, OAKRIDGE VILLAS, MI"),
+                service.extractAddressCandidates(png(), "wrapped-unit.png", "MI")
+                        .stream().map(PlaceCandidate::text).toList());
+    }
+
+    private static Map<String, Object> evidence(
+            int agreement, boolean reviewRequired, List<Map<String, String>> alternatives) {
+        return Map.of("agreement", agreement, "reviewRequired", reviewRequired, "alternatives", alternatives);
+    }
+
+    @Test
     void attachesCitiesWhenDetectorPaddingSlightlyOverlapsConsecutiveSmallTextLines() throws Exception {
         String tsv = TSV_HEADER + "\n" + String.join("\n",
                 "5\t1\t1\t1\t1\t1\t99\t230\t78\t22\t90\t5 E 4TH ST",
@@ -285,9 +401,9 @@ class AddressOcrServiceTest {
     }
 
     @Test
-    void admitsOneOcrJobAndReturns429ForTheNextImage() throws Exception {
+    void admitsTwoOcrJobsAndReturns429ForTheThirdImage() throws Exception {
         byte[] image = png();
-        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch entered = new CountDownLatch(2);
         CountDownLatch release = new CountDownLatch(1);
         AddressOcrService service = new AddressOcrService("ocr-binary", "eng", arguments -> {
             entered.countDown();
@@ -298,14 +414,16 @@ class AddressOcrServiceTest {
         });
         ExecutorService workers = Executors.newFixedThreadPool(2);
         Future<List<PlaceCandidate>> first = workers.submit(() -> service.extractAddressCandidates(image, "first.png", "MI"));
+        Future<List<PlaceCandidate>> second = workers.submit(() -> service.extractAddressCandidates(image, "second.png", "MI"));
         try {
-            assertTrue(entered.await(5, TimeUnit.SECONDS), "the admitted OCR job should enter the executor");
+            assertTrue(entered.await(5, TimeUnit.SECONDS), "both admitted OCR jobs should enter the executor");
             ResponseStatusException busy = assertThrows(
                     ResponseStatusException.class,
-                    () -> service.extractAddressCandidates(image, "second.png", "MI"));
+                    () -> service.extractAddressCandidates(image, "third.png", "MI"));
             assertEquals(HttpStatus.TOO_MANY_REQUESTS.value(), busy.getStatusCode().value());
             release.countDown();
             assertEquals(List.of(), first.get(5, TimeUnit.SECONDS));
+            assertEquals(List.of(), second.get(5, TimeUnit.SECONDS));
         } finally {
             release.countDown();
             workers.shutdownNow();

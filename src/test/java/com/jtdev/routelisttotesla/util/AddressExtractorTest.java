@@ -26,6 +26,20 @@ public class AddressExtractorTest {
                 """, "MI"));
     }
 
+    @Test
+    void rejectsCycleRouteCodeAcrossSeparatorsSpacingAndSmallOcrErrors() {
+        for (String code : List.of("# CYCLE_RUSH_RAPID", "CYCLE RUSH RAPID",
+                "8 # CYCIE RUSH RAPI0", "8 CYCLE RUSH RAPID",
+                "CYCLE RUSH RAPI0", "CYCLE-RUSH-RAPID")) {
+            assertNull(AddressExtractor.addressCandidateText(code), code);
+            assertTrue(AddressExtractor.isRouteCodeText(code), code);
+        }
+        assertEquals("123 CYCLE RUSH RD", AddressExtractor.addressCandidateText("123 CYCLE RUSH RD"));
+        assertEquals("123 CYCLE RUSH RAPID", AddressExtractor.addressCandidateText("123 CYCLE RUSH RAPID"));
+        assertEquals("123 RAPID ST", AddressExtractor.addressCandidateText("123 RAPID ST"));
+        assertFalse(AddressExtractor.isRouteCodeText("123 CYCLE RUSH RAPID"));
+    }
+
 
     @Test
     public void testAddressExtractionWithTruncatedUnits() {
@@ -139,12 +153,43 @@ public class AddressExtractorTest {
     @Test
     public void testClockFragmentsAreNotAddressesButStreetNamesRemainValid() {
         for (String text : List.of("10 PM", "00 PM", "12 AM", "05 a.m.",
-                "Expected by 4 : 10 PM", "5 4 : 00 PM")) {
+                "Expected by 4 : 10 PM", "Expected by 11 40 A M", "11 50 PM", "5 4 : 00 PM")) {
             assertNull(AddressExtractor.addressCandidateText(text), text);
         }
         assertEquals("10 AM ST", AddressExtractor.addressCandidateText("10 AM ST"));
         assertEquals("10 PM ROAD", AddressExtractor.addressCandidateText("10 PM ROAD"));
         assertEquals("1641 PINEWOOD", AddressExtractor.addressCandidateText("1641 PINEWOOD"));
+        assertEquals("123 EXPECTED WAY", AddressExtractor.addressCandidateText("123 EXPECTED WAY"));
+    }
+
+    @Test
+    void preservesAComplexLabelAndFollowingMultiwordCityWithoutPromotingAmbiguousLocalities() {
+        String ocrText = """
+                11570 FORDLINE ST APT 201
+                JAMESTOWN VILLAGE
+                ALLEN PARK
+                789 MAPLE ST
+                OAKRIDGE VILLAGE
+                ALLEN PARK
+                1450 MAPLE ST
+                ELK GROVE VILLAGE
+                123 MAIN ST
+                SPRINGFIELD
+                456 OAK RD
+                DOVER
+                """;
+
+        assertEquals(List.of(
+                "11570 FORDLINE ST APT 201, JAMESTOWN VILLAGE, ALLEN PARK, MI",
+                "789 MAPLE ST, OAKRIDGE VILLAGE, ALLEN PARK, MI",
+                "1450 MAPLE ST, ELK GROVE VILLAGE, MI",
+                "123 MAIN ST, SPRINGFIELD, MI",
+                "456 OAK RD, DOVER, MI"),
+                AddressExtractor.addressLinesFromPlainJoined(ocrText, "MI"));
+        assertTrue(AddressExtractor.isLikelyComplexName("JAMESTOWN VILLAGE"));
+        assertFalse(AddressExtractor.isLikelyComplexName("SPRINGFIELD"));
+        assertFalse(AddressExtractor.isLikelyComplexName("MICHIGAN"));
+        assertTrue(AddressExtractor.isStateOnlyLine("MICHIGAN"));
     }
 
     @Test

@@ -12,6 +12,7 @@ public class AddressExtractor {
     private static final String FRACTION_GLYPH = "[¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞]";
     private static final String HOUSE_NUMBER_TEXT = "(?:\\d{1,6}[A-Za-z]?(?:-\\d{1,6}[A-Za-z]?)?(?:\\s+\\d+/\\d+|" + FRACTION_GLYPH + ")?)";
     private static final String STATE_CODES = "(?:AL|AK|AZ|AR|CA|CO|CT|DE|DC|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|PR|GU|VI|AS|MP)";
+    private static final String STATE_NAMES = "(?:ALABAMA|ALASKA|ARIZONA|ARKANSAS|CALIFORNIA|COLORADO|CONNECTICUT|DELAWARE|FLORIDA|GEORGIA|HAWAII|IDAHO|ILLINOIS|INDIANA|IOWA|KANSAS|KENTUCKY|LOUISIANA|MAINE|MARYLAND|MASSACHUSETTS|MICHIGAN|MINNESOTA|MISSISSIPPI|MISSOURI|MONTANA|NEBRASKA|NEVADA|NEW\\s+HAMPSHIRE|NEW\\s+JERSEY|NEW\\s+MEXICO|NEW\\s+YORK|NORTH\\s+CAROLINA|NORTH\\s+DAKOTA|OHIO|OKLAHOMA|OREGON|PENNSYLVANIA|RHODE\\s+ISLAND|SOUTH\\s+CAROLINA|SOUTH\\s+DAKOTA|TENNESSEE|TEXAS|UTAH|VERMONT|VIRGINIA|WASHINGTON|WEST\\s+VIRGINIA|WISCONSIN|WYOMING|DISTRICT\\s+OF\\s+COLUMBIA)";
 
     private static final Pattern STREET_SEARCH = Pattern.compile(
             "(?i)(" + HOUSE_NUMBER_TEXT + "\\s+[\\p{L}\\p{M}\\p{N}'’ .-]+?)\\s+((?:" + STREET_TYPES + ")(?:\\.)?)(.*)");
@@ -30,9 +31,11 @@ public class AddressExtractor {
     private static final Pattern COMPACT_DIRECTIONAL_PREFIX = Pattern.compile("(?i)^(\\d{1,6})([NSEW])(?=\\s|$)");
     private static final Pattern COMPACT_FRACTION = Pattern.compile("^(\\d{2,7})(\\d/\\d+)(?=\\s|$)");
     private static final Pattern ROUTE_UI_TEXT = Pattern.compile(
-            "(?i)\\b(?:STOPS?|COMPLETED|PACKAGES?|PICKUP|SCHEDULED|DELIVER(?:Y|ING)?|ITINERARY|MPH|VOLTE\\d*|CBBLTE)\\b|\\d\\s*%");
+            "(?i)\\b(?:STOPS?|COMPLETED|PACKAGES?|PICKUP|SCHEDULED|EXPECTED|DELIVER(?:Y|ING)?|ITINERARY|MPH|VOLTE\\d*|CBBLTE)\\b|\\d\\s*%");
     private static final Pattern LEADING_CLOCK = Pattern.compile("^\\d{1,2}\\s*[:.]\\s*\\d{2}(?!\\d)");
     private static final Pattern CLOCK_FRAGMENT = Pattern.compile("(?i)^\\d{1,2}\\s*[AP]\\.?M\\.?$");
+    private static final Pattern CLOCK_WITH_MERIDIEM = Pattern.compile(
+            "(?i)(?<![\\p{L}\\p{N}])(?:[01]?\\d|2[0-3])(?:\\s*[:.]\\s*|\\s+)\\d{2}\\s*[AP]\\s*\\.?\\s*M\\.?(?![\\p{L}\\p{N}])");
     private static final Pattern UNIT_LINE = Pattern.compile("(?i)^" + UNIT_LABELS + "\\s*#?\\s*[\\p{L}\\p{N}-]*\\s*$");
     private static final Pattern UNIT_MARKER_END = Pattern.compile("(?i)(?:^|\\s)" + UNIT_LABELS + "\\s*$");
     private static final Pattern UNIT_VALUE = Pattern.compile("(?i)^#?[\\p{L}\\p{N}][\\p{L}\\p{N}-]*$");
@@ -43,6 +46,12 @@ public class AddressExtractor {
 
     private static final Pattern STATE_PATTERN = Pattern.compile(
             "(?i)(?:^|[,\\s])" + STATE_CODES + "(?:[,\\s]+\\d{5}(?:-\\d{4})?)?\\s*$");
+    private static final Pattern STATE_ONLY_LINE = Pattern.compile(
+            "(?i)^\\s*(?:" + STATE_CODES + "|" + STATE_NAMES + ")(?:\\s+\\d{5}(?:-\\d{4})?)?(?:\\s+(?:USA|UNITED\\s+STATES))?\\s*$");
+    private static final Pattern COMPLEX_NAME_SUFFIX = Pattern.compile(
+            "(?i)(?:^|\\s)(?:APARTMENTS?|CONDOMINIUMS?|CONDOS?|TOWNHOMES?|TOWNHOUSES?|VILLAGES?|VILLAS?|RESIDENCES?|ESTATES?|MANORS?|GARDENS?|COMMONS)\\s*[,.]*$");
+    private static final Pattern ROUTE_BADGE_PREFIX = Pattern.compile("^\\s*\\d{1,2}(?:\\s+|\\s*[#＃._:-]\\s*)");
+    private static final String OCR_ROUTE_CODE = "CYCLERUSHRAPID";
 
     public static List<String> addressLinesFromPlainJoined(String text) {
         return addressLinesFromPlainJoined(text, "");
@@ -86,9 +95,16 @@ public class AddressExtractor {
             String candidate = street;
 
             // Look for city line after address (potentially after merged line)
-            if (i + 1 < lines.size() && CITY_LINE.matcher(lines.get(i + 1)).matches()) {
-            candidate = candidate + ", " + lines.get(i + 1);
-            i++; // consume city/state line
+            if (i + 1 < lines.size() && isLocalityLine(lines.get(i + 1))) {
+                String firstLocality = lines.get(i + 1);
+                candidate = candidate + ", " + firstLocality;
+                i++; // consume locality/state line
+                if (isLikelyComplexName(firstLocality)
+                        && i + 1 < lines.size() && isLocalityLine(lines.get(i + 1))
+                        && !isStateOnlyLine(lines.get(i + 1))) {
+                    candidate += ", " + lines.get(i + 1);
+                    i++; // retain the complex label and the following city separately
+                }
             }
 
             // Append default state if no state found and defaultState provided
@@ -104,11 +120,13 @@ public class AddressExtractor {
     public static String addressCandidateText(String text) {
         if (text == null || text.isBlank()) return null;
         String originalText = text.trim();
+        if (isRouteCodeText(originalText)) return null;
         String candidateText = LEADING_OCR_DECORATION.matcher(originalText).replaceFirst("");
         // Keep hash-decorated street addresses; codes and standalone units are not street rows.
         if (ROUTE_CODE_LINE.matcher(originalText).matches()
                 && (candidateText.equals(originalText) || !containsStreetType(candidateText))) return null;
         if (LEADING_CLOCK.matcher(candidateText).find()) return null;
+        if (!containsStreetType(candidateText) && CLOCK_WITH_MERIDIEM.matcher(candidateText).find()) return null;
         Matcher compactDirectional = COMPACT_DIRECTIONAL_MILE_ROAD.matcher(candidateText);
         if (compactDirectional.find() && containsStreetType(candidateText)) {
             candidateText = compactDirectional.replaceFirst("$1 $2 $3 ");
@@ -156,6 +174,60 @@ public class AddressExtractor {
 
     public static boolean endsWithStreetType(String text) {
         return text != null && STREET_TYPE_SUFFIX.matcher(text).find();
+    }
+
+    /** True when a line closely resembles the known route-list cycle code, including OCR spacing/errors. */
+    public static boolean isRouteCodeText(String text) {
+        if (text == null || text.isBlank()) return false;
+        String normalizedText = text.toUpperCase(java.util.Locale.ROOT);
+        Matcher badge = ROUTE_BADGE_PREFIX.matcher(normalizedText);
+        if (badge.find()) {
+            normalizedText = normalizedText.substring(badge.end());
+        }
+        String compact = normalizedText.replaceAll("[^A-Z0-9]", "");
+        return editDistanceAtMost(compact, OCR_ROUTE_CODE, 2);
+    }
+
+    public static boolean isRouteUiText(String text) {
+        return text != null && ROUTE_UI_TEXT.matcher(text).find();
+    }
+
+    /** Generic residential-complex markers; ambiguous locality rows remain a single locality. */
+    public static boolean isLikelyComplexName(String text) {
+        return text != null && !isStateOnlyLine(text) && COMPLEX_NAME_SUFFIX.matcher(text.trim()).find();
+    }
+
+    public static boolean isStateOnlyLine(String text) {
+        return text != null && STATE_ONLY_LINE.matcher(text).matches();
+    }
+
+    private static boolean isLocalityLine(String text) {
+        return text != null && CITY_LINE.matcher(text).matches()
+                && !isRouteCodeText(text)
+                && !isRouteUiText(text)
+                && !CLOCK_WITH_MERIDIEM.matcher(text).find()
+                && addressCandidateText(text) == null;
+    }
+
+    private static boolean editDistanceAtMost(String left, String right, int maximum) {
+        if (Math.abs(left.length() - right.length()) > maximum) return false;
+        int[] previous = new int[right.length() + 1];
+        int[] current = new int[right.length() + 1];
+        for (int j = 0; j <= right.length(); j++) previous[j] = j;
+        for (int i = 1; i <= left.length(); i++) {
+            current[0] = i;
+            int rowMinimum = current[0];
+            for (int j = 1; j <= right.length(); j++) {
+                int substitution = previous[j - 1] + (left.charAt(i - 1) == right.charAt(j - 1) ? 0 : 1);
+                current[j] = Math.min(Math.min(previous[j] + 1, current[j - 1] + 1), substitution);
+                rowMinimum = Math.min(rowMinimum, current[j]);
+            }
+            if (rowMinimum > maximum) return false;
+            int[] swap = previous;
+            previous = current;
+            current = swap;
+        }
+        return previous[right.length()] <= maximum;
     }
 
     public static boolean continuesStreet(String address, String nextLine) {

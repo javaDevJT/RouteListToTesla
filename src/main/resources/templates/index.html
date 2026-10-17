@@ -188,6 +188,8 @@
                         Or send each group manually below
                     </span>
                 </div>
+
+                <div id="locationResolutionNotice" class="status hidden" role="status" aria-live="polite" aria-atomic="true"></div>
                 
                 <div id="addressGroups">
                     <!-- Dynamic address groups will be populated here -->
@@ -248,6 +250,9 @@
         let autoNavSessionId = null;
         let autoNavPollInterval = null;
         let availableVehicles = [];
+        const locationResolutionStates = new WeakMap();
+        const LOCATION_RESOLVE_BATCH_SIZE = 500;
+        const LOCATION_RESOLVE_MAX_TEXT_LENGTH = 1000;
         const MANUAL_COMMAND_HOLD_PREFIX = 'route-list-to-tesla:manual-command-hold:';
         const manualCommandHolds = new Map();
         const manualCommandInFlight = new Set();
@@ -392,23 +397,29 @@
                             button.dataset.commandBlocked = 'true';
                             button.textContent = hold ? 'Vehicle sends paused — reconcile first' : 'Another route command is in progress';
                         }
-                    } else if (button.dataset.commandBlocked === 'true') {
+                    } else {
                         delete button.dataset.commandBlocked;
                         if (button.dataset.sendCompleted !== 'true') {
-                            button.disabled = false;
+                            const startIndex = Number(button.dataset.addressStart || 0);
+                            const addressCount = Number(button.dataset.addressCount || 8);
+                            button.disabled = extractedAddresses.slice(startIndex, startIndex + addressCount)
+                                .some(address => !isLocated(address));
                             button.textContent = button.dataset.defaultLabel;
                         }
                     }
                 });
 
+                const locationBlocked = extractedAddresses.some(address => !isLocated(address));
                 document.querySelectorAll('[data-command-start="auto-nav"]').forEach(button => {
                     if (blocked) {
                         button.disabled = true;
                         button.dataset.commandBlocked = 'true';
                     } else if (button.dataset.commandBlocked === 'true') {
                         delete button.dataset.commandBlocked;
-                        button.disabled = false;
                     }
+                    button.disabled = blocked || locationBlocked;
+                    button.title = locationBlocked
+                        ? 'Resolve every stop to a verified location before starting.' : '';
                 });
             }
 
@@ -654,17 +665,43 @@
             extractedAddresses.push(...candidates.slice(overlap));
         }
 
+        const IMAGE_UPLOAD_CONCURRENCY = 2;
+
         async function uploadImages(fileInfos, defaultState) {
-            for (const fileInfo of fileInfos) {
-                const formData = new FormData();
-                formData.append('images', fileInfo.file, fileInfo.name);
-                formData.append('defaultState', defaultState);
-                const response = await apiFetch('/route/places', { method: 'POST', body: formData });
-                if (!response.ok) {
-                    const problem = await response.json().catch(() => ({}));
-                    throw new Error(problem.error || `HTTP ${response.status}: ${response.statusText}`);
+            const results = new Array(fileInfos.length);
+            let nextIndex = 0;
+            let firstError = null;
+
+            async function uploadWorker() {
+                while (!firstError) {
+                    const index = nextIndex++;
+                    if (index >= fileInfos.length) return;
+                    const fileInfo = fileInfos[index];
+                    try {
+                        const formData = new FormData();
+                        formData.append('images', fileInfo.file, fileInfo.name);
+                        formData.append('defaultState', defaultState);
+                        const response = await apiFetch('/route/places', { method: 'POST', body: formData });
+                        if (!response.ok) {
+                            const problem = await response.json().catch(() => ({}));
+                            throw new Error(problem.error || `HTTP ${response.status}: ${response.statusText}`);
+                        }
+                        results[index] = await response.json();
+                    } catch (error) {
+                        firstError = error;
+                        return;
+                    }
                 }
-                const result = await response.json();
+            }
+
+            // A failed upload stops new work but waits for every request already in flight.
+            // Successful server-side cache writes remain available when the user retries.
+            const workerCount = Math.min(IMAGE_UPLOAD_CONCURRENCY, fileInfos.length);
+            await Promise.all(Array.from({ length: workerCount }, () => uploadWorker()));
+            if (firstError) throw firstError;
+
+            // Requests may finish in any order; apply their readings in the selected-file order.
+            for (const result of results) {
                 for (const candidates of result.imageCandidates || [result.candidates || []]) {
                     appendImageCandidates(candidates);
                 }
@@ -770,6 +807,10 @@
                     await uploadImages(filesToUpload, defaultState);
                 }
 
+                // `/route/places` already performed normal address lookup. Resolve only rows
+                // that still lack a verified place so successful first lookups are not repeated.
+                await resolveLocationCandidates(extractedAddresses.filter(address => !isLocated(address)));
+
                 // Store image hashes for session recovery
                 imageHashes = selectedFiles.map(f => f.hash);
                 
@@ -812,8 +853,132 @@
             if (hold) showManualCommandHold(currentVin, hold, document.getElementById('vehicleStatus'));
         }
 
+        function isLocated(address) {
+            return Boolean(address?.pid) && Number.isFinite(address.lat) && Number.isFinite(address.lon)
+                && Math.abs(address.lat) <= 90 && Math.abs(address.lon) <= 180
+                && (address.lat !== 0 || address.lon !== 0);
+        }
+
+        function getLocationResolutionState(address) {
+            return locationResolutionStates.get(address) || { version: 0, status: 'idle' };
+        }
+
+        function setLocationResolutionState(address, state) {
+            if (address && typeof address === 'object') locationResolutionStates.set(address, state);
+        }
+
+        function updateLocationResolutionNotice() {
+            const notice = document.getElementById('locationResolutionNotice');
+            if (!notice) return;
+            const unresolved = extractedAddresses.filter(address => !isLocated(address));
+            if (unresolved.length === 0) {
+                notice.textContent = '';
+                notice.className = 'status hidden';
+                return;
+            }
+
+            const pendingCount = unresolved.filter(address =>
+                getLocationResolutionState(address).status === 'pending').length;
+            const failedCount = unresolved.filter(address =>
+                ['failed', 'invalid'].includes(getLocationResolutionState(address).status)).length;
+            const message = pendingCount > 0
+                ? `Checking locations for ${pendingCount} address(es). Routes with unverified locations are paused.`
+                : failedCount === unresolved.length
+                    ? `Location lookup failed for ${unresolved.length} address(es). Retry the lookup or edit the address; routes stay paused until every stop has a verified location.`
+                    : `No verified location for ${unresolved.length} address(es). Retry the lookup or edit the address; routes stay paused until every stop has a verified location.`;
+            notice.textContent = message;
+            notice.className = `status ${pendingCount > 0 ? 'loading' : 'error'}`;
+        }
+
+        function refreshLocationPresentation() {
+            updateLocationResolutionNotice();
+            if (typeof populateAddressList === 'function') populateAddressList();
+        }
+
+        function isCurrentLocationTarget(target) {
+            if (!extractedAddresses.includes(target.address) || target.address.text !== target.text) return false;
+            return getLocationResolutionState(target.address).version === target.version;
+        }
+
+        async function resolveLocationCandidates(candidates) {
+            const targets = [];
+            for (const address of [...new Set(candidates || [])]) {
+                if (!address || !extractedAddresses.includes(address) || isLocated(address)) continue;
+                const previous = getLocationResolutionState(address);
+                if (previous.status === 'pending') continue;
+                const text = typeof address.text === 'string' ? address.text : '';
+                if (!text.trim() || text.length > LOCATION_RESOLVE_MAX_TEXT_LENGTH) {
+                    setLocationResolutionState(address, { version: previous.version, status: 'invalid' });
+                    continue;
+                }
+                const target = { address, text, version: previous.version };
+                targets.push(target);
+                setLocationResolutionState(address, { version: previous.version, status: 'pending' });
+            }
+
+            if (targets.length === 0) {
+                refreshLocationPresentation();
+                return false;
+            }
+
+            refreshLocationPresentation();
+            let changed = false;
+            for (let offset = 0; offset < targets.length; offset += LOCATION_RESOLVE_BATCH_SIZE) {
+                const batch = targets.slice(offset, offset + LOCATION_RESOLVE_BATCH_SIZE);
+                try {
+                    const response = await apiFetch('/route/resolve', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ candidates: batch.map(target => target.address) })
+                    });
+                    if (!response.ok) {
+                        const problem = await response.json().catch(() => ({}));
+                        throw new Error(problem.error || `HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    const result = await response.json();
+                    if (!Array.isArray(result.candidates) || result.candidates.length !== batch.length) {
+                        throw new Error('Location lookup returned an incomplete response.');
+                    }
+
+                    batch.forEach((target, index) => {
+                        if (!isCurrentLocationTarget(target)) return;
+                        const resolved = result.candidates[index];
+                        if (!resolved || resolved.text !== target.text) {
+                            setLocationResolutionState(target.address, { version: target.version, status: 'failed' });
+                            return;
+                        }
+                        const before = [target.address.lat, target.address.lon, target.address.pid];
+                        target.address.lat = Number.isFinite(resolved.lat) ? resolved.lat : 0;
+                        target.address.lon = Number.isFinite(resolved.lon) ? resolved.lon : 0;
+                        target.address.pid = typeof resolved.pid === 'string' && resolved.pid.trim()
+                            ? resolved.pid : null;
+                        changed ||= before[0] !== target.address.lat || before[1] !== target.address.lon
+                            || before[2] !== target.address.pid;
+                        setLocationResolutionState(target.address, {
+                            version: target.version,
+                            status: isLocated(target.address) ? 'located' : 'unresolved'
+                        });
+                    });
+                } catch (error) {
+                    targets.slice(offset).forEach(target => {
+                        if (isCurrentLocationTarget(target)) {
+                            setLocationResolutionState(target.address, {
+                                version: target.version,
+                                status: 'failed'
+                            });
+                        }
+                    });
+                    break;
+                }
+            }
+
+            refreshLocationPresentation();
+            return changed;
+        }
+
         function populateAddressList() {
             addressGroups.innerHTML = '';
+            updateLocationResolutionNotice();
             
             // Split addresses into groups of 8
             const groupSize = 8;
@@ -821,6 +986,15 @@
                 const group = extractedAddresses.slice(i, i + groupSize);
                 const groupDiv = createAddressGroup(group, Math.floor(i / groupSize), i);
                 addressGroups.appendChild(groupDiv);
+            }
+            const autoStartButton = document.getElementById('startAutoNavBtn');
+            if (autoStartButton) {
+                autoStartButton.disabled = extractedAddresses.some(address => !isLocated(address));
+                if (autoStartButton.disabled) {
+                    autoStartButton.title = 'Resolve every stop to a verified location before starting.';
+                } else {
+                    autoStartButton.title = '';
+                }
             }
             updateManualCommandHoldControls(currentVin, sendStatus);
         }
@@ -841,6 +1015,10 @@
             sendButton.className = 'group-send-btn';
             sendButton.textContent = `Send Route ${groupIndex + 1} to Tesla`;
             sendButton.dataset.defaultLabel = sendButton.textContent;
+            sendButton.dataset.addressStart = String(startIndex);
+            sendButton.dataset.addressCount = String(addresses.length);
+            sendButton.disabled = addresses.some(address => !isLocated(address));
+            if (sendButton.disabled) sendButton.title = 'Resolve every stop to a verified location before sending.';
             sendButton.onclick = () => sendGroupToTesla(groupIndex, startIndex, addresses.length);
             
             groupHeader.appendChild(groupTitle);
@@ -873,21 +1051,35 @@
 
             const metadata = document.createElement('div');
             metadata.className = 'address-meta';
-            const located = Boolean(address.pid) && Number.isFinite(address.lat) && Number.isFinite(address.lon)
-                && Math.abs(address.lat) <= 90 && Math.abs(address.lon) <= 180 && (address.lat !== 0 || address.lon !== 0);
-            metadata.textContent = `Source: ${address.sourceImage || 'Unknown'} | Line: ${(address.lineIndex || 0) + 1} | ${located ? 'Location verified' : 'Location not found — review this address'}`;
+            const located = isLocated(address);
+            const resolutionState = getLocationResolutionState(address);
+            const locationLabel = located ? 'Location verified'
+                : resolutionState.status === 'pending' ? 'Checking location…'
+                    : 'Location not found — retry lookup or edit this address';
+            metadata.textContent = `Source: ${address.sourceImage || 'Unknown'} | Line: ${(address.lineIndex || 0) + 1} | ${locationLabel}`;
 
             const input = document.createElement('textarea');
             input.className = 'address-input';
             input.rows = 2;
             input.placeholder = 'Enter address...';
-            input.value = address.normalized || address.text || '';
+            input.value = address.text || address.normalized || '';
             input.addEventListener('change', () => {
-                updateAddress(index, input.value);
                 div.querySelector('.ocr-review')?.remove();
+                updateAddress(index, input.value);
             });
 
             div.append(removeButton, metadata, input);
+            if (!located) {
+                const retryButton = document.createElement('button');
+                retryButton.type = 'button';
+                retryButton.className = 'btn btn-secondary location-retry-button';
+                retryButton.dataset.action = 'retryLocationLookup';
+                retryButton.textContent = resolutionState.status === 'pending' ? 'Checking location…' : 'Retry location lookup';
+                retryButton.disabled = resolutionState.status === 'pending' || !String(address.text || '').trim()
+                    || String(address.text || '').length > LOCATION_RESOLVE_MAX_TEXT_LENGTH;
+                retryButton.addEventListener('click', () => { void resolveLocationCandidates([address]); });
+                div.appendChild(retryButton);
+            }
             const agreement = Number.isInteger(address.ocrAgreement) ? address.ocrAgreement : 0;
             if (agreement > 0) {
                 const agreementLabel = document.createElement('small');
@@ -962,13 +1154,18 @@
         }
 
         function updateAddress(index, newText) {
-            if (extractedAddresses[index]) {
-                extractedAddresses[index].text = newText;
-                extractedAddresses[index].ocrReviewRequired = false;
-                extractedAddresses[index].lat = 0;
-                extractedAddresses[index].lon = 0;
-                extractedAddresses[index].pid = null;
-            }
+            const address = extractedAddresses[index];
+            if (!address) return;
+            const text = String(newText ?? '');
+            const previous = getLocationResolutionState(address);
+            address.text = text;
+            address.normalized = text;
+            address.ocrReviewRequired = false;
+            address.lat = 0;
+            address.lon = 0;
+            address.pid = null;
+            setLocationResolutionState(address, { version: previous.version + 1, status: 'idle' });
+            return resolveLocationCandidates([address]);
         }
 
         function removeAddress(index) {
@@ -1002,6 +1199,11 @@
 
             // Get addresses for this specific group
             const groupAddresses = extractedAddresses.slice(startIndex, startIndex + groupSize);
+
+            if (groupAddresses.some(address => !isLocated(address))) {
+                showStatus('Resolve a verified location for every stop in this route before sending. Retry the lookup or edit the address.', 'error', sendStatus);
+                return;
+            }
 
             if (groupAddresses.some(address => address.ocrReviewRequired === true)) {
                 showStatus('Review or edit every unresolved OCR reading in this route before sending.', 'error', sendStatus);
@@ -1201,13 +1403,14 @@
                         dismissSessionRecovery();
                         showStatus(`✅ Loaded ${extractedAddresses.length} addresses from previous session`, 'success', processStatus);
                         
-                        setTimeout(() => {
-                            showStep2();
-                            if (autoNavSessionId) {
-                                showAutoNavPanel();
-                                startAutoNavPolling();
-                            }
-                        }, 1000);
+                        showStep2();
+                        const locationUpdated = await resolveLocationCandidates(
+                            extractedAddresses.filter(address => !isLocated(address)));
+                        if (locationUpdated) await saveCurrentSession();
+                        if (autoNavSessionId) {
+                            showAutoNavPanel();
+                            startAutoNavPolling();
+                        }
                     } else {
                         showStatus('❌ Session has expired or is invalid', 'error', processStatus);
                         dismissSessionRecovery();
@@ -1369,6 +1572,11 @@
                 return;
             }
 
+            if (extractedAddresses.some(address => !isLocated(address))) {
+                showStatus('Resolve a verified location for every stop before starting automatic navigation. Retry the lookup or edit the address.', 'error', sendStatus);
+                return;
+            }
+
             if (extractedAddresses.some(address => address.ocrReviewRequired === true)) {
                 showStatus('Review or edit every unresolved OCR reading before starting automatic navigation.', 'error', sendStatus);
                 return;
@@ -1456,6 +1664,11 @@
             button.addEventListener('click', action);
             if (action === startAutoNavigation) {
                 button.dataset.commandStart = 'auto-nav';
+                const locationBlocked = extractedAddresses.some(address => !isLocated(address));
+                if (locationBlocked) {
+                    button.disabled = true;
+                    button.title = 'Resolve every stop to a verified location before starting.';
+                }
                 if (getManualCommandHold(currentVin) || manualCommandInFlight.has(currentVin)) {
                     button.disabled = true;
                     button.dataset.commandBlocked = 'true';

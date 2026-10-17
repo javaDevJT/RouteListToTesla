@@ -103,7 +103,10 @@ public class RouteController {
         for (ImageWork image : work) {
             List<PlaceCandidate> candidates = image.cached() == null
                     ? geocoded.subList(image.start(), image.end()) : image.cached();
-            if (image.cached() == null) cacheService.cacheImageResults(image.hash(), image.filename(), candidates);
+            // Keep OCR recovery data, but retry unresolved lookups on reprocessing.
+            if (image.cached() == null && candidates.stream().allMatch(this::hasResolvedLocation)) {
+                cacheService.cacheImageResults(image.hash(), image.filename(), candidates);
+            }
             List<PlaceCandidate> rebound = rebindSource(candidates, image.filename());
             imageCandidates.add(rebound);
             appendImageCandidates(results, rebound);
@@ -115,6 +118,20 @@ public class RouteController {
     public void sendToTesla(@PathVariable String vin) {
         throw new ResponseStatusException(HttpStatus.GONE,
                 "Extract with /route/places, review the addresses, then send with /route/send/{vin}");
+    }
+
+    /** Resolve extracted or edited rows without reserving a vehicle command. */
+    @PostMapping(value = "/resolve", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public PlaceCandidatesResponse resolveAddresses(@RequestBody PlaceCandidatesResponse request,
+                                                    @AuthenticationPrincipal OAuth2User principal) {
+        TapAccessService.GrantIdentity identity = grantIdentity(principal);
+        vehicles.requireAccess(identity);
+        List<PlaceCandidate> candidates = requireAddressText(request, 500);
+        List<PlaceCandidate> resolved = geocoder.batchGeocode(identity.ownerSub(), candidates);
+        if (resolved == null || resolved.size() != candidates.size()) {
+            throw new IllegalStateException("Location lookup returned an incomplete response. Try again shortly.");
+        }
+        return new PlaceCandidatesResponse(resolved);
     }
 
     @PostMapping(value = "/send/{vin}", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -274,13 +291,8 @@ public class RouteController {
     }
 
     private List<PlaceCandidate> resolveReviewed(PlaceCandidatesResponse request, int maximum, String owner) {
-        if (request == null || request.candidates() == null || request.candidates().isEmpty()
-                || request.candidates().size() > maximum) throw new IllegalArgumentException("Choose 1 to " + maximum + " reviewed addresses");
-        List<PlaceCandidate> reviewed = request.candidates();
+        List<PlaceCandidate> reviewed = requireAddressText(request, maximum);
         for (PlaceCandidate candidate : reviewed) {
-            if (candidate == null || candidate.text() == null || candidate.text().isBlank() || candidate.text().length() > 1000) {
-                throw new IllegalArgumentException("Every stop must have address text");
-            }
             if (candidate.ocrReviewRequired()) {
                 throw new IllegalArgumentException("Confirm or edit every unresolved OCR reading before sending a route");
             }
@@ -291,7 +303,7 @@ public class RouteController {
         }
         for (int index = 0; index < resolved.size(); index++) {
             PlaceCandidate candidate = resolved.get(index);
-            if (!hasCoordinates(candidate) || candidate.pid() == null || !candidate.pid().matches("[A-Za-z0-9_-]{1,512}")) {
+            if (!hasResolvedLocation(candidate)) {
                 throw new IllegalArgumentException("Stop " + (index + 1)
                         + " could not be matched to a street address. Check its address or remove that stop, then try again. No route was sent.");
             }
@@ -299,10 +311,27 @@ public class RouteController {
         return List.copyOf(resolved);
     }
 
+    private List<PlaceCandidate> requireAddressText(PlaceCandidatesResponse request, int maximum) {
+        if (request == null || request.candidates() == null || request.candidates().isEmpty()
+                || request.candidates().size() > maximum) throw new IllegalArgumentException("Choose 1 to " + maximum + " reviewed addresses");
+        List<PlaceCandidate> reviewed = request.candidates();
+        for (PlaceCandidate candidate : reviewed) {
+            if (candidate == null || candidate.text() == null || candidate.text().isBlank() || candidate.text().length() > 1000) {
+                throw new IllegalArgumentException("Every stop must have address text");
+            }
+        }
+        return reviewed;
+    }
+
     private boolean hasCoordinates(PlaceCandidate candidate) {
         return Double.isFinite(candidate.lat()) && Double.isFinite(candidate.lon())
                 && Math.abs(candidate.lat()) <= 90 && Math.abs(candidate.lon()) <= 180
                 && !(candidate.lat() == 0 && candidate.lon() == 0);
+    }
+
+    private boolean hasResolvedLocation(PlaceCandidate candidate) {
+        return candidate != null && hasCoordinates(candidate)
+                && candidate.pid() != null && candidate.pid().matches("[A-Za-z0-9_-]{1,512}");
     }
 
     private void validateVin(String vin) {

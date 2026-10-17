@@ -450,6 +450,84 @@ class RouteControllerTest {
         verify(sessions).clearActiveAutoNavSession(OWNER);
     }
 
+    @Test
+    void locationPreflightUsesCurrentGrantAndPreservesUnconfirmedOcrWithoutSending() throws Exception {
+        PlaceCandidate row = new PlaceCandidate("11570 FORDLINE ST APT 201, JAMESTOWN VILLAGE, ALLEN PARK, MI",
+                "EXTRACTED", "capture.heic", 0, 0, 0, null, 2, true, List.of("literal reading"));
+        when(geocoder.batchGeocode(OWNER, List.of(row)))
+                .thenReturn(List.of(row.withLatLonPid(42.2, -83.2, "validated-street")));
+        mvc.perform(post("/route/resolve").with(csrf()).with(login())
+                        .contentType("application/json")
+                        .content(mapper.writeValueAsString(new PlaceCandidatesResponse(List.of(row)))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.candidates[0].pid").value("validated-street"))
+                .andExpect(jsonPath("$.candidates[0].text").value(row.text()))
+                .andExpect(jsonPath("$.candidates[0].ocrReviewRequired").value(true));
+        verify(vehicles).requireAccess(IDENTITY);
+        verify(geocoder).batchGeocode(OWNER, List.of(row));
+        verifyNoInteractions(navigation);
+    }
+
+    @Test
+    void locationPreflightReturnsUnresolvedRowsForReviewAndRequiresCsrf() throws Exception {
+        PlaceCandidate row = unresolved("123 UNCERTAIN RD, MI", "capture.png", 0);
+        String body = mapper.writeValueAsString(new PlaceCandidatesResponse(List.of(row)));
+        mvc.perform(post("/route/resolve").with(login()).contentType("application/json").content(body))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(geocoder);
+        when(geocoder.batchGeocode(OWNER, List.of(row))).thenReturn(List.of(row));
+        mvc.perform(post("/route/resolve").with(csrf()).with(login()).contentType("application/json").content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.candidates[0].lat").value(0))
+                .andExpect(jsonPath("$.candidates[0].pid").isEmpty());
+        verifyNoInteractions(navigation);
+    }
+
+    @Test
+    void locationPreflightRejectsBadTextAndMissingEntitlementBeforeQuotaUse() throws Exception {
+        PlaceCandidate row = unresolved(" ", "capture.png", 0);
+        mvc.perform(post("/route/resolve").with(csrf()).with(login()).contentType("application/json")
+                        .content(mapper.writeValueAsString(new PlaceCandidatesResponse(List.of(row)))))
+                .andExpect(status().isBadRequest());
+        doThrow(new org.springframework.security.access.AccessDeniedException("No current access"))
+                .when(vehicles).requireAccess(IDENTITY);
+        mvc.perform(post("/route/resolve").with(csrf()).with(login()).contentType("application/json")
+                        .content(mapper.writeValueAsString(new PlaceCandidatesResponse(List.of(unresolved("123 MAIN ST", "x", 0))))))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(geocoder, navigation);
+    }
+
+    @Test
+    void locationPreflightSurfacesProviderFailureWithoutVehicleCommand() throws Exception {
+        PlaceCandidate row = unresolved("123 MAIN ST, MI", "capture.png", 0);
+        when(geocoder.batchGeocode(OWNER, List.of(row))).thenThrow(new IllegalStateException("Geocoding service is unavailable"));
+        mvc.perform(post("/route/resolve").with(csrf()).with(login()).contentType("application/json")
+                        .content(mapper.writeValueAsString(new PlaceCandidatesResponse(List.of(row)))))
+                .andExpect(status().isServiceUnavailable());
+        verifyNoInteractions(navigation);
+    }
+
+    @Test
+    void unresolvedLocationsRetainOcrRecoveryButAreNotCompletedImageCacheHits() throws Exception {
+        PlaceCandidate row = unresolved("123 MAIN ST, MI", "capture.png", 0);
+        PlaceCandidate located = row.withLatLonPid(42.1, -83.1, "street-result");
+        when(cache.calculateImageHash(any(byte[].class), eq("capture.png"), eq("MI"), eq(OWNER)))
+                .thenReturn("retry-hash");
+        when(cache.getCachedResults("retry-hash")).thenReturn(null);
+        when(cache.getCachedOcrResults("retry-hash")).thenReturn(null, List.of(row));
+        when(ocr.extractAddressCandidates(any(byte[].class), eq("capture.png"), eq("MI"))).thenReturn(List.of(row));
+        when(geocoder.batchGeocode(OWNER, List.of(row))).thenReturn(List.of(row), List.of(located));
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mvc.perform(multipart("/route/places").file(image("capture.png")).param("defaultState", "MI")
+                            .with(csrf()).with(login()))
+                    .andExpect(status().isOk());
+        }
+        verify(ocr, times(1)).extractAddressCandidates(any(byte[].class), eq("capture.png"), eq("MI"));
+        verify(cache, times(1)).cacheOcrResults("retry-hash", "capture.png", List.of(row));
+        verify(cache, times(1)).cacheImageResults("retry-hash", "capture.png", List.of(located));
+        verify(cache, never()).cacheImageResults("retry-hash", "capture.png", List.of(row));
+    }
+
     private static MockMultipartFile image(String filename) {
         return new MockMultipartFile("images", filename, "image/png", new byte[]{1});
     }

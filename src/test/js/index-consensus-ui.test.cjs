@@ -16,13 +16,22 @@ function extractBetween(startMarker, endMarker) {
 }
 
 const addressUiSource = [
+    extractBetween('const locationResolutionStates = new WeakMap();', 'const MANUAL_COMMAND_HOLD_PREFIX'),
+    extractBetween('function isLocated(address) {', 'function populateAddressList() {'),
     extractBetween('function createAddressItem(address, index) {', 'function formatNormalizedAddress('),
     extractBetween('function confirmOcrReading(index, row) {', 'function updateAddress('),
     extractBetween('function updateAddress(index, newText) {', 'function removeAddress(')
 ].join('\n');
 
+const locationUiSource = [
+    extractBetween('const locationResolutionStates = new WeakMap();', 'const MANUAL_COMMAND_HOLD_PREFIX'),
+    extractBetween('function isLocated(address) {', 'function populateAddressList() {'),
+    extractBetween('function updateAddress(index, newText) {', 'function removeAddress(')
+].join('\n');
+
 test('upload errors show the server reason and retain the selected files for retry', async () => {
-    const source = extractBetween('async function uploadImages(', '// File input handler');
+    const source = extractBetween('const IMAGE_UPLOAD_CONCURRENCY = 2;', 'async function uploadImages(')
+        + extractBetween('async function uploadImages(', '// File input handler');
     for (const problem of [{ error: 'Geocoding service is unavailable' }, null]) {
         const addresses = [];
         const context = vm.createContext({
@@ -42,29 +51,38 @@ test('upload errors show the server reason and retain the selected files for ret
     }
 });
 
-test('each image uses its own sequential request and seams stay deduplicated', async () => {
+test('image uploads stay at two in flight and apply out-of-order responses in selection order', async () => {
     const addresses = [], sent = [];
     class FormData {
         constructor() { this.names = []; }
         append(name, value, filename) { if (name === 'images') this.names.push(filename); }
     }
-    const rows = [
-        [candidate({ text: '101 FIRST RD', normalized: '101 FIRST RD' }), candidate({ text: '202 SECOND RD', normalized: '202 SECOND RD' })],
-        [candidate({ text: '202 SECOND RD', normalized: '202 SECOND RD' }), candidate({ text: '303 THIRD RD', normalized: '303 THIRD RD' })]
-    ];
+    const deferred = new Map();
     const source = extractBetween('function appendImageCandidates(', '// File input handler');
     const context = vm.createContext({
         FormData, extractedAddresses: addresses,
-        apiFetch: async (url, options) => {
-            const index = sent.length;
-            sent.push(options.body.names);
-            return { ok: true, json: async () => ({ imageCandidates: [rows[index]] }) };
+        apiFetch: (url, options) => {
+            const name = options.body.names[0];
+            sent.push(name);
+            return new Promise(resolve => deferred.set(name, resolve));
         }
     });
     new vm.Script(source + '\nglobalThis.upload = uploadImages;').runInContext(context);
-    await context.upload([{ file: {}, name: 'first.heic' }, { file: {}, name: 'second.heic' }], 'MI');
-    assert.deepEqual(sent, [['first.heic'], ['second.heic']]);
-    assert.deepEqual(Array.from(addresses, row => row.text), ['101 FIRST RD', '202 SECOND RD', '303 THIRD RD']);
+    const files = ['first.heic', 'second.heic', 'third.heic'].map(name => ({ file: {}, name }));
+    const pending = context.upload(files, 'MI');
+    for (let attempt = 0; attempt < 20 && sent.length < 2; attempt++) await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(sent, ['first.heic', 'second.heic']);
+
+    const response = texts => ({ ok: true, json: async () => ({ imageCandidates: [texts.map(text => candidate({ text, normalized: text }))] }) });
+    deferred.get('second.heic')(response(['202 SECOND RD', '303 THIRD RD']));
+    for (let attempt = 0; attempt < 20 && sent.length < 3; attempt++) await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(sent, ['first.heic', 'second.heic', 'third.heic']);
+    deferred.get('third.heic')(response(['404 FOURTH RD']));
+    deferred.get('first.heic')(response(['101 FIRST RD', '202 SECOND RD']));
+    await pending;
+    assert.deepEqual(Array.from(addresses, row => row.text), [
+        '101 FIRST RD', '202 SECOND RD', '303 THIRD RD', '404 FOURTH RD'
+    ]);
 });
 
 class FakeElement {
@@ -169,6 +187,7 @@ const uploadUiSource = [
     extractBetween('function setUploadBusy(busy) {', 'function showImageProcessingStatus('),
     extractBetween('function showImageProcessingStatus(imageCount) {', 'async function uploadImages('),
     extractBetween('async function uploadImages(', '// File input handler'),
+    extractBetween('function isLocated(address) {', 'function populateAddressList() {'),
     extractBetween("uploadForm.addEventListener('submit', async function(e) {", 'function populateAddressList() {')
 ].join('\n');
 
@@ -186,7 +205,10 @@ function createUploadHarness(apiFetch) {
     filePicker.className = 'file-input';
     const statuses = [];
     const context = vm.createContext({
-        FormData: class { append() {} },
+        FormData: class {
+            constructor() { this.entries = []; }
+            append(...args) { this.entries.push(args); }
+        },
         document: {
             getElementById: id => elements[id] || new FakeElement('div'),
             querySelector: selector => selector === '.file-input' ? filePicker : null,
@@ -210,15 +232,32 @@ function createUploadHarness(apiFetch) {
             submit: uploadForm.listeners.submit,
             setBusy: setUploadBusy,
             isBusy: () => uploadBusy,
-            addresses: () => extractedAddresses
+            addresses: () => extractedAddresses,
+            selectedFiles: () => selectedFiles
         };
     `).runInContext(context);
     return { context, elements, filePicker, statuses };
 }
 
 function loadUi(source, globals) {
-    const context = vm.createContext(globals);
-    new vm.Script(source + '\nglobalThis.ui = { createAddressItem, confirmOcrReading, updateAddress };')
+    const baseDocument = {
+        createElement: tagName => new FakeElement(tagName),
+        getElementById: () => new FakeElement('div')
+    };
+    const context = vm.createContext({
+        ...globals,
+        document: { ...baseDocument, ...(globals.document || {}) },
+        populateAddressList: globals.populateAddressList || (() => {})
+    });
+    new vm.Script(source + `
+        globalThis.ui = {
+            createAddressItem: typeof createAddressItem === 'function' ? createAddressItem : null,
+            confirmOcrReading: typeof confirmOcrReading === 'function' ? confirmOcrReading : null,
+            updateAddress: typeof updateAddress === 'function' ? updateAddress : null,
+            resolveLocationCandidates: typeof resolveLocationCandidates === 'function' ? resolveLocationCandidates : null,
+            getLocationResolutionState: typeof getLocationResolutionState === 'function' ? getLocationResolutionState : null,
+            setLocationResolutionState: typeof setLocationResolutionState === 'function' ? setLocationResolutionState : null
+        };`)
         .runInContext(context);
     return context;
 }
@@ -242,6 +281,33 @@ function candidate(overrides = {}) {
     };
 }
 
+function unlocatedCandidate(overrides = {}) {
+    return candidate({ lat: 0, lon: 0, pid: null, ocrReviewRequired: false, ...overrides });
+}
+
+function resolvedCandidate(address, placeId = 'resolved-place') {
+    return { text: address.text, lat: 42.31, lon: -83.81, pid: placeId };
+}
+
+function createLocationHarness(addresses, apiFetch, overrides = {}) {
+    const notice = new FakeElement('div');
+    const document = {
+        createElement: tagName => new FakeElement(tagName),
+        getElementById: id => id === 'locationResolutionNotice' ? notice : new FakeElement('div')
+    };
+    const context = loadUi(addressUiSource, {
+        document,
+        extractedAddresses: addresses,
+        apiFetch,
+        sendStatus: {},
+        showStatus() {},
+        populateAddressList() {},
+        updateManualCommandHoldControls() {},
+        ...overrides
+    });
+    return { context, notice };
+}
+
 test('upload controls lock during processing and restore after success or error', async () => {
     for (const outcome of ['success', 'cache error', 'OCR error']) {
         let finishCacheRequest;
@@ -250,7 +316,7 @@ test('upload controls lock during processing and restore after success or error'
         let cacheRequestCount = 0;
         const cachedResponse = () => ({
             ok: true,
-            json: async () => ({ cached: true, candidates: [{ text: '123 Main St' }] })
+            json: async () => ({ cached: true, candidates: [candidate({ text: '123 Main St' })] })
         });
         const harness = createUploadHarness(url => {
             if (url === '/route/cache/check') {
@@ -314,6 +380,69 @@ test('upload controls lock during processing and restore after success or error'
     }
 });
 
+test('failed upload waits for active requests, launches no later file, and reuses successful cache results on retry', async () => {
+    let attempt = 0;
+    const initialUploads = [];
+    const uploadedNames = [];
+    const harness = createUploadHarness((url, options) => {
+        if (url === '/route/cache/check') {
+            const file = JSON.parse(options.body);
+            if (attempt === 0 || file.filename !== 'first.png') {
+                return Promise.resolve({ ok: true, json: async () => ({ cached: false }) });
+            }
+            return Promise.resolve({ ok: true, json: async () => ({
+                cached: true,
+                candidates: [candidate({ text: '101 Cached First Rd', normalized: '101 CACHED FIRST RD' })]
+            }) });
+        }
+
+        const image = options.body.entries.find(entry => entry[0] === 'images');
+        const name = image[2];
+        uploadedNames.push(`${attempt}:${name}`);
+        if (attempt === 0) {
+            return new Promise(resolve => initialUploads.push({ name, resolve }));
+        }
+        return Promise.resolve({ ok: true, json: async () => ({
+            imageCandidates: [[candidate({
+                text: name === 'second.png' ? '202 Second Rd' : '303 Third Rd',
+                normalized: name === 'second.png' ? '202 SECOND RD' : '303 THIRD RD'
+            })]]
+        }) });
+    });
+    const files = ['first.png', 'second.png', 'third.png'].map((name, index) => ({ file: {}, hash: `hash-${index}`, name }));
+    harness.context.configureUpload(files);
+
+    const firstAttempt = harness.context.uploadUi.submit({ preventDefault() {} });
+    for (let spin = 0; spin < 30 && initialUploads.length < 2; spin++) await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(initialUploads.map(request => request.name), ['first.png', 'second.png']);
+    assert.equal(harness.context.uploadUi.isBusy(), true);
+
+    initialUploads[1].resolve({
+        ok: false, status: 503, statusText: 'Unavailable',
+        json: async () => ({ error: 'Second image failed' })
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(uploadedNames.length, 2);
+    assert.equal(harness.context.uploadUi.isBusy(), true);
+
+    initialUploads[0].resolve({
+        ok: true, json: async () => ({ imageCandidates: [[candidate({ text: '101 Cached First Rd', normalized: '101 CACHED FIRST RD' })]] })
+    });
+    await firstAttempt;
+    assert.equal(harness.context.uploadUi.isBusy(), false);
+    assert.equal(harness.context.uploadUi.selectedFiles().length, 3);
+    assert.equal(harness.context.uploadUi.addresses().length, 0);
+    assert.deepEqual(uploadedNames, ['0:first.png', '0:second.png']);
+
+    attempt = 1;
+    await harness.context.uploadUi.submit({ preventDefault() {} });
+    assert.deepEqual(uploadedNames, ['0:first.png', '0:second.png', '1:second.png', '1:third.png']);
+    assert.deepEqual(Array.from(harness.context.uploadUi.addresses(), address => address.text), [
+        '101 Cached First Rd', '202 Second Rd', '303 Third Rd'
+    ]);
+    assert.equal(harness.context.uploadUi.isBusy(), false);
+});
+
 test('keeps a vehicle selector disabled when it was already disabled', async () => {
     let apiCalls = 0;
     const harness = createUploadHarness(async () => {
@@ -350,7 +479,7 @@ test('ignores a second upload submission while the first cache check is pending'
 
     finishRequest({
         ok: true,
-        json: async () => ({ cached: true, candidates: [{ text: '123 Main St' }] })
+        json: async () => ({ cached: true, candidates: [candidate({ text: '123 Main St' })] })
     });
     await first;
     assert.equal(harness.context.uploadUi.isBusy(), false);
@@ -408,8 +537,130 @@ test('editing an unresolved row clears its review requirement; legacy rows show 
     assert.equal(legacyRow.querySelector('.ocr-review'), null);
 });
 
+test('location preflight skips verified rows and merges only the matching fresh location', async () => {
+    const located = candidate({ ocrReviewRequired: false });
+    const unresolved = unlocatedCandidate({ text: '120 Main St, Ann Arbor MI', ocrReviewRequired: true });
+    let requestBody;
+    const harness = createLocationHarness([located, unresolved], async (url, options) => {
+        assert.equal(url, '/route/resolve');
+        requestBody = JSON.parse(options.body);
+        return { ok: true, json: async () => ({ candidates: [resolvedCandidate(unresolved)] }) };
+    });
+
+    const changed = await harness.context.ui.resolveLocationCandidates([located, unresolved]);
+    assert.equal(changed, true);
+    assert.equal(requestBody.candidates.length, 1);
+    assert.equal(requestBody.candidates[0].text, unresolved.text);
+    assert.equal(unresolved.pid, 'resolved-place');
+    assert.equal(unresolved.ocrReviewRequired, true);
+    assert.equal(harness.context.ui.getLocationResolutionState(unresolved).status, 'located');
+    assert.equal(harness.notice.className, 'status hidden');
+});
+
+test('failed location lookups can be retried from their row without creating a command hold', async () => {
+    const unresolved = unlocatedCandidate({ text: '120 Main St Apt 330, Ann Arbor MI' });
+    let attempts = 0;
+    let holdWrites = 0;
+    const harness = createLocationHarness([unresolved], async () => {
+        attempts++;
+        if (attempts === 1) {
+            return { ok: false, status: 503, statusText: 'Unavailable', json: async () => ({ error: 'Geocoding unavailable' }) };
+        }
+        return { ok: true, json: async () => ({ candidates: [resolvedCandidate(unresolved, 'retry-place')] }) };
+    }, { persistManualCommandHold: () => { holdWrites++; } });
+
+    await harness.context.ui.resolveLocationCandidates([unresolved]);
+    assert.equal(harness.context.ui.getLocationResolutionState(unresolved).status, 'failed');
+    assert.equal(harness.notice.className, 'status error');
+
+    const row = harness.context.ui.createAddressItem(unresolved, 0);
+    const retry = row.querySelector('.location-retry-button');
+    assert.equal(retry.disabled, false);
+    assert.equal(retry.textContent, 'Retry location lookup');
+    retry.listeners.click();
+    assert.equal(harness.context.ui.getLocationResolutionState(unresolved).status, 'pending');
+    const pendingRow = harness.context.ui.createAddressItem(unresolved, 0);
+    assert.equal(pendingRow.querySelector('.location-retry-button').disabled, true);
+    await new Promise(resolve => setImmediate(resolve));
+
+    assert.equal(attempts, 2);
+    assert.equal(harness.context.ui.getLocationResolutionState(unresolved).status, 'located');
+    assert.equal(unresolved.pid, 'retry-place');
+    assert.equal(holdWrites, 0);
+});
+
+test('late location responses cannot overwrite edited text and reordered or removed rows stay identity-bound', async () => {
+    const edited = unlocatedCandidate({ text: '123 Old Rd, Ann Arbor MI' });
+    const addresses = [edited];
+    const pending = [];
+    const harness = createLocationHarness(addresses, (url, options) => new Promise(resolve => {
+        pending.push({ body: JSON.parse(options.body), resolve });
+    }));
+
+    const oldLookup = harness.context.ui.resolveLocationCandidates([edited]);
+    const editedLookup = harness.context.ui.updateAddress(0, '456 New Ave, Ann Arbor MI');
+    assert.equal(edited.normalized, '456 New Ave, Ann Arbor MI');
+    assert.equal(pending.length, 2);
+
+    pending[0].resolve({ ok: true, json: async () => ({ candidates: [resolvedCandidate({ text: '123 Old Rd, Ann Arbor MI' }, 'stale-place')] }) });
+    await oldLookup;
+    assert.equal(edited.pid, null);
+    assert.equal(harness.context.ui.getLocationResolutionState(edited).version, 1);
+
+    pending[1].resolve({ ok: true, json: async () => ({ candidates: [resolvedCandidate(edited, 'edited-place')] }) });
+    await editedLookup;
+    assert.equal(edited.pid, 'edited-place');
+    assert.equal(edited.text, '456 New Ave, Ann Arbor MI');
+
+    const first = unlocatedCandidate({ text: '101 First Rd' });
+    const second = unlocatedCandidate({ text: '202 Second Rd' });
+    const removed = unlocatedCandidate({ text: '303 Removed Rd' });
+    const ordered = [first, second, removed];
+    const reorderHarness = createLocationHarness(ordered, (url, options) => new Promise(resolve => {
+        pending.push({ body: JSON.parse(options.body), resolve });
+    }));
+    const reorderLookup = reorderHarness.context.ui.resolveLocationCandidates(ordered);
+    ordered.splice(0, 3, second, first);
+    pending[2].resolve({ ok: true, json: async () => ({ candidates: [
+        resolvedCandidate(first, 'first-place'), resolvedCandidate(second, 'second-place'), resolvedCandidate(removed, 'removed-place')
+    ] }) });
+    await reorderLookup;
+    assert.equal(first.pid, 'first-place');
+    assert.equal(second.pid, 'second-place');
+    assert.equal(removed.pid, null);
+});
+
+test('restoring a session re-resolves unresolved rows before saving their updated locations', async () => {
+    const unresolved = unlocatedCandidate({ text: '120 Main St Apt 330, Ann Arbor MI' });
+    const saved = [];
+    const elements = { vin: new FakeElement('select'), defaultState: new FakeElement('select') };
+    const context = vm.createContext({
+        ...({ extractedAddresses: [], imageHashes: [], currentVin: '', autoNavSessionId: null }),
+        document: { getElementById: id => elements[id] || new FakeElement('div') },
+        fetch: async url => {
+            assert.equal(url, '/route/session/load');
+            return { ok: true, json: async () => ({ valid: true, candidates: [unresolved], imageHashes: ['hash'], vin: 'VIN-TEST', defaultState: 'MI' }) };
+        },
+        apiFetch: async (url, options) => {
+            assert.equal(url, '/route/resolve');
+            assert.deepEqual(JSON.parse(options.body).candidates.map(row => row.text), [unresolved.text]);
+            return { ok: true, json: async () => ({ candidates: [resolvedCandidate(unresolved, 'restored-place')] }) };
+        },
+        processStatus: {}, showStatus() {}, dismissSessionRecovery() {}, setCookie() {}, showStep2() {},
+        saveCurrentSession: async () => { saved.push(unresolved.pid); }
+    });
+    new vm.Script(locationUiSource + '\n' + extractBetween('async function loadPreviousSession() {', 'function dismissSessionRecovery() {')
+        + '\nglobalThis.restore = loadPreviousSession;').runInContext(context);
+
+    await context.restore();
+    assert.equal(context.extractedAddresses[0], unresolved);
+    assert.equal(unresolved.pid, 'restored-place');
+    assert.deepEqual(saved, ['restored-place']);
+});
+
 test('pre-send validation stays retryable while uncertain outcomes remain held', async () => {
-  const source = extractBetween('async function sendGroupToTesla(', 'function showStatus(');
+  const source = extractBetween('function isLocated(address) {', 'function getLocationResolutionState(address) {')
+    + extractBetween('async function sendGroupToTesla(', 'function showStatus(');
   for (const [ok, status, body, held] of [
     [false, 400, { state: 'NOT_SENT', accepted: false, message: 'Stop 1 needs review.' }, false],
     [false, 503, { state: 'NOT_SENT', accepted: false, message: 'Geocoding unavailable' }, false],
@@ -483,8 +734,9 @@ test('unlocated addresses explain the problem instead of showing zero coordinate
 });
 
 test('manual and automatic route sends stop before API dispatch when any route row needs review', async () => {
-    const sendSource = extractBetween('async function sendGroupToTesla(', 'function showStatus(');
-    const autoSource = extractBetween('async function startAutoNavigation(', 'function startAutoNavPolling(');
+    const locationCheck = extractBetween('function isLocated(address) {', 'function getLocationResolutionState(address) {');
+    const sendSource = locationCheck + extractBetween('async function sendGroupToTesla(', 'function showStatus(');
+    const autoSource = locationCheck + extractBetween('async function startAutoNavigation(', 'function startAutoNavPolling(');
     const pending = candidate();
     let apiCalls = 0;
     const statuses = [];
@@ -511,6 +763,77 @@ test('manual and automatic route sends stop before API dispatch when any route r
     await autoContext.start();
     assert.equal(apiCalls, 0);
     assert.match(statuses.at(-1).message, /unresolved OCR reading/);
+});
+
+test('manual and automatic sends stay blocked on unresolved locations without dispatch or command holds', async () => {
+    const locationCheck = extractBetween('function isLocated(address) {', 'function getLocationResolutionState(address) {');
+    const sendSource = locationCheck + extractBetween('async function sendGroupToTesla(', 'function showStatus(');
+    const autoSource = locationCheck + extractBetween('async function startAutoNavigation(', 'function startAutoNavPolling(');
+    const statuses = [];
+    let apiCalls = 0;
+    let holdWrites = 0;
+    const globals = {
+        currentVin: 'VIN-TEST',
+        extractedAddresses: [unlocatedCandidate({ text: '120 Main St Apt 330, Ann Arbor MI' })],
+        getManualCommandHold: () => null,
+        manualCommandInFlight: new Set(),
+        availableVehicles: [{ vin: 'VIN-TEST', command: true }],
+        sendStatus: {},
+        apiFetch: async () => { apiCalls++; throw new Error('unexpected command dispatch'); },
+        persistManualCommandHold: () => { holdWrites++; },
+        showStatus: (message, type) => statuses.push({ message, type }),
+        updateManualCommandHoldControls: () => {}
+    };
+    const manualContext = vm.createContext({ ...globals });
+    new vm.Script(sendSource + '\nglobalThis.send = sendGroupToTesla;').runInContext(manualContext);
+    await manualContext.send(0, 0, 1);
+    assert.equal(apiCalls, 0);
+    assert.equal(holdWrites, 0);
+    assert.match(statuses.at(-1).message, /verified location/);
+
+    const autoContext = vm.createContext({ ...globals });
+    new vm.Script(autoSource + '\nglobalThis.start = startAutoNavigation;').runInContext(autoContext);
+    await autoContext.start();
+    assert.equal(apiCalls, 0);
+    assert.equal(holdWrites, 0);
+    assert.match(statuses.at(-1).message, /verified location/);
+});
+
+test('clearing a command hold does not reenable location-blocked route buttons', () => {
+    const source = extractBetween('function isLocated(address) {', 'function getLocationResolutionState(address) {')
+        + extractBetween('function updateManualCommandHoldControls(vin, statusElement) {', 'async function loadVehicles(');
+    const groupButton = new FakeElement('button');
+    groupButton.disabled = true;
+    groupButton.dataset.commandBlocked = 'true';
+    groupButton.dataset.defaultLabel = 'Send Route 1 to Tesla';
+    groupButton.dataset.addressStart = '0';
+    groupButton.dataset.addressCount = '1';
+    groupButton.textContent = 'Vehicle sends paused — reconcile first';
+    const autoButton = new FakeElement('button');
+    autoButton.disabled = true;
+    autoButton.dataset.commandBlocked = 'true';
+    const addresses = [unlocatedCandidate()];
+    const context = vm.createContext({
+        currentVin: 'VIN-TEST', extractedAddresses: addresses,
+        manualCommandInFlight: new Set(), getManualCommandHold: () => null,
+        document: {
+            querySelectorAll: selector => selector === '.group-send-btn' ? [groupButton] : [autoButton]
+        }
+    });
+    new vm.Script(source + '\nglobalThis.refresh = updateManualCommandHoldControls;').runInContext(context);
+
+    context.refresh('VIN-TEST');
+    assert.equal(groupButton.disabled, true);
+    assert.equal(groupButton.textContent, 'Send Route 1 to Tesla');
+    assert.equal(groupButton.dataset.commandBlocked, undefined);
+    assert.equal(autoButton.disabled, true);
+    assert.equal(autoButton.title, 'Resolve every stop to a verified location before starting.');
+
+    Object.assign(addresses[0], { lat: 42.31, lon: -83.81, pid: 'resolved-place' });
+    context.refresh('VIN-TEST');
+    assert.equal(groupButton.disabled, false);
+    assert.equal(autoButton.disabled, false);
+    assert.equal(autoButton.title, '');
 });
 
 test('merges screenshot seams and contained captures while preserving meaningful repeats', () => {
