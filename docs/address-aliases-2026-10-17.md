@@ -1,110 +1,103 @@
-# Street abbreviations and compound-name recovery
+# Street suffix and township address recovery
 
-Status: implementation and local qualification complete on main, base `12ba99f`;
-CI image publication and native qualification/deployment are next.
+Application source: `d1e86ee7300feac148bb56c460d90a8e50a8dc5b` on main.
+Status: deployed and verified at https://teslarouter.javadevjt.tech as release
+`20261017-address-aliases` (2026-10-18 00:07 UTC / October 17 in Michigan).
 
-## Scope and evidence
+## Supplied cases
 
-Review original IMG_0634.HEIC and IMG_0635.HEIC alongside IMG_0637.PNG. Diagnose
-the Doves Pt and Countryside Ln failures using the two specifically approved,
-bounded Google tests. No vehicle commands or unrelated provider requests.
-Preserve house/unit digits, direction, locality/state/country validation, query
-and deadline budgets, ordering/dedupe, owner isolation and command holds.
+Both original HEICs, IMG_0634 and IMG_0635, were converted and visually reviewed
+alongside IMG_0637.PNG. All ten extracted rows match the originals.
 
-Replace the small suffix switch with a maintained authoritative catalog. Distinct
-suffixes must remain distinct; suffix aliases apply only in suffix position.
-Investigate compound-name whitespace only after checking the actual provider
-response; do not introduce fuzzy spelling correction or guess new street names.
+Two specifically approved Google requests established the causes:
 
-## Ownership and checks
+- Doves Pt returned an exact, non-partial rooftop street address whose route
+  name is Doves Point. The previous small suffix switch did not recognize PT.
+- Countryside Ln returned an exact, non-partial rooftop street address. Its
+  spelling is correctly one word. Google represents Highland as a neighborhood
+  in Highland Township, without a locality or postal town. The former locality
+  check rejected that result.
 
-Primary owns GeocodingClient integration, approved provider diagnosis, images,
-controller/cache compatibility, serialized Maven checks and release operations.
-A bounded catalog worker owns only a new StreetSuffixCatalog class, its resource
-and its focused test. It must establish source coverage and collision checks and
-may not edit GeocodingClient or use providers/NAS. Independent review of alias
-false positives and recovery ordering follows integration.
+Both actual responses now verify on their original queries, once each. Recorded
+response replay preserves the original text and OCR provenance and makes no
+external requests. No speculative COUNTRY SIDE rewrite or further provider
+request was needed. No vehicle command was issued.
 
-Worker model policy was read from the swarm skill's model-config reference.
-Live native spawn catalog checked 2026-10-17: one callable Luna member,
-`gpt-6-luna`, supports maximum effort `max`. Both fields are explicit on workers;
-provider internals are not exposed. Workers cannot spawn children and complete
-naturally after a source-backed handoff. Consumer is primary integration/release.
+## Matching and automatic recovery
 
-Catalog outcome: comprehensive official suffix aliases, deterministic
-preferred query spellings, and tests for all aliases, ambiguity/collisions,
-unknown tokens and representative uncommon suffixes including PT/POINT.
-Acceptance: both supplied failures resolve safely; wrong house, street, unit,
-direction, city/state/country and city-center results stay rejected. Original OCR
-text remains unchanged. Focused and full application checks precede image release;
-deployment must bind source, CI scan, immutable digest and runtime verification.
+Extraction and geocoding share the checked-in catalog at
+`src/main/resources/address/street-suffixes.tsv`. Its source is
+[USPS Publication 28, Appendix C1](https://pe.usps.com/text/pub28/28apc_002.htm),
+retrieved 2026-10-17: 206 primary suffixes, 502 common-form rows and 554 official
+per-primary alias claims. Three explicitly documented compatibility aliases
+bring the catalog to 550 unique recognized spellings.
 
-## Confirmed diagnosis and implementation
+Aliases apply in suffix position. Distinct official primary names stay distinct;
+typed short names cannot bridge incompatible long names such as PARKWAY and
+PARKWAYS. Five shared-spelling groups have conservative handling: an ambiguous
+non-primary abbreviation can match an officially listed meaning in an otherwise
+valid provider result, but does not launch queries choosing an arbitrary family.
+Multiple distinct matching destinations remain unresolved.
 
-Both supplied HEICs were converted and visually reviewed. All ten displayed
-street rows agree with the app screenshot, including PT and the single word
-COUNTRYSIDE. Two approved original Google queries returned non-partial rooftop
-street-address results with the correct house/route/state/country. Doves returns
-`Doves Point` in both route names. Countryside returns `Countryside Lane` / `Countryside Ln`;
-Highland is a neighborhood within Highland Township, without locality/postal_town.
-No alternative spelling requests were needed, and no vehicle command was issued.
-Raw responses remain private under `output/private/address-aliases-20261017/`.
+All eight compass directions normalize at route ends, including two-word
+diagonals. Leading ST/MT/FT titles have explicit aliases. Internal street-name
+words and arbitrary compound-name spacing remain literal.
 
-The catalog worker completed its three-file handoff: 206 official primary
-suffixes, 502 common-form rows, 554 per-primary alias claims, three explicit
-compatibility aliases and 550 unique recognized spellings. Five collision groups
-have explicit conservative handling. Source: [USPS Publication 28 C1](https://pe.usps.com/text/pub28/28apc_002.htm).
-Primary accepted the interface and integrated it with extraction, suffix-only
-comparison and bounded full/standard suffix queries. Standalone worker compile
-and smoke checks passed. Clean package: 203 Java tests, zero failures/errors/skips;
-frontend: 29/29. Both actual recorded responses replay against the packaged
-geocoder in one original query each, preserving original text and OCR metadata;
-replay issued zero external or vehicle requests.
-Extraction policy is v7 and geocoding policy v5; old validated metadata must not
-authorize commands under the new policy. Original text and unit values remain.
+The complete address, including the unit, is queried first. Bounded cleanup,
+normalized units and official full/standard suffix forms precede structured
+locality and the building fallback. Structured and unitless forms retain reserved
+slots within the existing six-form/eight-attempt, deadline and pacing limits.
+A valid original response stops immediately. UI/session text retains the unit.
 
-Completed read-only review (consumer: primary release): suffix/alias false positives,
-ambiguous primary identities, unit-first query ordering and budget reservation,
-typed township fallback and stale-cache policy. Scope is current source/tests;
-no writes, providers/NAS, child agents or build commands. Selected worker pair is
-the same explicitly resolved `gpt-6-luna` / `max`; release after concise handoff.
+An unincorporated community can match a same-named, descriptor-bearing US township
+when strong city fields are absent. A supplied neighborhood must match. If Google
+omits the optional neighborhood, require a nonblank matching township short name
+as well. County proximity, a neighborhood alone, contradictory city fields,
+partial results and city-center results cannot establish a verified destination.
+House, route, direction, unit, state, country and coordinate checks remain.
 
-Catalog worker `/root/alias_suffix_catalog` completed naturally; accepted after
-primary integration and successful compilation/catalog/extractor tests. Initial
-focused run: 60 tests, 13 failures, all older geocoder assertions about exact
-query lists/counts after adding the suffix form. New diagnosis and safety tests
-passed. Primary retains service edits; a test-only owner is queued to update the
-13 expectations without weakening rejection, unit ordering, quotas or dedupe.
-No worker may run Maven; primary owns serialized test execution and release.
+Extraction policy is `ocr-consensus-v7`; geocoding policy is `street-address-v5`.
+Existing incompatible location metadata cannot authorize navigation. TAP stable
+subject authorization, CSRF, ordering/dedupe, eight-stop grouping, command holds
+and all three local OCR engines are preserved.
 
-The test-only owner completed its handoff; primary corrected two fixture
-expectations and the complete clean package passed. Independent review found a
-township short-name bypass and position-blind direction normalization. Both were
-fixed and closure review found no remaining blocker. Tests include the conflicting
-strong-city/short-township shape, internal compass-name negatives, eight direction
-aliases, typed short-name contradictions and the full six-form budget with
-structured lookup and unitless fallback retaining their reserved slots.
+## Verification
 
-Known boundary: the five ambiguous suffix groups retain explicit primary
-distinctions. A non-primary abbreviation can match an officially listed primary
-in an otherwise fully validated response, with multiple destinations rejected.
-It does not launch queries choosing one ambiguous primary spelling. Arbitrary
-COUNTRY SIDE/COUNTRYSIDE rewrites are not needed for the supplied case and are not
-guessed; typed Google long/short names remain the source of additional name aliases.
+Clean package passed 204 Java tests, with zero failures/errors/skips; frontend
+checks passed 29/29. Focused independent reviews covered suffix collisions,
+direction/title position, unit-first ordering and reserved query slots, township
+contradictions and the absent-neighborhood compatibility case. No blocker remained.
+The packaged geocoder, catalog/resource and template match the tested classes.
 
-Primary final inspection also rejected a shared-short-name bridge between
-explicit PARKWAY/PARKWAYS and MEADOW/MEADOWS names. The requested suffix must
-agree with the returned long suffix before a typed short name is considered.
-The four shared-suffix negatives pass, and a focused independent closure review
-found no remaining blocker. The final clean package again passed all 203 tests.
-Mobile Chrome preflight passed using the newly built template and mocked route
-APIs; it is not yet immutable-image or deployed UI evidence.
+The final immutable image passed 18/18 ordered-exact screenshots and 36 Python
+tests on the native AMD EPYC host, using all three OCR engines and no source
+overlays. The two supplied HEICs took 44.75 seconds sequentially and 22.24 seconds
+in parallel, with identical text, OCR agreement and review flags. This is a
+single OCR-only trial at eight CPUs / 8 GiB, not an end-to-end upload latency
+guarantee. Peak memory was 2,516,492,288 bytes; memory events and leftover OCR
+jobs were zero. The isolated test app and fixtures were cleaned up.
 
-A final compatibility review found that v4 accepted exact township long/short
-names even when Google omitted the optional neighborhood. The v5 fallback now
-retains that shape only with a nonblank matching short name, a descriptor-bearing
-same-named US township and no strong city fields. A present conflicting
-neighborhood remains rejected. Regression coverage includes missing/wrong short
-names, wrong township/state/country, partial and broad results and conflicting
-city fields. Independent closure found no blocker; clean package passed all
-204 Java tests with zero failures/errors/skips.
+## Release proof
+
+- [CI run 39076997326](https://github.com/javaDevJT/RouteListToTesla/actions/runs/39076997326),
+  attempt 1, publish job 117527175419: success. High/Critical findings: zero.
+  Existing storage enforcement and gated tag publication passed; this does not
+  independently calibrate runner capacity.
+- Image: `ghcr.io/javadevjt/routelisttotesla@sha256:f4f48037089220b8ce3feae9432ce4f7ba7d3167b86f9e51076abb07de2fdf53`.
+  Its linux/amd64 OCI revision matches the application source above, and its
+  embedded UI template matches the tested template.
+- TrueNAS deployment job 19687: success. Live runtime uses that digest and
+  release. The update preserved the complete existing configuration and volume
+  identities, changing only the two service image references and release value.
+- Live `/login` returned 200 with the new release. TAP sign-in redirect,
+  protected-endpoint redirects and CSRF rejection passed. TrueNAS did not expose
+  container health; the configured HTTP healthcheck path was verified directly.
+- Mobile Chrome (390 × 844) verified the live login release and rendered the
+  exact image-matched template with mocked authenticated APIs. Upload retry,
+  cache reuse, overlap dedupe, apartment preservation, visible lookup outcomes,
+  blocked unresolved sends, draft/focus preservation and location-only retry
+  checks passed, with no browser errors. This did not exercise authenticated
+  provider commands or send a route to a vehicle.
+
+Detailed private receipts remain under
+`output/private/address-aliases-20261017/` and are excluded from Git.

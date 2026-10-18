@@ -214,7 +214,10 @@ returns immediately.
 
 An unincorporated community can match an exact neighborhood plus same-named
 typed US township when strong city fields are absent. Township base short names
-cannot bypass that gate; county proximity or a neighborhood alone is insufficient.
+cannot bypass that gate. If Google omits the optional neighborhood, the same
+described township also needs a nonblank matching short name; contradictory
+neighborhoods or strong city fields remain rejected. County proximity or a
+neighborhood alone is insufficient.
 See [suffix coverage and supplied-case diagnosis](address-aliases-2026-10-17.md).
 The TAP waypoint payload carries coordinates and place ID, not apartment text.
 Required house/street/direction/locality/state constraints always come from the
