@@ -7,7 +7,13 @@ public record LocationResolution(
         String reasonCode,
         int attempts,
         String policyVersion,
-        Integer retryAfterSeconds) {
+        Integer retryAfterSeconds,
+        String matchedAddress) {
+
+    public LocationResolution(Status status, String strategy, String reasonCode, int attempts,
+                              String policyVersion, Integer retryAfterSeconds) {
+        this(status, strategy, reasonCode, attempts, policyVersion, retryAfterSeconds, null);
+    }
 
     public enum Status {
         VERIFIED_UNIT, VERIFIED_BUILDING, NO_MATCH, AMBIGUOUS, DEFERRED, LOOKUP_UNAVAILABLE

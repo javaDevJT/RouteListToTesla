@@ -4,6 +4,20 @@ TAP-managed sign-in and stable-subject authorization replace independent Google 
 
 ## Source flow
 
+### October 19 provider-corroborated recovery
+
+Current extraction is `ocr-consensus-v9`; geocoding is `street-address-v7`.
+Spatial evidence also excludes vertically adjacent side counters while retaining
+nearby ambiguous unit fragments. Geocoding first applies strict matching, then
+can corroborate a unique precise candidate through reverse locality verification
+or constrained-original plus canonical street queries. No address-specific
+replacement mappings are used. House numbers, street-name letters, directions,
+unit conflicts, state/country, partial/city results and ambiguity remain guarded.
+Recovered results expose Google's map address while retaining input text and
+the distinction between a verified unit and a verified building. Saved results
+under earlier policies are revalidated. See the
+[recovery contract and checks](general-address-reliability-2026-10-19.md).
+
 ### October 18 spatial OCR evidence
 
 Extraction version `ocr-consensus-v8` separates short package counters from

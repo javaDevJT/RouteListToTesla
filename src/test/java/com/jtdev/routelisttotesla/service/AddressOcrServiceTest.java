@@ -144,6 +144,77 @@ class AddressOcrServiceTest {
     }
 
     @Test
+    void skipsAdjacentNonOverlappingFarBadgeAndKeepsUnitConflictAndLocality() throws Exception {
+        String tsv = TSV_HEADER + "\n" + String.join("\n",
+                "5\t1\t1\t1\t1\t1\t100\t100\t300\t20\t90\t9876 KINGSWOOD ST APT",
+                "5\t1\t1\t1\t2\t1\t850\t122\t30\t10\t90\t20",
+                "5\t1\t1\t1\t3\t1\t370\t124\t30\t10\t90\t102",
+                "5\t1\t1\t1\t4\t1\t100\t140\t140\t20\t90\tWARREN");
+        Map<String, Object> lineEvidence = Map.of(
+                "1", consensusEvidence("9876 KINGSWOOD ST APT"),
+                "2", evidence(1, true, List.of(
+                        reading("tesseract", "20"), reading("paddleocr", "2"), reading("easyocr", "20"))),
+                "3", evidence(2, true, List.of(
+                        reading("tesseract", "102"), reading("paddleocr", "102"), reading("easyocr", "103"))),
+                "4", consensusEvidence("WARREN"));
+        String output = consensusOutput(tsv, lineEvidence);
+        AddressOcrService service = new AddressOcrService("ocr-binary", "eng",
+                ignored -> new AddressOcrService.ProcessResult(0, output, ""), false);
+
+        PlaceCandidate candidate = service.extractAddressCandidates(png(), "route.png", "MI").get(0);
+
+        assertEquals("9876 KINGSWOOD ST APT 102, WARREN, MI", candidate.text());
+        assertEquals(2, candidate.ocrAgreement());
+        assertTrue(candidate.ocrReviewRequired());
+        assertTrue(candidate.ocrAlternatives().contains("line 3 easyocr: 103"));
+        assertTrue(candidate.ocrAlternatives().stream().noneMatch(value -> value.startsWith("line 2 ")));
+    }
+
+    @Test
+    void retainsAdjacentNonOverlappingNearbyUnitFragmentAsReviewEvidence() throws Exception {
+        String tsv = TSV_HEADER + "\n" + String.join("\n",
+                "5\t1\t1\t1\t1\t1\t100\t100\t300\t20\t90\t123 MAIN ST",
+                "5\t1\t1\t1\t2\t1\t410\t122\t20\t10\t90\t3B",
+                "5\t1\t1\t1\t3\t1\t100\t140\t120\t20\t90\tDETROIT");
+        Map<String, Object> lineEvidence = Map.of(
+                "1", consensusEvidence("123 MAIN ST"),
+                "2", evidence(1, true, List.of(reading("easyocr", "3B"))),
+                "3", consensusEvidence("DETROIT"));
+        String output = consensusOutput(tsv, lineEvidence);
+        AddressOcrService service = new AddressOcrService("ocr-binary", "eng",
+                ignored -> new AddressOcrService.ProcessResult(0, output, ""), false);
+
+        PlaceCandidate candidate = service.extractAddressCandidates(png(), "route.png", "").get(0);
+
+        assertEquals("123 MAIN ST, DETROIT", candidate.text());
+        assertEquals(1, candidate.ocrAgreement());
+        assertTrue(candidate.ocrReviewRequired());
+        assertTrue(candidate.ocrAlternatives().contains("line 2 easyocr: 3B"));
+    }
+
+    @Test
+    void retainsAdjacentNonOverlappingNearbyUnitFragmentBeforeAddressAsReviewEvidence() throws Exception {
+        String tsv = TSV_HEADER + "\n" + String.join("\n",
+                "5\t1\t1\t1\t1\t1\t410\t70\t20\t10\t90\t3B",
+                "5\t1\t1\t1\t2\t1\t100\t100\t300\t20\t90\t123 MAIN ST",
+                "5\t1\t1\t1\t3\t1\t100\t140\t120\t20\t90\tDETROIT");
+        Map<String, Object> lineEvidence = Map.of(
+                "1", evidence(1, true, List.of(reading("easyocr", "3B"))),
+                "2", consensusEvidence("123 MAIN ST"),
+                "3", consensusEvidence("DETROIT"));
+        String output = consensusOutput(tsv, lineEvidence);
+        AddressOcrService service = new AddressOcrService("ocr-binary", "eng",
+                ignored -> new AddressOcrService.ProcessResult(0, output, ""), false);
+
+        PlaceCandidate candidate = service.extractAddressCandidates(png(), "route.png", "").get(0);
+
+        assertEquals("123 MAIN ST, DETROIT", candidate.text());
+        assertEquals(1, candidate.ocrAgreement());
+        assertTrue(candidate.ocrReviewRequired());
+        assertTrue(candidate.ocrAlternatives().contains("line 1 easyocr: 3B"));
+    }
+
+    @Test
     void excludesFarRightBadgeEvidenceButKeepsAddressDisagreementAndApartmentNumbers() throws Exception {
         String tsv = TSV_HEADER + "\n" + String.join("\n",
                 "5\t1\t1\t1\t1\t1\t38\t159\t470\t26\t90\t12345 N PARK DR APT 208",

@@ -46,7 +46,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class AddressOcrService {
-    public static final String EXTRACTION_VERSION = "ocr-consensus-v8";
+    public static final String EXTRACTION_VERSION = "ocr-consensus-v9";
 
     static final int MAX_IMAGE_BYTES = 12 * 1024 * 1024;
     static final long MAX_IMAGE_PIXELS = 20_000_000L;
@@ -185,15 +185,16 @@ public class AddressOcrService {
 
                 int lastLineIndex = lineIndex;
                 int lastAddressLineIndex = lineIndex;
-                boolean overlappingFragment = false;
+                boolean nearbyFragmentRequiresReview = false;
                 List<Integer> evidenceLineIndexes = new ArrayList<>();
                 evidenceLineIndexes.add(lineIndex);
                 for (int previousLineIndex = lineIndex - 1; previousLineIndex >= 0; previousLineIndex--) {
                     OcrLine previous = lines.get(previousLineIndex);
-                    if (previous.bottom() <= line.top() || previous.text().trim().length() > 3
-                            || addressCandidateText(previous.text()) != null) break;
+                    String previousText = previous.text().trim();
+                    if (!linesAreVerticallyAdjacentOrOverlapping(previous, line) || previousText.length() > 3
+                            || addressCandidateText(previousText) != null || isStateOnlyLine(previousText)) break;
                     if (linesAreHorizontallyNear(previous, line)) {
-                        overlappingFragment = true;
+                        nearbyFragmentRequiresReview = true;
                         evidenceLineIndexes.add(previousLineIndex);
                     }
                 }
@@ -204,16 +205,18 @@ public class AddressOcrService {
                     String continuation = nextLine.text().trim();
                     boolean addressContinuation = isAddressContinuation(addressText, continuation);
                     boolean smallFragment = continuation.length() <= 3
-                            && addressCandidateText(continuation) == null;
-                    boolean verticalOverlap = nextLine.top() < previousLine.bottom();
-                    boolean smallOverlap = smallFragment && verticalOverlap
-                            && linesAreHorizontallyNear(previousLine, nextLine);
-                    if (smallFragment && verticalOverlap && !smallOverlap) {
+                            && addressCandidateText(continuation) == null
+                            && !isStateOnlyLine(continuation);
+                    boolean verticallyConnected = linesAreVerticallyAdjacentOrOverlapping(previousLine, nextLine);
+                    boolean horizontallyNear = linesAreHorizontallyNear(previousLine, nextLine);
+                    boolean nearbyShortFragment = smallFragment && verticallyConnected && horizontallyNear;
+                    boolean sideColumnShortFragment = smallFragment && verticallyConnected && !horizontallyNear;
+                    if (sideColumnShortFragment) {
                         // Skip side-column metadata but keep looking from the last address line.
                         nextLineIndex++;
                         continue;
                     }
-                    if (!linesAreAdjacent(previousLine, nextLine) && !smallOverlap) {
+                    if (!linesAreAdjacent(previousLine, nextLine) && !nearbyShortFragment) {
                         break;
                     }
                     if (addressContinuation) {
@@ -222,9 +225,9 @@ public class AddressOcrService {
                         lastAddressLineIndex = nextLineIndex;
                         evidenceLineIndexes.add(lastLineIndex);
                         nextLineIndex++;
-                    } else if (smallOverlap) {
+                    } else if (nearbyShortFragment) {
                         // A nearby short fragment may be an unlabelled unit, so keep it reviewable.
-                        overlappingFragment = true;
+                        nearbyFragmentRequiresReview = true;
                         lastLineIndex = nextLineIndex;
                         lastAddressLineIndex = nextLineIndex;
                         evidenceLineIndexes.add(lastLineIndex);
@@ -282,7 +285,7 @@ public class AddressOcrService {
                         0,
                         null,
                         ocrEvidence.agreement(),
-                        overlappingFragment || ocrEvidence.reviewRequired(),
+                        nearbyFragmentRequiresReview || ocrEvidence.reviewRequired(),
                         ocrEvidence.alternatives()));
                 lineIndex = lastLineIndex;
             }
@@ -651,8 +654,12 @@ public class AddressOcrService {
         return gap >= -overlap && gap <= Math.max(12, (int) Math.ceil(lineHeight * 1.5));
     }
 
+    private static boolean linesAreVerticallyAdjacentOrOverlapping(OcrLine first, OcrLine second) {
+        return second.top() < first.bottom() || linesAreAdjacent(first, second);
+    }
+
     private static boolean linesAreHorizontallyNear(OcrLine first, OcrLine second) {
-        // Badge-column text can overlap an address vertically; short fragments must also sit in its text column.
+        // Short fragments can be vertically adjacent; require them to sit in the address text column.
         int gap = Math.max(0, Math.max(first.left() - second.right(), second.left() - first.right()));
         int lineHeight = Math.max(first.bottom() - first.top(), second.bottom() - second.top());
         return gap <= Math.max(12, (int) Math.ceil(lineHeight * 1.5));

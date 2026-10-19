@@ -1,5 +1,7 @@
 # Documentation
 
+- [General address reliability (2026-10-19)](general-address-reliability-2026-10-19.md): bounded provider-corroborated recovery, OCR layout boundaries and release checks.
+
 - [Apartment lookup and OCR evidence (2026-10-18)](southfield-address-and-ocr-evidence-2026-10-18.md): provider unit-label normalization, spatial metadata exclusion and saved-location migration.
 
 - [Street suffix and township recovery (2026-10-17)](address-aliases-2026-10-17.md): deployed comprehensive USPS catalog, supplied HEIC diagnosis, final native qualification and release proof.

@@ -254,7 +254,7 @@
         const locationAddressRows = new WeakMap();
         const LOCATION_RESOLVE_BATCH_SIZE = 500;
         const LOCATION_RESOLVE_MAX_TEXT_LENGTH = 1000;
-        const LOCATION_POLICY_VERSION = 'street-address-v6';
+        const LOCATION_POLICY_VERSION = 'street-address-v7';
         const LOCATION_RESOLUTION_STATUSES = new Set([
             'VERIFIED_UNIT', 'VERIFIED_BUILDING', 'NO_MATCH', 'AMBIGUOUS', 'DEFERRED', 'LOOKUP_UNAVAILABLE'
         ]);
@@ -946,8 +946,8 @@
                     return 'The lookup result is missing a usable street location. Retry lookup.';
                 }
                 switch (resolution.status) {
-                    case 'VERIFIED_UNIT': return 'Apartment or suite verified.';
-                    case 'VERIFIED_BUILDING': return getBuildingVerificationText(address);
+                    case 'VERIFIED_UNIT': return `Apartment or suite verified.${getRecoveredLocationDetails(resolution)}`;
+                    case 'VERIFIED_BUILDING': return `${getBuildingVerificationText(address)}${getRecoveredLocationDetails(resolution)}`;
                     case 'NO_MATCH': return 'No safe street match after automatic attempts. Edit the address or retry lookup.';
                     case 'AMBIGUOUS': return 'Several street matches remain. Edit the address to clarify it or retry lookup.';
                     case 'DEFERRED': return `Lookup paused before completion${Number.isFinite(resolution.retryAfterSeconds) ? `; try again in about ${resolution.retryAfterSeconds} seconds` : ''}.`;
@@ -958,6 +958,24 @@
                 return 'Address lookup is temporarily unavailable. Retry; the address has not been changed.';
             }
             return 'No current street-location verification. Retry lookup or edit this address.';
+        }
+
+        function getRecoveredLocationDetails(resolution) {
+            let recoveryMessage;
+            if (resolution?.strategy === 'corroborated_locality') {
+                recoveryMessage = ' Google lists this street location under a different city name.';
+            } else if (resolution?.strategy === 'corroborated_street_representation') {
+                recoveryMessage = ' Google uses a different street spelling or type.';
+            } else {
+                return '';
+            }
+
+            const matchedAddress = typeof resolution.matchedAddress === 'string'
+                ? resolution.matchedAddress.trim() : '';
+            const safeMatchedAddress = matchedAddress.length > 0 && matchedAddress.length <= 512
+                ? matchedAddress : null;
+            const mapAddress = safeMatchedAddress ? ` Map address: ${safeMatchedAddress}.` : '';
+            return `${recoveryMessage}${mapAddress} Your address text is retained.`;
         }
 
         function getBuildingVerificationText(address) {

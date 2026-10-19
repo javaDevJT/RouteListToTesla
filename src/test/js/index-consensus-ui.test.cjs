@@ -302,7 +302,7 @@ function candidate(overrides = {}) {
         ],
         resolution: {
             status: 'VERIFIED_UNIT', strategy: 'original', reasonCode: 'street_match', attempts: 1,
-            policyVersion: 'street-address-v6', retryAfterSeconds: null
+            policyVersion: 'street-address-v7', retryAfterSeconds: null
         },
         ...overrides
     };
@@ -317,7 +317,7 @@ function resolvedCandidate(address, placeId = 'resolved-place') {
         text: address.text, lat: 42.31, lon: -83.81, pid: placeId,
         resolution: {
             status: 'VERIFIED_UNIT', strategy: 'original', reasonCode: 'street_match', attempts: 1,
-            policyVersion: 'street-address-v6', retryAfterSeconds: null
+            policyVersion: 'street-address-v7', retryAfterSeconds: null
         }
     };
 }
@@ -555,7 +555,7 @@ test('terminal upload outcomes do not trigger an automatic second lookup', async
             text: `120 Main St Apt 104, Ann Arbor MI ${status}`,
             resolution: {
                 status, strategy: 'bounded_recovery', reasonCode: status.toLowerCase(), attempts: 8,
-                policyVersion: 'street-address-v6', retryAfterSeconds: status === 'DEFERRED' ? 30 : null
+                policyVersion: 'street-address-v7', retryAfterSeconds: status === 'DEFERRED' ? 30 : null
             }
         });
         const harness = createUploadHarness(async url => {
@@ -743,7 +743,7 @@ test('every terminal location outcome stays visible and only verified unit/build
     const addresses = statuses.map(status => {
         const resolution = {
             status, strategy: 'bounded_recovery', reasonCode: status.toLowerCase(), attempts: 4,
-            policyVersion: 'street-address-v6', retryAfterSeconds: status === 'DEFERRED' ? 30 : null
+            policyVersion: 'street-address-v7', retryAfterSeconds: status === 'DEFERRED' ? 30 : null
         };
         if (status === 'VERIFIED_UNIT') return candidate({ text: '120 Main St Apt 104, Ann Arbor MI', resolution });
         if (status === 'VERIFIED_BUILDING') return candidate({ text: '120 Main St Apt 104, Ann Arbor MI', resolution });
@@ -773,6 +773,91 @@ test('every terminal location outcome stays visible and only verified unit/build
     harness.context.ui.updateLocationResolutionNotice();
     assert.match(harness.notice.textContent, /2 of 6 stops verified/);
     assert.match(harness.notice.textContent, /1 no safe match, 1 ambiguous, 1 deferred, 1 temporarily unavailable/);
+});
+
+test('recovered locations show the Google address and retained screenshot text without changing verification claims', () => {
+    const locality = candidate({
+        text: '123 Main St, Requested City MI',
+        resolution: {
+            status: 'VERIFIED_UNIT', strategy: 'corroborated_locality', reasonCode: 'recovered_locality', attempts: 3,
+            policyVersion: 'street-address-v7', matchedAddress: '123 Main St, Alternate City, MI 48104, USA'
+        }
+    });
+    const streetRepresentation = candidate({
+        text: '456 North Oak St, Example City MI',
+        resolution: {
+            status: 'VERIFIED_UNIT', strategy: 'corroborated_street_representation',
+            reasonCode: 'recovered_street_representation', attempts: 3,
+            policyVersion: 'street-address-v7', matchedAddress: '456 North Oak Ave, Example City, MI 48104, USA'
+        }
+    });
+    const buildingOnly = candidate({
+        text: '789 Pine Rd Apt 104, Example City MI',
+        resolution: {
+            status: 'VERIFIED_BUILDING', strategy: 'corroborated_locality',
+            reasonCode: 'unit_not_confirmed', attempts: 3,
+            policyVersion: 'street-address-v7', matchedAddress: '789 Pine Rd, Alternate City, MI 48104, USA'
+        }
+    });
+    const ordinary = candidate({
+        resolution: {
+            status: 'VERIFIED_UNIT', strategy: 'original', reasonCode: 'exact_unit_match', attempts: 1,
+            policyVersion: 'street-address-v7', matchedAddress: '123 Main St, Map City, MI 48104, USA'
+        }
+    });
+    const addresses = [locality, streetRepresentation, buildingOnly, ordinary];
+    const harness = createLocationHarness(addresses, async () => { throw new Error('unexpected retry'); });
+    const messages = addresses.map((address, index) =>
+        harness.context.ui.createAddressItem(address, index).querySelector('.location-status').textContent);
+
+    assert.match(messages[0], /Google lists this street location under a different city name\. Map address: 123 Main St, Alternate City, MI 48104, USA\./);
+    assert.match(messages[0], /Your address text is retained\./);
+    assert.match(messages[1], /Google uses a different street spelling or type\. Map address: 456 North Oak Ave, Example City, MI 48104, USA\./);
+    assert.match(messages[1], /Your address text is retained\./);
+    assert.doesNotMatch(messages[0], /123 Main St, Requested City MI/);
+    assert.doesNotMatch(messages[1], /456 North Oak St, Example City MI/);
+    assert.doesNotMatch(messages[1], /exact OCR match/i);
+    assert.match(messages[2], /Building verified — Apt 104 retained; the unit was not verified/);
+    assert.match(messages[2], /Google lists this street location under a different city name/);
+    assert.doesNotMatch(messages[2], /Apartment or suite verified/);
+    assert.equal(messages[3], 'Apartment or suite verified.');
+});
+
+test('recovered verification safely falls back when matchedAddress is absent or malformed', () => {
+    const originalText = '321 Cedar Rd, Original City MI';
+    for (const matchedAddress of [undefined, null, {}, 17, '', 'x'.repeat(513)]) {
+        const resolution = {
+            status: 'VERIFIED_UNIT', strategy: 'corroborated_street_representation',
+            reasonCode: 'recovered_street_representation', attempts: 3, policyVersion: 'street-address-v7'
+        };
+        if (matchedAddress !== undefined) resolution.matchedAddress = matchedAddress;
+        const address = candidate({ text: originalText, resolution });
+        const harness = createLocationHarness([address], async () => { throw new Error('unexpected retry'); });
+        const message = harness.context.ui.createAddressItem(address, 0).querySelector('.location-status').textContent;
+
+        assert.match(message, /Apartment or suite verified\./);
+        assert.match(message, /Google uses a different street spelling or type\. Your address text is retained\./);
+        assert.doesNotMatch(message, /321 Cedar Rd, Original City MI/);
+        assert.doesNotMatch(message, /\[object Object\]/);
+        if (typeof matchedAddress === 'string' && matchedAddress.length > 512) assert.doesNotMatch(message, /x{513}/);
+    }
+});
+
+test('provider matchedAddress is rendered literally as text', () => {
+    const untrustedAddress = '<img src=x onerror=alert(1)> 555 Birch St, Map City MI';
+    const address = candidate({
+        text: '555 Birch St, Original City MI',
+        resolution: {
+            status: 'VERIFIED_UNIT', strategy: 'corroborated_locality', reasonCode: 'recovered_locality', attempts: 3,
+            policyVersion: 'street-address-v7', matchedAddress: untrustedAddress
+        }
+    });
+    const harness = createLocationHarness([address], async () => { throw new Error('unexpected retry'); });
+    const status = harness.context.ui.createAddressItem(address, 0).querySelector('.location-status');
+
+    assert.match(status.textContent, /Map address: <img src=x onerror=alert\(1\)> 555 Birch St, Map City MI\./);
+    assert.equal(status.querySelector('img'), null);
+    assert.equal(status.children.length, 0);
 });
 
 test('retry keeps focus on the active retry row after success and does not steal another row focus', async () => {
@@ -898,7 +983,9 @@ test('late location responses cannot overwrite edited text and reordered or remo
 for (const [savedState, resolution] of [
     ['legacy coordinates', null],
     ['v5 verified unit', { status: 'VERIFIED_UNIT', strategy: 'original', reasonCode: 'exact_unit_match', attempts: 1, policyVersion: 'street-address-v5' }],
-    ['v5 unit conflict', { status: 'NO_MATCH', strategy: 'original', reasonCode: 'unit_conflict', attempts: 1, policyVersion: 'street-address-v5' }]
+    ['v5 unit conflict', { status: 'NO_MATCH', strategy: 'original', reasonCode: 'unit_conflict', attempts: 1, policyVersion: 'street-address-v5' }],
+    ['v6 verified unit', { status: 'VERIFIED_UNIT', strategy: 'original', reasonCode: 'exact_unit_match', attempts: 1, policyVersion: 'street-address-v6' }],
+    ['v6 rejected no match', { status: 'NO_MATCH', strategy: 'original', reasonCode: 'no_safe_match', attempts: 8, policyVersion: 'street-address-v6' }]
 ]) {
 test(`restoring a session re-resolves ${savedState} before saving current-policy locations`, async () => {
     const unresolved = candidate({ text: '120 Main St Apt 330, Ann Arbor MI', resolution });
@@ -930,7 +1017,7 @@ test(`restoring a session re-resolves ${savedState} before saving current-policy
     assert.equal(context.extractedAddresses[0], unresolved);
     assert.equal(unresolved.pid, 'restored-place');
     assert.equal(unresolved.text, '120 Main St Apt 330, Ann Arbor MI');
-    assert.equal(unresolved.resolution.policyVersion, 'street-address-v6');
+    assert.equal(unresolved.resolution.policyVersion, 'street-address-v7');
     assert.deepEqual(saved, ['restored-place']);
 });
 }
