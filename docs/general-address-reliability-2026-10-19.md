@@ -57,6 +57,12 @@ collection requires vertical overlap, or an adjacent nearby plausible unit token
 This keeps unrelated header artifacts out of the first address while preserving
 uncertain unit evidence.
 
+Hash-prefixed lines before an address remain route metadata, including compact
+codes without spaces or punctuation. They cannot become detached-unit review
+evidence, whether their boxes overlap the address or sit immediately above it,
+unless the address explicitly ends in an apartment/unit marker. In that case a
+nearby hash-prefixed unit value remains visible for review instead of being lost.
+
 Geocoding `street-address-v7` invalidates older location metadata in cache/session
 validation. Recovered rows show Google's map address and retain the original
 address text. Unit verification and building-only verification remain distinct;
@@ -64,7 +70,7 @@ the normal retry/loading/success feedback and uncertain-command holds remain.
 
 ## Validation and release
 
-- Clean package: 231 Java tests passed, including 36 name/state/unit combinations
+- Clean package: 234 Java tests passed, including 36 name/state/unit combinations
   and rejection/proof-budget tests. All 36 frontend tests passed, including v5/v6
   saved-session migration and safe rendering of provider text.
 - Eleven user-authorized Google diagnostics were recorded privately. Replaying

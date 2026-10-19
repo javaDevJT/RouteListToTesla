@@ -189,7 +189,7 @@ public class AddressOcrService {
                 evidenceLineIndexes.add(lineIndex);
                 for (int previousLineIndex = lineIndex - 1; previousLineIndex >= 0; previousLineIndex--) {
                     OcrLine previous = lines.get(previousLineIndex);
-                    String previousText = previous.text().trim();
+                    String previousText = previous.text().trim().replace('＃', '#');
                     boolean verticalOverlap = previous.bottom() > line.top();
                     boolean horizontallyNear = linesAreHorizontallyNear(previous, line);
                     boolean mixedAlphaNumericUnit = UNIT_VALUE.matcher(previousText).matches()
@@ -202,7 +202,8 @@ public class AddressOcrService {
                             && horizontallyNear
                             && previousText.length() <= 32
                             && (mixedAlphaNumericUnit || numericUnitAfterMarker);
-                    if ((!verticalOverlap && !adjacentNearbyUnit)
+                    if ((previousText.startsWith("#") && !numericUnitAfterMarker)
+                            || (!verticalOverlap && !adjacentNearbyUnit)
                             || (previousText.length() > 3 && !adjacentNearbyUnit)
                             || addressCandidateText(previousText) != null || isStateOnlyLine(previousText)) break;
                     if (horizontallyNear) {
