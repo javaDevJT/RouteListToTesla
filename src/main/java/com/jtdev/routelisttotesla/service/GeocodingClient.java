@@ -22,6 +22,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -41,7 +42,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class GeocodingClient {
-    public static final String GEOCODING_VERSION = "street-address-v5";
+    public static final String GEOCODING_VERSION = "street-address-v6";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GeocodingClient.class);
     private static final String CONFLICTING_UNIT = "\u0000";
@@ -67,6 +68,8 @@ public class GeocodingClient {
     private static final Pattern UNIT_MARKER_WITH_VALUE = Pattern.compile(
             "(?i)(?:^|\\s)" + AddressExtractor.UNIT_LABELS + "\\.?\\s*#?\\s*"
                     + "((?:[A-Z]?\\d+[A-Z0-9-]*|[A-Z](?:-\\d+[A-Z]?)?))(?=\\s|$)");
+    private static final Pattern RETURNED_UNIT_LABEL = Pattern.compile(
+            "(?i)^(?:APARTMENT|APT|UNIT|SUITE|STE|ROOM|RM)\\.?\\s+");
     private static final Pattern TRAILING_POSTAL_CODE = Pattern.compile("(?i)^(.*?)(?:\\s+)?(\\d{5}(?:-\\d{4})?)$");
     private static final Set<String> CARDINAL_DIRECTIONS = Set.of("N", "S", "E", "W", "NE", "NW", "SE", "SW",
             "NORTH", "SOUTH", "EAST", "WEST", "NORTHEAST", "NORTHWEST", "SOUTHEAST", "SOUTHWEST");
@@ -827,13 +830,21 @@ public class GeocodingClient {
     }
 
     private static String returnedUnit(JsonNode result) {
-        List<String> returned = componentValues(result, "subpremise").stream().map(GeocodingClient::canonicalUnit)
+        List<String> returned = componentValues(result, "subpremise").stream().map(GeocodingClient::canonicalReturnedUnit)
                 .distinct().toList();
         return returned.isEmpty() ? null : returned.size() == 1 ? returned.getFirst() : CONFLICTING_UNIT;
     }
 
     private static String canonicalUnit(String unit) {
         return unit.toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]", "");
+    }
+
+    private static String canonicalReturnedUnit(String unit) {
+        // Google can display the same subpremise as "Apartment 208" / "Apt 208".
+        // Strip one explicit display label, preserving literal codes such as APT208
+        // and leaving unrecognized building/floor labels conflicting.
+        String normalized = Normalizer.normalize(unit, Normalizer.Form.NFKC).strip();
+        return canonicalUnit(RETURNED_UNIT_LABEL.matcher(normalized).replaceFirst(""));
     }
 
     private static String emptyToNull(String value) {

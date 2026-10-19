@@ -1,5 +1,7 @@
 # Documentation
 
+- [Apartment lookup and OCR evidence (2026-10-18)](southfield-address-and-ocr-evidence-2026-10-18.md): provider unit-label normalization, spatial metadata exclusion and saved-location migration.
+
 - [Street suffix and township recovery (2026-10-17)](address-aliases-2026-10-17.md): deployed comprehensive USPS catalog, supplied HEIC diagnosis, final native qualification and release proof.
 - [Automatic address recovery (2026-10-17)](address-resolution-recovery-plan-2026-10-17.md): deployed street-name validation, bounded recovery, clear outcomes and guarded saved-route retries; original HEIC review and complete release evidence.
 - [Address recovery and processing improvements (2026-10-17)](address-recovery-2026-10-17.md): complex names, time-label filtering, pre-send resolution and native speed qualification.

@@ -302,7 +302,7 @@ function candidate(overrides = {}) {
         ],
         resolution: {
             status: 'VERIFIED_UNIT', strategy: 'original', reasonCode: 'street_match', attempts: 1,
-            policyVersion: 'street-address-v5', retryAfterSeconds: null
+            policyVersion: 'street-address-v6', retryAfterSeconds: null
         },
         ...overrides
     };
@@ -317,7 +317,7 @@ function resolvedCandidate(address, placeId = 'resolved-place') {
         text: address.text, lat: 42.31, lon: -83.81, pid: placeId,
         resolution: {
             status: 'VERIFIED_UNIT', strategy: 'original', reasonCode: 'street_match', attempts: 1,
-            policyVersion: 'street-address-v5', retryAfterSeconds: null
+            policyVersion: 'street-address-v6', retryAfterSeconds: null
         }
     };
 }
@@ -555,7 +555,7 @@ test('terminal upload outcomes do not trigger an automatic second lookup', async
             text: `120 Main St Apt 104, Ann Arbor MI ${status}`,
             resolution: {
                 status, strategy: 'bounded_recovery', reasonCode: status.toLowerCase(), attempts: 8,
-                policyVersion: 'street-address-v5', retryAfterSeconds: status === 'DEFERRED' ? 30 : null
+                policyVersion: 'street-address-v6', retryAfterSeconds: status === 'DEFERRED' ? 30 : null
             }
         });
         const harness = createUploadHarness(async url => {
@@ -585,6 +585,8 @@ test('shows OCR support and literal engine readings, then confirms the current r
 
     const row = context.ui.createAddressItem(address, 0);
     assert.equal(row.querySelector('.ocr-agreement').textContent, 'OCR agreement: 2/3 engines');
+    assert.equal(row.querySelector('.ocr-review-label').textContent,
+        'Compare the engine readings and confirm or edit this address.');
     assert.equal(row.querySelector('.ocr-alternatives').children[1].textContent, 'Vision engine: ' + unsafeReading);
     assert.equal(row.querySelector('img'), null);
 
@@ -741,7 +743,7 @@ test('every terminal location outcome stays visible and only verified unit/build
     const addresses = statuses.map(status => {
         const resolution = {
             status, strategy: 'bounded_recovery', reasonCode: status.toLowerCase(), attempts: 4,
-            policyVersion: 'street-address-v5', retryAfterSeconds: status === 'DEFERRED' ? 30 : null
+            policyVersion: 'street-address-v6', retryAfterSeconds: status === 'DEFERRED' ? 30 : null
         };
         if (status === 'VERIFIED_UNIT') return candidate({ text: '120 Main St Apt 104, Ann Arbor MI', resolution });
         if (status === 'VERIFIED_BUILDING') return candidate({ text: '120 Main St Apt 104, Ann Arbor MI', resolution });
@@ -893,8 +895,13 @@ test('late location responses cannot overwrite edited text and reordered or remo
     assert.equal(removed.pid, null);
 });
 
-test('restoring a session re-resolves legacy coordinate rows before saving current-policy locations', async () => {
-    const unresolved = candidate({ text: '120 Main St Apt 330, Ann Arbor MI', resolution: null });
+for (const [savedState, resolution] of [
+    ['legacy coordinates', null],
+    ['v5 verified unit', { status: 'VERIFIED_UNIT', strategy: 'original', reasonCode: 'exact_unit_match', attempts: 1, policyVersion: 'street-address-v5' }],
+    ['v5 unit conflict', { status: 'NO_MATCH', strategy: 'original', reasonCode: 'unit_conflict', attempts: 1, policyVersion: 'street-address-v5' }]
+]) {
+test(`restoring a session re-resolves ${savedState} before saving current-policy locations`, async () => {
+    const unresolved = candidate({ text: '120 Main St Apt 330, Ann Arbor MI', resolution });
     const saved = [];
     let resolveCalls = 0;
     const elements = { vin: new FakeElement('select'), defaultState: new FakeElement('select') };
@@ -922,8 +929,11 @@ test('restoring a session re-resolves legacy coordinate rows before saving curre
     assert.equal(resolveCalls, 1);
     assert.equal(context.extractedAddresses[0], unresolved);
     assert.equal(unresolved.pid, 'restored-place');
+    assert.equal(unresolved.text, '120 Main St Apt 330, Ann Arbor MI');
+    assert.equal(unresolved.resolution.policyVersion, 'street-address-v6');
     assert.deepEqual(saved, ['restored-place']);
 });
+}
 
 test('pre-send validation stays retryable while uncertain outcomes remain held', async () => {
   const source = locationCoreSource

@@ -1067,6 +1067,61 @@ class GeocodingClientTest {
     }
 
     @Test
+    void normalizesProviderUnitDisplayLabelsOnTheOriginalLookup() throws Exception {
+        for (String label : List.of("Apartment", "Apt", "APT.", "Unit", "Suite", "Ste.", "Room", "RM")) {
+            AtomicInteger calls = new AtomicInteger();
+            String response = okUnitAddress("labelled-unit", "12345", "North Park Drive", "208",
+                    42.3, -83.2, "SAMPLE CITY", "MI")
+                    .replace("\"long_name\":\"208\",\"short_name\":\"208\",\"types\":[\"subpremise\"]",
+                            "\"long_name\":\"" + label + " 208\",\"short_name\":\"Apt 208\",\"types\":[\"subpremise\"]");
+            HttpServer server = server(exchange -> {calls.incrementAndGet(); respond(exchange, response);});
+            server.start();
+            try {
+                String original = "12345 N PARK DR APT 208, SAMPLE CITY, MI";
+                PlaceCandidate result = client(server, 20, 20, 1, 1).batchGeocode("owner-a",
+                        List.of(place(original, "scan.png", 0))).getFirst();
+                assertEquals("labelled-unit", result.pid(), label);
+                assertEquals(LocationResolution.Status.VERIFIED_UNIT, result.resolution().status(), label);
+                assertEquals("original", result.resolution().strategy());
+                assertEquals(original, result.text());
+                assertEquals(1, calls.get());
+            } finally {server.stop(0);}
+        }
+    }
+
+    @Test
+    void providerUnitLabelsDoNotHideConflictsOrRewriteLiteralUnitCodes() throws Exception {
+        for (String[] sample : List.of(
+                new String[]{"208", "Apartment 208", "Apt 209", null},
+                new String[]{"208", "Floor 208", "208", null},
+                new String[]{"208", "Building 208", "208", null},
+                new String[]{"208", "APT208", "APT208", null},
+                new String[]{"A208", "Apartment A208", "Apt A208", "unit"},
+                new String[]{"208A", "Apartment 208A", "Unit #208A", "unit"},
+                new String[]{"208", "Apartment 208", "Apt\u00a0208", "unit"},
+                new String[]{"208", "Apartment 0208", "Apt 0208", null})) {
+            AtomicInteger calls = new AtomicInteger();
+            String response = okUnitAddress("unit", "12345", "W SAMPLE ST", "208",
+                    42.3, -83.2, "SAMPLE CITY", "MI")
+                    .replace("\"long_name\":\"208\",\"short_name\":\"208\",\"types\":[\"subpremise\"]",
+                            "\"long_name\":\"" + sample[1] + "\",\"short_name\":\"" + sample[2] + "\",\"types\":[\"subpremise\"]");
+            HttpServer server = server(exchange -> {calls.incrementAndGet(); respond(exchange, response);});
+            server.start();
+            try {
+                String original = "12345 W SAMPLE ST UNIT " + sample[0] + ", SAMPLE CITY, MI";
+                PlaceCandidate result = client(server, 20, 20, 1, 1).batchGeocode("owner-a",
+                        List.of(place(original, "scan.png", 0))).getFirst();
+                assertEquals(sample[3], result.pid(), List.of(sample[0], sample[1], sample[2]).toString());
+                assertEquals(sample[3] == null ? LocationResolution.Status.NO_MATCH
+                        : LocationResolution.Status.VERIFIED_UNIT, result.resolution().status());
+                if (sample[3] == null) assertEquals("unit_conflict", result.resolution().reasonCode());
+                assertEquals(original, result.text());
+                assertEquals(1, calls.get(), "A conflict must not trigger a unitless retry");
+            } finally {server.stop(0);}
+        }
+    }
+
+    @Test
     void rejectsAConflictingUnitFromTheProvider() throws Exception {
         HttpServer server = server(exchange -> respond(exchange,
                 okUnitAddress("wrong-unit", "12345", "W SAMPLE ST", "999",

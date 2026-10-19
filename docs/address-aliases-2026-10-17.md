@@ -56,7 +56,9 @@ as well. County proximity, a neighborhood alone, contradictory city fields,
 partial results and city-center results cannot establish a verified destination.
 House, route, direction, unit, state, country and coordinate checks remain.
 
-Extraction policy is `ocr-consensus-v7`; geocoding policy is `street-address-v5`.
+That release uses extraction policy `ocr-consensus-v7` and geocoding policy
+`street-address-v5`. The [October 18 source update](southfield-address-and-ocr-evidence-2026-10-18.md)
+addresses spatial OCR evidence separately.
 Existing incompatible location metadata cannot authorize navigation. TAP stable
 subject authorization, CSRF, ordering/dedupe, eight-stop grouping, command holds
 and all three local OCR engines are preserved.

@@ -4,9 +4,25 @@ TAP-managed sign-in and stable-subject authorization replace independent Google 
 
 ## Source flow
 
+### October 18 spatial OCR evidence
+
+Extraction version `ocr-consensus-v8` separates short package counters from
+address evidence using both horizontal and vertical bounds. Only explicitly
+included address/locality lines and nearby possible unit fragments contribute
+agreement and review flags. Genuine address/unit disagreement still requires
+review; a review warning does not imply that no majority exists. See
+[the supplied-case investigation](southfield-address-and-ocr-evidence-2026-10-18.md).
+
+Geocoding policy `street-address-v6` normalizes explicit display prefixes on
+Google's structured subpremise names (for example Apartment / Apt) before
+comparing unit identifiers. Real number/code conflicts remain terminal; unknown
+floor/building labels and bare identifier prefixes are not stripped. The original
+unit-bearing query remains first. Incompatible saved resolution metadata is
+revalidated under the new policy.
+
 ### October 17 address recovery and image concurrency
 
-The current parser keeps complex labels separate from the following city and
+The October 17 parser keeps complex labels separate from the following city and
 rejects Expected-by/time/route-code rows. Extraction version `ocr-consensus-v7`
 and geocoding policy `street-address-v5` invalidate incompatible image results.
 The browser runs at most two single-image requests at once and the server admits

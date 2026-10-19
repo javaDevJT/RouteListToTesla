@@ -110,7 +110,7 @@ class AddressOcrServiceTest {
     void retainsOverlappingPossibleUnitAsRequiredReviewWithoutLosingTheCity() throws Exception {
         String tsv = TSV_HEADER + "\n" + String.join("\n",
                 "5\t1\t1\t1\t1\t1\t100\t100\t300\t30\t90\t123 MAIN ST",
-                "5\t1\t1\t1\t2\t1\t40\t105\t20\t20\t90\t3B",
+                "5\t1\t1\t1\t2\t1\t440\t105\t20\t20\t90\t3B",
                 "5\t1\t1\t1\t3\t1\t100\t140\t120\t20\t90\tDETROIT");
         Map<String, Object> evidence = Map.of(
                 "1", Map.of("agreement", 2, "reviewRequired", false, "alternatives", List.of(
@@ -129,7 +129,7 @@ class AddressOcrServiceTest {
         assertTrue(candidates.get(0).ocrAlternatives().stream().anyMatch(value -> value.endsWith(": 3B")));
 
         String precedingTsv = TSV_HEADER + "\n" + String.join("\n",
-                "5\t1\t1\t1\t1\t1\t40\t100\t20\t20\t90\t3B",
+                "5\t1\t1\t1\t1\t1\t110\t100\t20\t20\t90\t3B",
                 "5\t1\t1\t1\t2\t1\t100\t100\t300\t30\t90\t123 MAIN ST",
                 "5\t1\t1\t1\t3\t1\t100\t140\t120\t20\t90\tDETROIT");
         String precedingOutput = new ObjectMapper().writeValueAsString(Map.of("schemaVersion", 1,
@@ -141,6 +141,141 @@ class AddressOcrServiceTest {
         assertEquals("123 MAIN ST, DETROIT", precedingCandidate.text());
         assertTrue(precedingCandidate.ocrReviewRequired());
         assertTrue(precedingCandidate.ocrAlternatives().stream().anyMatch(value -> value.endsWith(": 3B")));
+    }
+
+    @Test
+    void excludesFarRightBadgeEvidenceButKeepsAddressDisagreementAndApartmentNumbers() throws Exception {
+        String tsv = TSV_HEADER + "\n" + String.join("\n",
+                "5\t1\t1\t1\t1\t1\t38\t159\t470\t26\t90\t12345 N PARK DR APT 208",
+                "5\t1\t1\t1\t2\t1\t38\t213\t180\t23\t90\tTROY",
+                "5\t1\t1\t1\t3\t1\t867\t380\t70\t34\t90\t20",
+                "5\t1\t1\t1\t4\t1\t31\t401\t518\t40\t90\t9876 KINGSWOOD ST APT 102",
+                "5\t1\t1\t1\t5\t1\t31\t462\t140\t23\t90\tWARREN");
+        Map<String, Object> badgeEvidence = evidence(2, true, List.of(
+                reading("tesseract", "20"),
+                reading("paddleocr", "2"),
+                reading("easyocr", "2")));
+        Map<String, Object> lineEvidence = Map.of(
+                "1", consensusEvidence("12345 N PARK DR APT 208"),
+                "2", consensusEvidence("TROY"),
+                "3", badgeEvidence,
+                "4", consensusEvidence("9876 KINGSWOOD ST APT 102"),
+                "5", consensusEvidence("WARREN"));
+        String cleanOutput = consensusOutput(tsv, lineEvidence);
+        AddressOcrService cleanService = new AddressOcrService("ocr-binary", "eng",
+                ignored -> new AddressOcrService.ProcessResult(0, cleanOutput, ""), false);
+
+        List<PlaceCandidate> cleanCandidates = cleanService.extractAddressCandidates(png(), "route.png", "MI");
+
+        assertEquals(List.of(
+                "12345 N PARK DR APT 208, TROY, MI",
+                "9876 KINGSWOOD ST APT 102, WARREN, MI"),
+                cleanCandidates.stream().map(PlaceCandidate::text).toList());
+        assertEquals(List.of(3, 3), cleanCandidates.stream().map(PlaceCandidate::ocrAgreement).toList());
+        assertTrue(cleanCandidates.stream().noneMatch(PlaceCandidate::ocrReviewRequired));
+        assertTrue(cleanCandidates.stream().flatMap(candidate -> candidate.ocrAlternatives().stream())
+                .noneMatch(alternative -> alternative.startsWith("line 3 ")));
+
+        Map<String, Object> ambiguousEvidence = new java.util.HashMap<>(lineEvidence);
+        ambiguousEvidence.put("4", evidence(2, true, List.of(
+                reading("tesseract", "9876 KINGSWOOD ST APT 102"),
+                reading("paddleocr", "9876 KINGSWOOD ST APT 102"),
+                reading("easyocr", "9876 KINGSWOOD ST APT 103"))));
+        String ambiguousOutput = consensusOutput(tsv, ambiguousEvidence);
+        AddressOcrService ambiguousService = new AddressOcrService("ocr-binary", "eng",
+                ignored -> new AddressOcrService.ProcessResult(0, ambiguousOutput, ""), false);
+
+        PlaceCandidate ambiguousCandidate = ambiguousService
+                .extractAddressCandidates(png(), "route.png", "MI").get(1);
+
+        assertEquals("9876 KINGSWOOD ST APT 102, WARREN, MI", ambiguousCandidate.text());
+        assertEquals(2, ambiguousCandidate.ocrAgreement());
+        assertTrue(ambiguousCandidate.ocrReviewRequired());
+        assertTrue(ambiguousCandidate.ocrAlternatives().contains(
+                "line 4 easyocr: 9876 KINGSWOOD ST APT 103"));
+    }
+
+    @Test
+    void skipsFarBadgeAndStillFindsNearbyPossibleUnitBeforeTheAddress() throws Exception {
+        String tsv = TSV_HEADER + "\n" + String.join("\n",
+                "5\t1\t1\t1\t1\t1\t590\t380\t20\t25\t90\t3B",
+                "5\t1\t1\t1\t2\t1\t867\t390\t70\t34\t90\t20",
+                "5\t1\t1\t1\t3\t1\t31\t401\t518\t40\t90\t9876 KINGSWOOD ST APT 102",
+                "5\t1\t1\t1\t4\t1\t31\t462\t140\t23\t90\tWARREN");
+        Map<String, Object> lineEvidence = Map.of(
+                "1", evidence(1, true, List.of(reading("easyocr", "3B"))),
+                "2", evidence(2, true, List.of(
+                        reading("tesseract", "20"),
+                        reading("paddleocr", "2"),
+                        reading("easyocr", "2"))),
+                "3", consensusEvidence("9876 KINGSWOOD ST APT 102"),
+                "4", consensusEvidence("WARREN"));
+        String output = consensusOutput(tsv, lineEvidence);
+        AddressOcrService service = new AddressOcrService("ocr-binary", "eng",
+                ignored -> new AddressOcrService.ProcessResult(0, output, ""), false);
+
+        PlaceCandidate candidate = service.extractAddressCandidates(png(), "route.png", "MI").get(0);
+
+        assertEquals("9876 KINGSWOOD ST APT 102, WARREN, MI", candidate.text());
+        assertEquals(1, candidate.ocrAgreement());
+        assertTrue(candidate.ocrReviewRequired());
+        assertTrue(candidate.ocrAlternatives().contains("line 1 easyocr: 3B"));
+        assertTrue(candidate.ocrAlternatives().stream().noneMatch(alternative -> alternative.startsWith("line 2 ")));
+    }
+
+    @Test
+    void skipsFarBadgeBeforeNearbyPossibleUnitAndKeepsLocalityAnchorOnTheAddress() throws Exception {
+        String tsv = TSV_HEADER + "\n" + String.join("\n",
+                "5\t1\t1\t1\t1\t1\t31\t380\t518\t40\t90\t9876 KINGSWOOD ST APT 102",
+                "5\t1\t1\t1\t2\t1\t867\t401\t70\t34\t90\t20",
+                "5\t1\t1\t1\t3\t1\t590\t410\t20\t25\t90\t3B",
+                "5\t1\t1\t1\t4\t1\t31\t462\t140\t23\t90\tWARREN");
+        Map<String, Object> lineEvidence = Map.of(
+                "1", consensusEvidence("9876 KINGSWOOD ST APT 102"),
+                "2", evidence(2, true, List.of(
+                        reading("tesseract", "20"),
+                        reading("paddleocr", "2"),
+                        reading("easyocr", "2"))),
+                "3", evidence(1, true, List.of(reading("easyocr", "3B"))),
+                "4", consensusEvidence("WARREN"));
+        String output = consensusOutput(tsv, lineEvidence);
+        AddressOcrService service = new AddressOcrService("ocr-binary", "eng",
+                ignored -> new AddressOcrService.ProcessResult(0, output, ""), false);
+
+        PlaceCandidate candidate = service.extractAddressCandidates(png(), "route.png", "MI").get(0);
+
+        assertEquals("9876 KINGSWOOD ST APT 102, WARREN, MI", candidate.text());
+        assertEquals(1, candidate.ocrAgreement());
+        assertTrue(candidate.ocrReviewRequired());
+        assertTrue(candidate.ocrAlternatives().contains("line 3 easyocr: 3B"));
+        assertTrue(candidate.ocrAlternatives().stream().noneMatch(alternative -> alternative.startsWith("line 2 ")));
+    }
+
+    @Test
+    void skipsFarBadgeInsteadOfJoiningItAsUnitValueThenKeepsNearbyWrappedUnit() throws Exception {
+        String tsv = TSV_HEADER + "\n" + String.join("\n",
+                "5\t1\t1\t1\t1\t1\t31\t380\t300\t40\t90\t12345 N PARK DR APT",
+                "5\t1\t1\t1\t2\t1\t867\t390\t70\t34\t90\t20",
+                "5\t1\t1\t1\t3\t1\t340\t401\t20\t25\t90\t102",
+                "5\t1\t1\t1\t4\t1\t31\t462\t140\t23\t90\tWARREN");
+        Map<String, Object> lineEvidence = Map.of(
+                "1", consensusEvidence("12345 N PARK DR APT"),
+                "2", evidence(2, true, List.of(
+                        reading("tesseract", "20"),
+                        reading("paddleocr", "2"),
+                        reading("easyocr", "2"))),
+                "3", consensusEvidence("102"),
+                "4", consensusEvidence("WARREN"));
+        String output = consensusOutput(tsv, lineEvidence);
+        AddressOcrService service = new AddressOcrService("ocr-binary", "eng",
+                ignored -> new AddressOcrService.ProcessResult(0, output, ""), false);
+
+        PlaceCandidate candidate = service.extractAddressCandidates(png(), "route.png", "MI").get(0);
+
+        assertEquals("12345 N PARK DR APT 102, WARREN, MI", candidate.text());
+        assertEquals(3, candidate.ocrAgreement());
+        assertTrue(candidate.ocrAlternatives().stream().noneMatch(alternative -> alternative.startsWith("line 2 ")));
+        assertFalse(candidate.ocrReviewRequired());
     }
 
     @Test
@@ -201,6 +336,15 @@ class AddressOcrServiceTest {
                 "engines", List.of("tesseract", "paddleocr", "easyocr"),
                 "tsv", tsv,
                 "lineEvidence", Map.of("1", lineEvidence));
+        return new ObjectMapper().writeValueAsString(wrapper);
+    }
+
+    private static String consensusOutput(String tsv, Map<String, Object> lineEvidence) throws Exception {
+        Map<String, Object> wrapper = Map.of(
+                "schemaVersion", 1,
+                "engines", List.of("tesseract", "paddleocr", "easyocr"),
+                "tsv", tsv,
+                "lineEvidence", lineEvidence);
         return new ObjectMapper().writeValueAsString(wrapper);
     }
 
@@ -383,6 +527,13 @@ class AddressOcrServiceTest {
     private static Map<String, Object> evidence(
             int agreement, boolean reviewRequired, List<Map<String, String>> alternatives) {
         return Map.of("agreement", agreement, "reviewRequired", reviewRequired, "alternatives", alternatives);
+    }
+
+    private static Map<String, Object> consensusEvidence(String text) {
+        return evidence(3, false, List.of(
+                reading("tesseract", text),
+                reading("paddleocr", text),
+                reading("easyocr", text)));
     }
 
     @Test

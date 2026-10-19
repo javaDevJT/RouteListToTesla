@@ -46,7 +46,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class AddressOcrService {
-    public static final String EXTRACTION_VERSION = "ocr-consensus-v7";
+    public static final String EXTRACTION_VERSION = "ocr-consensus-v8";
 
     static final int MAX_IMAGE_BYTES = 12 * 1024 * 1024;
     static final long MAX_IMAGE_PIXELS = 20_000_000L;
@@ -184,63 +184,87 @@ public class AddressOcrService {
                 }
 
                 int lastLineIndex = lineIndex;
+                int lastAddressLineIndex = lineIndex;
                 boolean overlappingFragment = false;
-                int firstLineIndex = lineIndex;
-                while (firstLineIndex > 0) {
-                    OcrLine previous = lines.get(firstLineIndex - 1);
+                List<Integer> evidenceLineIndexes = new ArrayList<>();
+                evidenceLineIndexes.add(lineIndex);
+                for (int previousLineIndex = lineIndex - 1; previousLineIndex >= 0; previousLineIndex--) {
+                    OcrLine previous = lines.get(previousLineIndex);
                     if (previous.bottom() <= line.top() || previous.text().trim().length() > 3
                             || addressCandidateText(previous.text()) != null) break;
-                    overlappingFragment = true;
-                    firstLineIndex--;
+                    if (linesAreHorizontallyNear(previous, line)) {
+                        overlappingFragment = true;
+                        evidenceLineIndexes.add(previousLineIndex);
+                    }
                 }
-                while (lastLineIndex + 1 < lines.size()) {
-                    OcrLine previousLine = lines.get(lastLineIndex);
-                    OcrLine nextLine = lines.get(lastLineIndex + 1);
+                int nextLineIndex = lineIndex + 1;
+                while (nextLineIndex < lines.size()) {
+                    OcrLine previousLine = lines.get(lastAddressLineIndex);
+                    OcrLine nextLine = lines.get(nextLineIndex);
                     String continuation = nextLine.text().trim();
-                    boolean smallOverlap = continuation.length() <= 3 && nextLine.top() < line.bottom()
+                    boolean addressContinuation = isAddressContinuation(addressText, continuation);
+                    boolean smallFragment = continuation.length() <= 3
                             && addressCandidateText(continuation) == null;
+                    boolean verticalOverlap = nextLine.top() < previousLine.bottom();
+                    boolean smallOverlap = smallFragment && verticalOverlap
+                            && linesAreHorizontallyNear(previousLine, nextLine);
+                    if (smallFragment && verticalOverlap && !smallOverlap) {
+                        // Skip side-column metadata but keep looking from the last address line.
+                        nextLineIndex++;
+                        continue;
+                    }
                     if (!linesAreAdjacent(previousLine, nextLine) && !smallOverlap) {
                         break;
                     }
-                    if (AddressExtractor.continuesStreet(addressText, continuation)
-                            || UNIT_LINE.matcher(continuation).matches()
-                            || (UNIT_MARKER_END.matcher(addressText).find()
-                                    && UNIT_VALUE.matcher(continuation).matches())
-                            || (addressText.endsWith(" UN") && continuation.matches("(?i)^IT\\s+\\d+.*"))) {
+                    if (addressContinuation) {
                         addressText += " " + continuation;
-                        lastLineIndex++;
+                        lastLineIndex = nextLineIndex;
+                        lastAddressLineIndex = nextLineIndex;
+                        evidenceLineIndexes.add(lastLineIndex);
+                        nextLineIndex++;
                     } else if (smallOverlap) {
-                        // Retain possible units and stop badges as evidence that requires review.
+                        // A nearby short fragment may be an unlabelled unit, so keep it reviewable.
                         overlappingFragment = true;
-                        lastLineIndex++;
+                        lastLineIndex = nextLineIndex;
+                        lastAddressLineIndex = nextLineIndex;
+                        evidenceLineIndexes.add(lastLineIndex);
+                        nextLineIndex++;
                     } else {
                         break;
                     }
                 }
 
-                if (lastLineIndex + 1 < lines.size()) {
-                    OcrLine lastAddressLine = lines.get(lastLineIndex);
-                    OcrLine followingLine = lines.get(lastLineIndex + 1);
+                if (nextLineIndex < lines.size()) {
+                    OcrLine lastAddressLine = lines.get(lastAddressLineIndex);
+                    OcrLine followingLine = lines.get(nextLineIndex);
                     String locality = adjacentLocality(lastAddressLine, followingLine);
                     if (locality != null) {
                         boolean complexAddress = AddressExtractor.isLikelyComplexName(locality);
                         addressText += ", " + locality;
-                        lastLineIndex++;
-                        if (complexAddress && lastLineIndex + 1 < lines.size()) {
-                            OcrLine possibleCityLine = lines.get(lastLineIndex + 1);
+                        lastLineIndex = nextLineIndex;
+                        lastAddressLineIndex = nextLineIndex;
+                        evidenceLineIndexes.add(lastLineIndex);
+                        nextLineIndex++;
+                        if (complexAddress && nextLineIndex < lines.size()) {
+                            OcrLine possibleCityLine = lines.get(nextLineIndex);
                             String city = adjacentLocality(lines.get(lastLineIndex), possibleCityLine);
                             if (city != null && !isStateOnlyLine(possibleCityLine.text())) {
                                 addressText += ", " + city;
-                                lastLineIndex++;
+                                lastLineIndex = nextLineIndex;
+                                lastAddressLineIndex = nextLineIndex;
+                                evidenceLineIndexes.add(lastLineIndex);
+                                nextLineIndex++;
                             }
                         }
-                        if (lastLineIndex + 1 < lines.size()) {
-                            OcrLine stateLine = lines.get(lastLineIndex + 1);
+                        if (nextLineIndex < lines.size()) {
+                            OcrLine stateLine = lines.get(nextLineIndex);
                             if (linesAreAdjacent(lines.get(lastLineIndex), stateLine)
                                     && isStateOnlyLine(stateLine.text())
                                     && STATE_SUFFIX.matcher(stateLine.text()).find()) {
                                 addressText += " " + stateLine.text().trim();
-                                lastLineIndex++;
+                                lastLineIndex = nextLineIndex;
+                                lastAddressLineIndex = nextLineIndex;
+                                evidenceLineIndexes.add(lastLineIndex);
                             }
                         }
                     }
@@ -248,7 +272,7 @@ public class AddressOcrService {
                 // Do not apply a confidence cutoff: ambiguous address-like rows stay in the editable review list.
                 String text = withDefaultState(addressText, defaultState);
                 CandidateOcrEvidence ocrEvidence = candidateEvidence(
-                        parsedOutput.lineEvidence(), parsedOutput.consensus(), firstLineIndex, lastLineIndex);
+                        parsedOutput.lineEvidence(), parsedOutput.consensus(), evidenceLineIndexes);
                 candidates.add(new PlaceCandidate(
                         text,
                         text.toUpperCase(Locale.ROOT),
@@ -523,8 +547,7 @@ public class AddressOcrService {
     private static CandidateOcrEvidence candidateEvidence(
             Map<Integer, LineEvidence> lineEvidence,
             boolean consensus,
-            int firstLineIndex,
-            int lastLineIndex) {
+            List<Integer> lineIndexes) {
         if (!consensus) {
             return new CandidateOcrEvidence(0, false, List.of());
         }
@@ -532,7 +555,7 @@ public class AddressOcrService {
         int agreement = CONSENSUS_ENGINES.size();
         boolean reviewRequired = false;
         List<String> alternatives = new ArrayList<>();
-        for (int index = firstLineIndex; index <= lastLineIndex; index++) {
+        for (int index : lineIndexes.stream().distinct().sorted().toList()) {
             int lineNumber = index + 1;
             LineEvidence evidence = lineEvidence.get(lineNumber);
             if (evidence == null) {
@@ -573,6 +596,8 @@ public class AddressOcrService {
                 double confidence = Double.parseDouble(columns[10]);
                 lines.computeIfAbsent(key, ignored -> new LineBuilder())
                         .add(wordNumber, word, confidence,
+                                Integer.parseInt(columns[6]),
+                                Integer.parseInt(columns[6]) + Integer.parseInt(columns[8]),
                                 Integer.parseInt(columns[7]),
                                 Integer.parseInt(columns[7]) + Integer.parseInt(columns[9]));
             } catch (NumberFormatException ignored) {
@@ -624,6 +649,20 @@ public class AddressOcrService {
         int overlap = Math.max(2, (int) Math.ceil(Math.min(
                 first.bottom() - first.top(), second.bottom() - second.top()) * 0.3));
         return gap >= -overlap && gap <= Math.max(12, (int) Math.ceil(lineHeight * 1.5));
+    }
+
+    private static boolean linesAreHorizontallyNear(OcrLine first, OcrLine second) {
+        // Badge-column text can overlap an address vertically; short fragments must also sit in its text column.
+        int gap = Math.max(0, Math.max(first.left() - second.right(), second.left() - first.right()));
+        int lineHeight = Math.max(first.bottom() - first.top(), second.bottom() - second.top());
+        return gap <= Math.max(12, (int) Math.ceil(lineHeight * 1.5));
+    }
+
+    private static boolean isAddressContinuation(String addressText, String continuation) {
+        return AddressExtractor.continuesStreet(addressText, continuation)
+                || UNIT_LINE.matcher(continuation).matches()
+                || (UNIT_MARKER_END.matcher(addressText).find() && UNIT_VALUE.matcher(continuation).matches())
+                || (addressText.endsWith(" UN") && continuation.matches("(?i)^IT\\s+\\d+.*"));
     }
 
     private static ProcessResult runCommand(List<String> command) throws IOException, InterruptedException {
@@ -835,11 +874,17 @@ public class AddressOcrService {
         private final Map<Integer, OcrWord> words = new TreeMap<>();
         private double confidenceTotal;
         private int confidenceWords;
+        private int left = Integer.MAX_VALUE;
+        private int right = Integer.MIN_VALUE;
         private int top = Integer.MAX_VALUE;
         private int bottom = Integer.MIN_VALUE;
 
-        private void add(int wordNumber, String word, double confidence, int wordTop, int wordBottom) {
+        private void add(
+                int wordNumber, String word, double confidence,
+                int wordLeft, int wordRight, int wordTop, int wordBottom) {
             words.put(wordNumber, new OcrWord(word, confidence));
+            left = Math.min(left, wordLeft);
+            right = Math.max(right, wordRight);
             top = Math.min(top, wordTop);
             bottom = Math.max(bottom, wordBottom);
             if (confidence >= 0) {
@@ -851,13 +896,13 @@ public class AddressOcrService {
         private OcrLine build() {
             double confidence = confidenceWords == 0 ? 0 : confidenceTotal / confidenceWords;
             String text = words.values().stream().map(OcrWord::text).collect(java.util.stream.Collectors.joining(" "));
-            return new OcrLine(text, confidence, top, bottom);
+            return new OcrLine(text, confidence, left, right, top, bottom);
         }
     }
 
     private record OcrWord(String text, double confidence) {
     }
 
-    private record OcrLine(String text, double confidence, int top, int bottom) {
+    private record OcrLine(String text, double confidence, int left, int right, int top, int bottom) {
     }
 }

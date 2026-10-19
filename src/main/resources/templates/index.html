@@ -254,7 +254,7 @@
         const locationAddressRows = new WeakMap();
         const LOCATION_RESOLVE_BATCH_SIZE = 500;
         const LOCATION_RESOLVE_MAX_TEXT_LENGTH = 1000;
-        const LOCATION_POLICY_VERSION = 'street-address-v5';
+        const LOCATION_POLICY_VERSION = 'street-address-v6';
         const LOCATION_RESOLUTION_STATUSES = new Set([
             'VERIFIED_UNIT', 'VERIFIED_BUILDING', 'NO_MATCH', 'AMBIGUOUS', 'DEFERRED', 'LOOKUP_UNAVAILABLE'
         ]);
@@ -1269,7 +1269,7 @@
 
                 const reviewLabel = document.createElement('strong');
                 reviewLabel.className = 'ocr-review-label';
-                reviewLabel.textContent = 'No majority reading. Compare the engine readings and confirm or edit this address.';
+                reviewLabel.textContent = 'Compare the engine readings and confirm or edit this address.';
                 review.appendChild(reviewLabel);
 
                 const alternatives = Array.isArray(address.ocrAlternatives) ? address.ocrAlternatives : [];
