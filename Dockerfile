@@ -87,6 +87,8 @@ ENV JAVA_HOME=/opt/java PATH="/opt/java/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     OMP_THREAD_LIMIT=2 OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 \
     OCR_TESSERACT_EXECUTABLE=/app/ocr/run OCR_MODEL_MANIFEST=/app/ocr/models.json
+ARG QB_SOURCE_COMMIT=unknown
+ENV QB_SOURCE_COMMIT=${QB_SOURCE_COMMIT}
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.source="https://github.com/javaDevJT/RouteListToTesla" \
     org.opencontainers.image.revision="${VCS_REF}"
@@ -94,5 +96,5 @@ LABEL org.opencontainers.image.source="https://github.com/javaDevJT/RouteListToT
 USER 10001:10001
 EXPOSE 10088
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
-    CMD curl --fail --silent http://127.0.0.1:10088/login >/dev/null || exit 1
+    CMD curl --fail --silent http://127.0.0.1:10088/health >/dev/null || exit 1
 CMD ["java", "-jar", "/app/app.jar"]
