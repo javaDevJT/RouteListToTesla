@@ -1,6 +1,6 @@
 # Documentation
 
-- [General address reliability (2026-10-19)](general-address-reliability-2026-10-19.md): bounded provider-corroborated recovery, OCR layout boundaries and release checks.
+- [General address reliability (2026-10-19)](general-address-reliability-2026-10-19.md): deployed provider-corroborated recovery, OCR metadata boundaries, native quality/speed qualification and release proof.
 
 - [Apartment lookup and OCR evidence (2026-10-18)](southfield-address-and-ocr-evidence-2026-10-18.md): provider unit-label normalization, spatial metadata exclusion and saved-location migration.
 

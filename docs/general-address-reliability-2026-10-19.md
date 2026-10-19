@@ -82,11 +82,40 @@ the normal retry/loading/success feedback and uncertain-command holds remain.
   tests passed, and disposable QA app/fixtures cleaned up. This baseline used
   source overlays and is not final-image qualification.
 
-Final image qualification and deployment evidence will be recorded after the
-source CI, security/storage/publication gates and immutable image checks finish.
-No vehicle commands are part of validation. Credentials, original delivery
-screenshots and provider bodies remain outside source control. Existing data,
-TAP authorization, CSRF, ordering/dedupe and eight-stop grouping are preserved.
+- Final immutable image qualification: all 20 screenshot cases matched the exact
+  expected address order and text using Tesseract, PaddleOCR and EasyOCR. All 36
+  Python tests passed. No source overlays were used; the geocoder loaded from the
+  image's application JAR and verified all six supplied stops using nine recorded
+  fixture requests. Review decisions matched the accepted source baseline.
+- One paired native trial measured 37.8 seconds sequentially versus 20.7 seconds
+  with two images concurrently. Candidate text, engine agreement and review
+  decisions were identical. Qualification peaked at 2.29 GiB with no memory-limit
+  events. The disposable QA app and fixtures were removed.
+
+Source [`b2c93c4`](https://github.com/javaDevJT/RouteListToTesla/commit/b2c93c462243e82940f980c170e86c4dd71e6687)
+passed [CI run 39294835459, attempt 1](https://github.com/javaDevJT/RouteListToTesla/actions/runs/39294835459/attempts/1),
+including storage enforcement, publication and zero High/Critical findings.
+The scanned, qualified and deployed image is:
+
+```text
+ghcr.io/javadevjt/routelisttotesla@sha256:d982845d2821a1b7ccfcd6b512d3bad060d32110533ad6c4d33f1ce523b9ec83
+```
+
+TrueNAS deployment job `25106` completed successfully. Release
+`20261019-general-recovery` runs with eight CPUs, 8 GiB, UID 10001, a read-only
+root filesystem and no published host ports. Configuration and persistent volume
+mounts were preserved. The live `/health` response reports the exact source
+commit, the served theme matches the tested CSS, and TAP login redirects and
+unauthenticated/CSRF rejection checks passed. A live 390-pixel mobile Chrome
+check confirmed the release identity, visible TAP sign-in link and no horizontal
+overflow; the rendered page was visually inspected.
+
+Refresh an existing Safari tab before uploading again so it loads the new review
+page and saved-result migration. No vehicle commands or additional live Google
+requests were part of final image qualification or deployment verification.
+Credentials, original screenshots and provider bodies remain outside source
+control. Existing data, TAP authorization, CSRF, ordering/dedupe and eight-stop
+grouping are preserved.
 
 API references: Google's [forward geocoding response contract](https://developers.google.com/maps/documentation/geocoding/guides-v3/requests-geocoding)
 and [reverse-geocoding contract](https://developers.google.com/maps/documentation/geocoding/guides-v3/requests-reverse-geocoding).
