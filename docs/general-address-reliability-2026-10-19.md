@@ -50,6 +50,13 @@ or the street-to-city join. Nearby uncertain unit fragments remain evidence and
 still require review. Strict consensus packet validation and all three engines
 remain intact.
 
+Only validated state codes form standalone state boundaries. Unknown short OCR
+fragments cannot prematurely terminate the following city line. Backward evidence
+collection requires vertical overlap, or an adjacent nearby plausible unit token
+(mixed letters/digits or an explicit unit marker, bounded to 32 characters).
+This keeps unrelated header artifacts out of the first address while preserving
+uncertain unit evidence.
+
 Geocoding `street-address-v7` invalidates older location metadata in cache/session
 validation. Recovered rows show Google's map address and retain the original
 address text. Unit verification and building-only verification remain distinct;
@@ -57,7 +64,7 @@ the normal retry/loading/success feedback and uncertain-command holds remain.
 
 ## Validation and release
 
-- Clean package: 228 Java tests passed, including 36 name/state/unit combinations
+- Clean package: 231 Java tests passed, including 36 name/state/unit combinations
   and rejection/proof-budget tests. All 36 frontend tests passed, including v5/v6
   saved-session migration and safe rendering of provider text.
 - Eleven user-authorized Google diagnostics were recorded privately. Replaying

@@ -66,7 +66,6 @@ public class AddressOcrService {
     private static final Pattern STATE_SUFFIX = Pattern.compile(
             "(?i)(?:^|[,\\s])(?:AL|AK|AZ|AR|CA|CO|CT|DE|DC|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|PR|GU|VI|AS|MP|ALABAMA|ALASKA|ARIZONA|ARKANSAS|CALIFORNIA|COLORADO|CONNECTICUT|DELAWARE|FLORIDA|GEORGIA|HAWAII|IDAHO|ILLINOIS|INDIANA|IOWA|KANSAS|KENTUCKY|LOUISIANA|MAINE|MARYLAND|MASSACHUSETTS|MICHIGAN|MINNESOTA|MISSISSIPPI|MISSOURI|MONTANA|NEBRASKA|NEVADA|NEW\\s+HAMPSHIRE|NEW\\s+JERSEY|NEW\\s+MEXICO|NEW\\s+YORK|NORTH\\s+CAROLINA|NORTH\\s+DAKOTA|OHIO|OKLAHOMA|OREGON|PENNSYLVANIA|RHODE\\s+ISLAND|SOUTH\\s+CAROLINA|SOUTH\\s+DAKOTA|TENNESSEE|TEXAS|UTAH|VERMONT|VIRGINIA|WASHINGTON|WEST\\s+VIRGINIA|WISCONSIN|WYOMING)(?:[,\\s]+\\d{5}(?:-\\d{4})?)?(?:[,\\s]+(?:USA|UNITED\\s+STATES))?\\s*$");
     private static final Pattern ZIP_SUFFIX = Pattern.compile("\\b\\d{5}(?:-\\d{4})?\\s*$");
-    private static final Pattern STATE_ONLY_LINE = Pattern.compile("(?i)^\\s*[A-Z]{2}(?:\\s+\\d{5}(?:-\\d{4})?)?\\s*$");
     private static final Pattern UNIT_LINE = Pattern.compile("(?i)^" + AddressExtractor.UNIT_LABELS + "\\s*#?\\s*[\\p{L}\\p{N}-]*\\s*$");
     private static final Pattern UNIT_MARKER_END = Pattern.compile("(?i)(?:^|\\s)" + AddressExtractor.UNIT_LABELS + "\\s*$");
     private static final Pattern UNIT_VALUE = Pattern.compile("(?i)^#?[\\p{L}\\p{N}][\\p{L}\\p{N}-]*$");
@@ -191,9 +190,22 @@ public class AddressOcrService {
                 for (int previousLineIndex = lineIndex - 1; previousLineIndex >= 0; previousLineIndex--) {
                     OcrLine previous = lines.get(previousLineIndex);
                     String previousText = previous.text().trim();
-                    if (!linesAreVerticallyAdjacentOrOverlapping(previous, line) || previousText.length() > 3
+                    boolean verticalOverlap = previous.bottom() > line.top();
+                    boolean horizontallyNear = linesAreHorizontallyNear(previous, line);
+                    boolean mixedAlphaNumericUnit = UNIT_VALUE.matcher(previousText).matches()
+                            && previousText.chars().anyMatch(Character::isLetter)
+                            && previousText.chars().anyMatch(Character::isDigit);
+                    boolean numericUnitAfterMarker = UNIT_MARKER_END.matcher(addressText).find()
+                            && UNIT_VALUE.matcher(previousText).matches();
+                    boolean adjacentNearbyUnit = !verticalOverlap
+                            && linesAreAdjacent(previous, line)
+                            && horizontallyNear
+                            && previousText.length() <= 32
+                            && (mixedAlphaNumericUnit || numericUnitAfterMarker);
+                    if ((!verticalOverlap && !adjacentNearbyUnit)
+                            || (previousText.length() > 3 && !adjacentNearbyUnit)
                             || addressCandidateText(previousText) != null || isStateOnlyLine(previousText)) break;
-                    if (linesAreHorizontallyNear(previous, line)) {
+                    if (horizontallyNear) {
                         nearbyFragmentRequiresReview = true;
                         evidenceLineIndexes.add(previousLineIndex);
                     }
@@ -637,8 +649,7 @@ public class AddressOcrService {
     }
 
     private static boolean isStateOnlyLine(String text) {
-        return text != null && (STATE_ONLY_LINE.matcher(text.trim()).matches()
-                || AddressExtractor.isStateOnlyLine(text));
+        return text != null && AddressExtractor.isStateOnlyLine(text);
     }
 
     static String addressCandidateText(String text) {
