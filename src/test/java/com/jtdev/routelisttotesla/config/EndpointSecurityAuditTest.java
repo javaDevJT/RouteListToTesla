@@ -1,7 +1,9 @@
 package com.jtdev.routelisttotesla.config;
 
 import com.jtdev.routelisttotesla.controller.AuthController;
+import com.jtdev.routelisttotesla.controller.HealthController;
 import com.jtdev.routelisttotesla.controller.RouteController;
+import com.jtdev.routelisttotesla.support.SourceCommit;
 import com.jtdev.routelisttotesla.service.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,8 +28,9 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.oauth2Login;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request;
 
-@WebMvcTest(controllers = {AuthController.class, RouteController.class}, properties = {
-        "tap.client-key=local-test-key", "google.api.key=local-test"
+@WebMvcTest(controllers = {AuthController.class, HealthController.class, RouteController.class}, properties = {
+        "tap.client-key=local-test-key", "google.api.key=local-test",
+        "QB_SOURCE_COMMIT=0123456789abcdef0123456789abcdef01234567"
 })
 @Import(SecurityConfig.class)
 class EndpointSecurityAuditTest {
@@ -70,6 +73,25 @@ class EndpointSecurityAuditTest {
         }
 
         verifyNoInteractions(access);
+    }
+
+    @Test
+    void healthIsPublicAndContainsOnlyStatusAndBakedSourceCommit() throws Exception {
+        var response = mvc.perform(request(HttpMethod.GET, "/health").servletPath("/health"))
+                .andReturn().getResponse();
+
+        assertEquals(200, response.getStatus());
+        assertTrue(response.getContentAsString().contains("\"status\":\"ok\""));
+        assertTrue(response.getContentAsString().contains("\"sourceCommit\":\"0123456789abcdef0123456789abcdef01234567\""));
+        assertFalse(response.getContentAsString().contains("token"));
+    }
+
+    @Test
+    void sourceCommitRequiresExactlyFortyHexadecimalCharacters() {
+        assertEquals("a".repeat(40), SourceCommit.normalize("A".repeat(40)));
+        assertEquals("unknown", SourceCommit.normalize("a".repeat(39)));
+        assertEquals("unknown", SourceCommit.normalize("a".repeat(40) + "0"));
+        assertEquals("unknown", SourceCommit.normalize(null));
     }
 
     @Test

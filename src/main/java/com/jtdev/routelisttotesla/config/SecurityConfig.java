@@ -39,6 +39,7 @@ import java.util.Set;
 @Configuration
 public class SecurityConfig {
     private static final Set<String> PUBLIC_GET_PATHS = Set.of(
+            "/health",
             "/login",
             "/oauth2/authorization/tap",
             "/login/oauth2/code/tap",

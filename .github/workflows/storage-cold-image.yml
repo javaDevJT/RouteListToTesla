@@ -76,6 +76,7 @@ jobs:
           push: false # Push-by-digest is configured in the exporter; tags follow the scan.
           build-args: |
             VCS_REF=${{ github.sha }}
+            QB_SOURCE_COMMIT=${{ github.sha }}
             ${{ true && format('BUILDKIT_CACHE_MOUNT_NS=routelisttotesla-cold-{0}-{1}', github.run_id, github.run_attempt) || '' }}
           tags: ${{ steps.container_security_1.outputs.repository }}
       - name: Generate SBOM and enforce High/Critical vulnerability gate
