@@ -462,6 +462,7 @@ public class GeocodingClient {
                         }
                         continue;
                     }
+                    if (!cityMatches && postalCityMatches && !unambiguousStreet(match, expected.route())) continue;
                     if (proof != null && !proof.accepts(match,
                             match.path("geometry").path("location").path("lat").asDouble(Double.NaN),
                             match.path("geometry").path("location").path("lng").asDouble(Double.NaN),
@@ -639,6 +640,14 @@ public class GeocodingClient {
         List<String> codes = componentValues(result, "postal_code");
         if (components != 1 || codes.isEmpty() || codes.stream().anyMatch(code -> !code.matches("[0-9]{5}"))) return null;
         return codes.stream().allMatch(codes.getFirst()::equals) ? codes.getFirst() : null;
+    }
+
+    private static boolean unambiguousStreet(JsonNode result, String expectedRoute) {
+        int components = 0;
+        for (JsonNode component : result.path("address_components")) if (hasType(component, "route")) components++;
+        List<String> routes = componentValues(result, "route");
+        return components == 1 && !routes.isEmpty()
+                && routes.stream().allMatch(route -> streetRoutesMatch(expectedRoute, route));
     }
 
     private static String singlePostalSuffix(JsonNode result) {

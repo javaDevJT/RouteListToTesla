@@ -105,6 +105,16 @@ class PostalLocalityRecoveryTest {
     }
 
     @Test
+    void inconsistentReverseStreetComponentsCannotProveAnAlias() throws Exception {
+        String original = body(LOCAL, "Sample Road", "MAP MUNICIPALITY", null);
+        for (String reverse : List.of(
+                original.replace("\"short_name\":\"Sample Road\"", "\"short_name\":\"Other Road\""),
+                original.replace("],\"geometry\"", "," + component("Other Road", "route") + "],\"geometry\""))) {
+            assertNull(resolve("12345 SAMPLE RD, GROSSE POINTE, MI", original, reverse, new AtomicInteger()).pid());
+        }
+    }
+
+    @Test
     void suppliedZipPlusFourMustBeConfirmedByBothAddressResults() throws Exception {
         String bare = body(LOCAL, "Sample Road", "MAP MUNICIPALITY", null);
         String withSuffix = bare.replace(component("48230", "postal_code"),

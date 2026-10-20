@@ -64,7 +64,7 @@ does not enforce locality or administrative-area filters.
 
 ## Verification
 
-Clean Maven package passed 252 Java tests. The focused postal cases cover
+Clean Maven package passed 253 Java tests. The focused postal cases cover
 multiple cities/states, leading-zero ZIPs, numeric and alphanumeric apartments,
 missing evidence, mismatched ZIP/city/state, competing rooftops, wrong streets,
 units and partial/imprecise results. All 39 frontend tests passed, including v7
