@@ -13,6 +13,10 @@ Geocoding policy `street-address-v8` adds offline postal-city evidence. It has n
 address-specific replacements and makes no new external service requests. The
 normal exact-match and existing reverse locality/street-representation recovery
 paths remain. Saved results from older policies are revalidated before use.
+When a response already contains a valid original-city interpolated proof, it
+uses that existing path before postal fallback. A second representation of the
+same address must not create false ambiguity; genuinely competing original-city
+proofs and unit conflicts still block recovery.
 
 ## Acceptance contract
 
@@ -64,7 +68,7 @@ does not enforce locality or administrative-area filters.
 
 ## Verification
 
-Clean Maven package passed 253 Java tests. The focused postal cases cover
+Clean Maven package passed 254 Java tests. The focused postal cases cover
 multiple cities/states, leading-zero ZIPs, numeric and alphanumeric apartments,
 missing evidence, mismatched ZIP/city/state, competing rooftops, wrong streets,
 units and partial/imprecise results. All 39 frontend tests passed, including v7

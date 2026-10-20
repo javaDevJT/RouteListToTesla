@@ -105,6 +105,32 @@ class PostalLocalityRecoveryTest {
     }
 
     @Test
+    void postalEvidenceDoesNotMakeAnExistingInterpolatedLocalityProofAmbiguous() throws Exception {
+        for (String unit : new String[]{null, "330"}) {
+            String original = body(LOCAL, "Sample Road", "MAP MUNICIPALITY", unit);
+            String interpolation = body(LOCAL, "Sample Road", "GROSSE POINTE", unit)
+                    .replace("\"roof\"", "\"interpolated\"").replace("ROOFTOP", "RANGE_INTERPOLATED")
+                    .replace("42.3742093", "42.3742193");
+            String text = "12345 SAMPLE RD" + (unit == null ? "" : " APT " + unit) + ", GROSSE POINTE, MI";
+            for (String reverse : List.of(combine(original, interpolation), combine(interpolation, original))) {
+                PlaceCandidate result = resolve(text, original, reverse, new AtomicInteger());
+                assertEquals("roof", result.pid());
+                assertEquals(LOCAL.lat(), result.lat());
+                assertEquals("corroborated_locality", result.resolution().strategy());
+            }
+            // Two distinct old-style interpolated proofs must still stay ambiguous.
+            String second = interpolation.replace("interpolated", "other").replace("42.3742193", "42.3742293");
+            assertEquals(LocationResolution.Status.AMBIGUOUS,
+                    resolve(text, original, combine(interpolation, second), new AtomicInteger()).resolution().status());
+            if (unit != null) {
+                String conflict = original.replace("\"330\"", "\"331\"");
+                assertEquals("unit_conflict", resolve(text, original, combine(conflict, interpolation),
+                        new AtomicInteger()).resolution().reasonCode());
+            }
+        }
+    }
+
+    @Test
     void inconsistentReverseStreetComponentsCannotProveAnAlias() throws Exception {
         String original = body(LOCAL, "Sample Road", "MAP MUNICIPALITY", null);
         for (String reverse : List.of(

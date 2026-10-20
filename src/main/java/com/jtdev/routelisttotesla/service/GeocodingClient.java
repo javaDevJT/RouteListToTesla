@@ -409,6 +409,11 @@ public class GeocodingClient {
                 Set<String> postalBuildingMatches = new HashSet<>();
                 Map<String, JsonNode> recoveryCandidates = new LinkedHashMap<>();
                 boolean unitConflict = false;
+                // Preserve an existing original-city proof before trying the
+                // postal fallback. Counting both representations as separate
+                // destinations would turn a valid v7 lookup into ambiguity.
+                boolean originalCityInterpolation = proof != null && proof.postal() != null
+                        && hasOriginalCityInterpolation(body.path("results"), expected, proof);
                 for (JsonNode match : body.path("results")) {
                     boolean addressType = hasType(match, "street_address") || hasType(match, "premise")
                             || hasType(match, "subpremise");
@@ -478,6 +483,7 @@ public class GeocodingClient {
                         unitConflict = true;
                         continue;
                     }
+                    if (originalCityInterpolation && !cityMatches && postalCityMatches) continue;
 
                     JsonNode location = match.path("geometry").path("location");
                     if (!location.path("lat").isNumber() || !location.path("lng").isNumber()) continue;
@@ -559,6 +565,21 @@ public class GeocodingClient {
         }
         // Never repair the street representation and locality in the same step.
         return streetMatches != cityMatches;
+    }
+
+    private static boolean hasOriginalCityInterpolation(JsonNode results, ExpectedAddress expected, ProofTarget proof) {
+        for (JsonNode match : results) {
+            if (match.path("partial_match").asBoolean(false)
+                    || !(hasType(match, "street_address") || hasType(match, "premise") || hasType(match, "subpremise"))
+                    || !match.path("geometry").path("location_type").asString("").equals("RANGE_INTERPOLATED")) continue;
+            List<String> numbers = componentValues(match, "street_number");
+            if (numbers.isEmpty() || numbers.stream().anyMatch(number -> !expected.houseNumber().equals(canonicalHouseNumber(number)))
+                    || !streetsMatch(expected.route(), match) || !localityMatches(match, expected.localityHint())) continue;
+            JsonNode point = match.path("geometry").path("location");
+            if (proof.accepts(match, point.path("lat").asDouble(Double.NaN), point.path("lng").asDouble(Double.NaN),
+                    match.path("place_id").asString(""), false)) return true;
+        }
+        return false;
     }
 
     private LookupOutcome corroborateRepresentation(String owner, PlaceCandidate candidate, ExpectedAddress expected,
