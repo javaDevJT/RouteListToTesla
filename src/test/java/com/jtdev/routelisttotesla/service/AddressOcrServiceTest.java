@@ -193,13 +193,86 @@ class AddressOcrServiceTest {
     }
 
     @Test
-    void retainsAdjacentNonOverlappingNearbyUnitFragmentBeforeAddressAsReviewEvidence() throws Exception {
+    void excludesAdjacentNonOverlappingHeaderFragmentsFromAddressEvidence() throws Exception {
         String tsv = TSV_HEADER + "\n" + String.join("\n",
-                "5\t1\t1\t1\t1\t1\t410\t70\t20\t10\t90\t3B",
+                "5\t1\t1\t1\t1\t1\t100\t70\t40\t10\t90\teG»",
+                "5\t1\t1\t1\t2\t1\t100\t82\t30\t10\t90\t929",
+                "5\t1\t1\t1\t3\t1\t100\t100\t300\t20\t90\t123 MAIN ST",
+                "5\t1\t1\t1\t4\t1\t100\t140\t120\t20\t90\tDETROIT");
+        Map<String, Object> lineEvidence = Map.of(
+                "1", evidence(1, true, List.of(reading("tesseract", "eG»"))),
+                "2", evidence(1, true, List.of(reading("tesseract", "929"))),
+                "3", consensusEvidence("123 MAIN ST"),
+                "4", consensusEvidence("DETROIT"));
+        String output = consensusOutput(tsv, lineEvidence);
+        AddressOcrService service = new AddressOcrService("ocr-binary", "eng",
+                ignored -> new AddressOcrService.ProcessResult(0, output, ""), false);
+
+        PlaceCandidate candidate = service.extractAddressCandidates(png(), "route.png", "").get(0);
+
+        assertEquals("123 MAIN ST, DETROIT", candidate.text());
+        assertEquals(3, candidate.ocrAgreement());
+        assertFalse(candidate.ocrReviewRequired());
+        assertTrue(candidate.ocrAlternatives().stream().noneMatch(value -> value.startsWith("line 1 ")
+                || value.startsWith("line 2 ")));
+    }
+
+    @Test
+    void retainsAdjacentNonOverlappingNearbyUnitFragmentBeforeAddressAsReviewEvidence() throws Exception {
+        for (String unit : List.of("3B", "A208")) {
+            String tsv = TSV_HEADER + "\n" + String.join("\n",
+                    "5\t1\t1\t1\t1\t1\t410\t70\t20\t10\t90\t" + unit,
+                    "5\t1\t1\t1\t2\t1\t100\t100\t300\t20\t90\t123 MAIN ST",
+                    "5\t1\t1\t1\t3\t1\t100\t140\t120\t20\t90\tDETROIT");
+            Map<String, Object> lineEvidence = Map.of(
+                    "1", evidence(1, true, List.of(reading("easyocr", unit))),
+                    "2", consensusEvidence("123 MAIN ST"),
+                    "3", consensusEvidence("DETROIT"));
+            String output = consensusOutput(tsv, lineEvidence);
+            AddressOcrService service = new AddressOcrService("ocr-binary", "eng",
+                    ignored -> new AddressOcrService.ProcessResult(0, output, ""), false);
+
+            PlaceCandidate candidate = service.extractAddressCandidates(png(), "route.png", "").get(0);
+
+            assertEquals("123 MAIN ST, DETROIT", candidate.text());
+            assertEquals(1, candidate.ocrAgreement());
+            assertTrue(candidate.ocrReviewRequired());
+            assertTrue(candidate.ocrAlternatives().contains("line 1 easyocr: " + unit));
+        }
+    }
+
+    @Test
+    void keepsAdjacentPlainNumericFragmentOnlyWhenAddressHasUnitMarker() throws Exception {
+        for (String unit : List.of("929", "2018")) {
+            String tsv = TSV_HEADER + "\n" + String.join("\n",
+                    "5\t1\t1\t1\t1\t1\t100\t82\t30\t10\t90\t" + unit,
+                    "5\t1\t1\t1\t2\t1\t100\t100\t300\t20\t90\t123 MAIN ST APT",
+                    "5\t1\t1\t1\t3\t1\t100\t140\t120\t20\t90\tDETROIT, MI");
+            Map<String, Object> lineEvidence = Map.of(
+                    "1", evidence(1, true, List.of(reading("tesseract", unit))),
+                    "2", consensusEvidence("123 MAIN ST APT"),
+                    "3", consensusEvidence("DETROIT, MI"));
+            String output = consensusOutput(tsv, lineEvidence);
+            AddressOcrService service = new AddressOcrService("ocr-binary", "eng",
+                    ignored -> new AddressOcrService.ProcessResult(0, output, ""), false);
+
+            PlaceCandidate candidate = service.extractAddressCandidates(png(), "route.png", "").get(0);
+
+            assertEquals("123 MAIN ST APT, DETROIT, MI", candidate.text());
+            assertEquals(1, candidate.ocrAgreement());
+            assertTrue(candidate.ocrReviewRequired());
+            assertTrue(candidate.ocrAlternatives().contains("line 1 tesseract: " + unit));
+        }
+    }
+
+    @Test
+    void excludesAdjacentCompactHashRouteCodeBeforeAddress() throws Exception {
+        String tsv = TSV_HEADER + "\n" + String.join("\n",
+                "5\t1\t1\t1\t1\t1\t100\t70\t60\t10\t90\t#A123B",
                 "5\t1\t1\t1\t2\t1\t100\t100\t300\t20\t90\t123 MAIN ST",
                 "5\t1\t1\t1\t3\t1\t100\t140\t120\t20\t90\tDETROIT");
         Map<String, Object> lineEvidence = Map.of(
-                "1", evidence(1, true, List.of(reading("easyocr", "3B"))),
+                "1", evidence(1, true, List.of(reading("tesseract", "#A123B"))),
                 "2", consensusEvidence("123 MAIN ST"),
                 "3", consensusEvidence("DETROIT"));
         String output = consensusOutput(tsv, lineEvidence);
@@ -209,9 +282,77 @@ class AddressOcrServiceTest {
         PlaceCandidate candidate = service.extractAddressCandidates(png(), "route.png", "").get(0);
 
         assertEquals("123 MAIN ST, DETROIT", candidate.text());
+        assertEquals(3, candidate.ocrAgreement());
+        assertFalse(candidate.ocrReviewRequired());
+        assertTrue(candidate.ocrAlternatives().stream().noneMatch(value -> value.startsWith("line 1 ")));
+    }
+
+    @Test
+    void excludesOverlappingShortHashUnitLookalikeBeforeAddress() throws Exception {
+        String tsv = TSV_HEADER + "\n" + String.join("\n",
+                "5\t1\t1\t1\t1\t1\t100\t95\t30\t20\t90\t#3B",
+                "5\t1\t1\t1\t2\t1\t100\t100\t300\t20\t90\t123 MAIN ST",
+                "5\t1\t1\t1\t3\t1\t100\t140\t120\t20\t90\tDETROIT");
+        Map<String, Object> lineEvidence = Map.of(
+                "1", evidence(1, true, List.of(reading("easyocr", "#3B"))),
+                "2", consensusEvidence("123 MAIN ST"),
+                "3", consensusEvidence("DETROIT"));
+        String output = consensusOutput(tsv, lineEvidence);
+        AddressOcrService service = new AddressOcrService("ocr-binary", "eng",
+                ignored -> new AddressOcrService.ProcessResult(0, output, ""), false);
+
+        PlaceCandidate candidate = service.extractAddressCandidates(png(), "route.png", "").get(0);
+
+        assertEquals("123 MAIN ST, DETROIT", candidate.text());
+        assertEquals(3, candidate.ocrAgreement());
+        assertFalse(candidate.ocrReviewRequired());
+        assertTrue(candidate.ocrAlternatives().stream().noneMatch(value -> value.startsWith("line 1 ")));
+    }
+
+    @Test
+    void retainsAdjacentShortHashValueBeforeExplicitUnitMarkerAsReviewEvidence() throws Exception {
+        for (String unit : List.of("#2", "＃2")) {
+            String tsv = TSV_HEADER + "\n" + String.join("\n",
+                    "5\t1\t1\t1\t1\t1\t100\t82\t30\t10\t90\t" + unit,
+                    "5\t1\t1\t1\t2\t1\t100\t100\t300\t20\t90\t123 MAIN ST APT",
+                    "5\t1\t1\t1\t3\t1\t100\t140\t120\t20\t90\tDETROIT, MI");
+            Map<String, Object> lineEvidence = Map.of(
+                    "1", evidence(1, true, List.of(reading("tesseract", unit))),
+                    "2", consensusEvidence("123 MAIN ST APT"),
+                    "3", consensusEvidence("DETROIT, MI"));
+            String output = consensusOutput(tsv, lineEvidence);
+            AddressOcrService service = new AddressOcrService("ocr-binary", "eng",
+                    ignored -> new AddressOcrService.ProcessResult(0, output, ""), false);
+
+            PlaceCandidate candidate = service.extractAddressCandidates(png(), "route.png", "").get(0);
+
+            assertEquals("123 MAIN ST APT, DETROIT, MI", candidate.text());
+            assertEquals(1, candidate.ocrAgreement());
+            assertTrue(candidate.ocrReviewRequired());
+            assertTrue(candidate.ocrAlternatives().contains("line 1 tesseract: " + unit));
+        }
+    }
+
+    @Test
+    void retainsUnknownAdjacentTwoLetterFragmentSoFollowingLocalityStillJoins() throws Exception {
+        String tsv = TSV_HEADER + "\n" + String.join("\n",
+                "5\t1\t1\t1\t1\t1\t100\t100\t300\t20\t90\t22 1/2 EASTRIDGE CT",
+                "5\t1\t1\t1\t2\t1\t100\t124\t30\t10\t90\tNN",
+                "5\t1\t1\t1\t3\t1\t100\t140\t120\t20\t90\tALBANY NY");
+        Map<String, Object> lineEvidence = Map.of(
+                "1", consensusEvidence("22 1/2 EASTRIDGE CT"),
+                "2", evidence(1, true, List.of(reading("tesseract", "NN"))),
+                "3", consensusEvidence("ALBANY NY"));
+        String output = consensusOutput(tsv, lineEvidence);
+        AddressOcrService service = new AddressOcrService("ocr-binary", "eng",
+                ignored -> new AddressOcrService.ProcessResult(0, output, ""), false);
+
+        PlaceCandidate candidate = service.extractAddressCandidates(png(), "route.png", "").get(0);
+
+        assertEquals("22 1/2 EASTRIDGE CT, ALBANY NY", candidate.text());
         assertEquals(1, candidate.ocrAgreement());
         assertTrue(candidate.ocrReviewRequired());
-        assertTrue(candidate.ocrAlternatives().contains("line 1 easyocr: 3B"));
+        assertTrue(candidate.ocrAlternatives().contains("line 2 tesseract: NN"));
     }
 
     @Test

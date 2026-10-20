@@ -74,13 +74,29 @@ The OCR release configuration uses eight CPUs, 8 GiB RAM, and two compute thread
 per engine. Native qualification,
 route-code filtering, and speed comparisons are recorded in the
 [September 30 OCR report](docs/ocr-route-codes-2026-09-30.md).
-The runtime and benchmark details below describe the September 28 release.
+The latest qualification is recorded below; the historical jlink benchmark
+describes the September 28 release.
 
 Image builds and publication are automated on pushes to `main` using the private
 TrueNAS runner. GHCR receives `latest` and `sha-<full-commit-sha>` tags. See
 [GitHub Actions publishing](docs/github-actions.md) for the runner and build setup.
 
-**Verified September 28, 2026.** TeslaRouter runs `20260928-jlink`, TrueNAS job
+**Verified October 20, 2026.** TeslaRouter runs `20261019-postal-city`, TrueNAS job
+**27395**, application source `22df9aa`, immutable image
+`sha256:c2c09f47328e4b667680331a41987362cb18ab622875549f61cefd5c2cb4e1a4`.
+General postal-city recovery requires ZIP corroboration and an exact reverse
+rooftop/street proof; city centers and conflicting destinations remain rejected.
+The review shows the verified map address while retaining the screenshot text.
+
+The exact image passed 21 screenshot regressions with all three local OCR engines,
+36 Python tests and seven recorded address cases. Local checks passed 254 Java
+and 39 frontend tests. CI passed with zero High/Critical findings, and live source
+health, TAP/CSRF boundaries and mobile login rendering were verified. Eight CPUs/
+8 GiB, UID 10001, read-only root and existing data mounts are preserved. No new
+Google requests or vehicle commands were made during implementation/release
+qualification. See the [postal-city release record](docs/postal-city-recovery-2026-10-19.md).
+
+**Historical release (September 28, 2026).** TeslaRouter ran `20260928-jlink`, TrueNAS job
 **212741**, from source commit `0fbb774d0cb2913e7e8151e09f4ed01c04dc861e` and image
 `sha256:a62e3e8ff5390d2665030bd3306b7608c42bb0cde49acaad505e6bfd70df34bd`.
 The multi-stage image uses a Java 25 jlink runtime and runs the application as

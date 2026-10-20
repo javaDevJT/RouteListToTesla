@@ -254,7 +254,7 @@
         const locationAddressRows = new WeakMap();
         const LOCATION_RESOLVE_BATCH_SIZE = 500;
         const LOCATION_RESOLVE_MAX_TEXT_LENGTH = 1000;
-        const LOCATION_POLICY_VERSION = 'street-address-v7';
+        const LOCATION_POLICY_VERSION = 'street-address-v8';
         const LOCATION_RESOLUTION_STATUSES = new Set([
             'VERIFIED_UNIT', 'VERIFIED_BUILDING', 'NO_MATCH', 'AMBIGUOUS', 'DEFERRED', 'LOOKUP_UNAVAILABLE'
         ]);
@@ -962,7 +962,9 @@
 
         function getRecoveredLocationDetails(resolution) {
             let recoveryMessage;
-            if (resolution?.strategy === 'corroborated_locality') {
+            if (resolution?.strategy === 'corroborated_postal_locality') {
+                recoveryMessage = ' Postal city verified. Google lists this street under a different city name.';
+            } else if (resolution?.strategy === 'corroborated_locality') {
                 recoveryMessage = ' Google lists this street location under a different city name.';
             } else if (resolution?.strategy === 'corroborated_street_representation') {
                 recoveryMessage = ' Google uses a different street spelling or type.';
