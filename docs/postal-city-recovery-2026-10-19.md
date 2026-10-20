@@ -58,6 +58,8 @@ city/state/ZIP and reference coordinates. It is licensed under CC BY 4.0; see
 `scripts/postal-catalog.py` emits the derived rows without network or filesystem
 writes. Dataset refreshes are reviewed source changes, not automatic runtime
 downloads. Production has no new API account, credential or paid dependency.
+Refreshes must also bump the geocoding policy so saved and cached resolutions
+are revalidated against the new evidence.
 
 Missing or malformed data disables this additional proof path. The catalog is
 not complete and rural ZIPs can span more than the 10 km evidence bound, so some
@@ -72,6 +74,60 @@ Clean Maven package passed 254 Java tests. The focused postal cases cover
 multiple cities/states, leading-zero ZIPs, numeric and alphanumeric apartments,
 missing evidence, mismatched ZIP/city/state, competing rooftops, wrong streets,
 units and partial/imprecise results. All 39 frontend tests passed, including v7
-saved-result revalidation and postal recovery feedback. Native image and release
-qualification are pending; no new vehicle commands or Google requests are part
-of these implementation tests.
+saved-result revalidation and postal recovery feedback.
+
+The exact published image passed native TrueNAS qualification: 21/21 ordered-exact
+screenshots, including the supplied `1.jpeg` and all 20 prior cases, with all three
+local OCR engines and no application-class overlays. The prior cases retained
+their OCR agreement and review decisions; the new screenshot had no false review
+requirement. All 36 Python tests passed. The supplied `2.jpeg` is a review-screen
+capture used for diagnosis, not an OCR input.
+
+Seven previously recorded address cases passed against the packaged geocoder
+and catalog in 11 loopback fixture requests. Nottingham resolves through postal
+locality corroboration; the existing Hall Road locality and Hilltop street
+representation recovery paths still work. Source text, unit text and row order
+are retained. The class and resource origins were verified inside `/app/app.jar`,
+and the packaged catalog matched its committed hash. No additional Google
+requests or vehicle commands were made during implementation/release qualification.
+
+A single paired two-image trial (`IMG_0634` and `IMG_0635`) took 41.40 seconds
+sequentially and 20.34 seconds at image concurrency two, with identical addresses
+and review decisions. These are native measurements excluding Google lookup, not
+a general latency guarantee. Peak qualification memory was 2.25 GiB, with no
+memory-limit/OOM events or leftover OCR jobs. The owned QA app and fixtures were
+removed successfully.
+
+The 390 px Chrome review check consumed the native packaged results, verified all
+seven rows and the postal-city explanation, and enabled the route-send control
+without clicking it. It had no false OCR warnings or horizontal overflow. API
+responses were mocked for this review-screen check; live deployment identity and
+login were checked separately.
+
+## Verified deployment (2026-10-20)
+
+Application source: `22df9aa93006cfacf9e4c9d77ab6485f7f5d2151`.
+The [push build](https://github.com/javaDevJT/RouteListToTesla/actions/runs/39350894296)
+passed all gates. A later [scheduled build of the same source](https://github.com/javaDevJT/RouteListToTesla/actions/runs/39401101397)
+also passed, with zero High/Critical findings, and supplied the deployed immutable
+image:
+
+```text
+ghcr.io/javadevjt/routelisttotesla@sha256:c2c09f47328e4b667680331a41987362cb18ab622875549f61cefd5c2cb4e1a4
+```
+
+TrueNAS job **27395** deployed release **20261019-postal-city**. The application is
+running; the configuration diff contains only the router image, permissions-init
+image and release label. Eight CPUs/8 GiB, two compute threads per engine, UID
+10001, read-only root, no published host ports and existing data mounts remain.
+
+The [public application](https://teslarouter.javadevjt.tech) returned the exact
+source SHA from `/health`; its login showed the release and its served theme
+matched the qualified browser asset. Signed-out route reads redirected to login,
+state-changing requests without CSRF were rejected, and the TAP authorization
+redirect was verified. Live Chrome at 390 px showed the TAP login link without
+page errors or horizontal overflow. No vehicle command was issued. A physical
+iPhone/car test remains separate from this browser and image qualification.
+
+After deployment, refresh Safari and sign in through TAP again if prompted.
+Older saved location results are revalidated under `street-address-v8` before use.

@@ -1,6 +1,6 @@
 # Documentation
 
-- [Postal city recovery (2026-10-19)](postal-city-recovery-2026-10-19.md): ZIP-based locality evidence, exact reverse rooftop proof and saved-result migration.
+- [Postal city recovery (deployed 2026-10-20)](postal-city-recovery-2026-10-19.md): ZIP-based locality evidence, exact reverse rooftop proof, saved-result migration and complete release qualification.
 
 - [General address reliability (2026-10-19)](general-address-reliability-2026-10-19.md): deployed provider-corroborated recovery, OCR metadata boundaries, native quality/speed qualification, release proof and follow-up postal-city diagnosis.
 
@@ -45,7 +45,24 @@
 - [Local OCR benchmark](../output/ocr-benchmark/README.md) : image and OCR row-matching records, including the
   Linux application-image check.
 
-## Verified deployment (2026-10-17)
+## Verified deployment (2026-10-20)
+
+TrueNAS job **27395** deployed release **20261019-postal-city**, application source
+`22df9aa`, immutable image
+`sha256:c2c09f47328e4b667680331a41987362cb18ab622875549f61cefd5c2cb4e1a4`.
+The [scheduled CI build](https://github.com/javaDevJT/RouteListToTesla/actions/runs/39401101397)
+of that exact source passed all gates with zero High/Critical findings; the
+preceding push build also passed. Native qualification passed 21/21 screenshots
+with all three OCR engines, 36 Python tests and seven recorded address cases
+against the packaged geocoder. Local checks passed 254 Java and 39 frontend tests.
+
+The [public app](https://teslarouter.javadevjt.tech) serves the verified source and
+release. Mobile review, live login/source health, TAP redirect and signed-out
+route/CSRF boundaries passed. Existing data mounts and security/resource settings
+are preserved. No additional Google requests or vehicle commands were made during
+implementation/release qualification. See the [complete release record](postal-city-recovery-2026-10-19.md).
+
+## Historical deployment (2026-10-17)
 
 TrueNAS job **19348** deployed release **20261017-location-recovery**, application
 source `48f86f2`, immutable image
@@ -57,7 +74,7 @@ with all three OCR engines and no overlays. One three-image trial took 64.34
 seconds sequentially versus 40.90 seconds at image concurrency two, with identical
 text and review decisions; these timings exclude Google lookup.
 
-The [public app](https://teslarouter.javadevjt.tech) serves the verified release.
+At that deployment, the [public app](https://teslarouter.javadevjt.tech) served the verified release.
 Eight CPUs/8 GiB, UID 10001, read-only root, no host ports and retained data mounts
 are preserved. The health probe, TAP redirect, signed-out route/CSRF boundaries
 and mobile browser checks passed. Local checks passed 191 Java and 29 frontend
