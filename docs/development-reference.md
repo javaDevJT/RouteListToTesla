@@ -6,7 +6,7 @@ TAP-managed sign-in and stable-subject authorization replace independent Google 
 
 ### October 19 provider-corroborated recovery
 
-Current extraction is `ocr-consensus-v9`; geocoding is `street-address-v7`.
+Current extraction is `ocr-consensus-v9`; geocoding is `street-address-v8`.
 Spatial evidence also excludes vertically adjacent side counters while retaining
 nearby ambiguous unit fragments. Geocoding first applies strict matching, then
 can corroborate a unique precise candidate through reverse locality verification
@@ -17,6 +17,12 @@ Recovered results expose Google's map address while retaining input text and
 the distinction between a verified unit and a verified building. Saved results
 under earlier policies are revalidated. See the
 [recovery contract and checks](general-address-reliability-2026-10-19.md).
+
+Postal locality recovery also checks the bundled GeoNames US city/state/ZIP
+catalog and requires the same rooftop place ID, coordinate, street and ZIP in
+reverse evidence. Catalog coordinates never become route destinations. Invalid
+or missing catalog evidence disables that additional path; the original city
+text is retained. See [postal-city validation](postal-city-recovery-2026-10-19.md).
 
 ### October 18 spatial OCR evidence
 

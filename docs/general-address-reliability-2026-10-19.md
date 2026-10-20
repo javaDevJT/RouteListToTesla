@@ -119,3 +119,49 @@ grouping are preserved.
 
 API references: Google's [forward geocoding response contract](https://developers.google.com/maps/documentation/geocoding/guides-v3/requests-geocoding)
 and [reverse-geocoding contract](https://developers.google.com/maps/documentation/geocoding/guides-v3/requests-reverse-geocoding).
+
+## Follow-up diagnosis: postal city and municipality names
+
+The supplied `1.jpeg` reads `878 NOTTINGHAM RD / GROSSE POINTE`. The review page
+in `2.jpeg` preserves that street and house number correctly, with agreement from
+all three OCR engines. The failure occurs during location validation.
+
+Four explicitly approved Google checks were completed: the original full address,
+reverse geocoding its returned coordinate, the unmodified street with original
+city/state components, and Google's canonical full address. Each returned the
+same first place ID and identical rooftop coordinate, with no partial match:
+`878 Nottingham Rd, Grosse Pointe Park, MI 48230, USA`. Reverse geocoding included
+neighboring houses and broader regions, but no full street-address result with
+the requested `Grosse Pointe` locality. No vehicle commands were issued.
+
+`street-address-v7` requires exact normalized locality components on its direct
+path. Its locality recovery also requires a nearby full address containing the
+original city name. Consequently it rejects this proposal even though the house
+and street match. Repeating the existing lookup cannot address that policy gap;
+the provider consistently returns the municipal name `Grosse Pointe Park`.
+
+The missing general capability is independent postal-locality corroboration.
+The [GeoNames US postal dataset](https://download.geonames.org/export/zip/)
+contains `48230 / Grosse Pointe / MI`, which explains why a postal city can differ
+from Google's municipality. This is a candidate source for a general repair,
+not implemented or qualified runtime behavior. GeoNames data has completeness
+and accuracy limitations and must never supply navigation coordinates.
+
+A guarded repair should require the original city and state to match an
+independently maintained postal-name record for the precise result's ZIP, retain
+exact house/street/directions and unit conflict checks, and corroborate the same
+rooftop destination through reverse address evidence. Original text and the
+provider's map address should remain visible. Missing postal evidence, competing
+destinations, conflicting units, partial matches and city/ZIP centers must remain
+unverified. A city-name prefix alone is insufficient. Google's documentation
+also states that `locality` and `administrative_area` components influence
+results without being enforced, so repeating a structured query cannot by itself
+establish the alias.
+
+This section records diagnosis only. No matcher, OCR policy or production image
+was changed for this follow-up. The earlier release proof above applies to the
+existing v7 behavior. Private provider responses and the request journal are in
+`output/private/nottingham-20261019/`.
+
+The subsequent implementation is tracked in [postal-city recovery](postal-city-recovery-2026-10-19.md),
+which records the v8 acceptance rules and its separate release qualification.

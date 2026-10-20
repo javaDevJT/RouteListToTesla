@@ -1,6 +1,8 @@
 # Documentation
 
-- [General address reliability (2026-10-19)](general-address-reliability-2026-10-19.md): deployed provider-corroborated recovery, OCR metadata boundaries, native quality/speed qualification and release proof.
+- [Postal city recovery (2026-10-19)](postal-city-recovery-2026-10-19.md): ZIP-based locality evidence, exact reverse rooftop proof and saved-result migration.
+
+- [General address reliability (2026-10-19)](general-address-reliability-2026-10-19.md): deployed provider-corroborated recovery, OCR metadata boundaries, native quality/speed qualification, release proof and follow-up postal-city diagnosis.
 
 - [Apartment lookup and OCR evidence (2026-10-18)](southfield-address-and-ocr-evidence-2026-10-18.md): provider unit-label normalization, spatial metadata exclusion and saved-location migration.
 
