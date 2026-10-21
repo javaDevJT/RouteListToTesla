@@ -1,6 +1,6 @@
 # Documentation
 
-- [Municipal postal recovery (2026-10-21)](municipal-postal-recovery-2026-10-21.md): missing-city township responses, typed municipal proof, conflicting destinations and saved-result migration.
+- [Municipal postal recovery (deployed 2026-10-21)](municipal-postal-recovery-2026-10-21.md): missing-city township responses, typed municipal proof, conflicting destinations, saved-result migration and release verification.
 
 - [Postal city recovery (deployed 2026-10-20)](postal-city-recovery-2026-10-19.md): ZIP-based locality evidence, exact reverse rooftop proof, saved-result migration and complete release qualification.
 
@@ -47,7 +47,26 @@
 - [Local OCR benchmark](../output/ocr-benchmark/README.md) : image and OCR row-matching records, including the
   Linux application-image check.
 
-## Verified deployment (2026-10-20)
+## Verified deployment (2026-10-21)
+
+TrueNAS job **99** deployed release **20261021-municipal-postal**, application
+source `38d28d0`, immutable image
+`sha256:a9892609a03b2ea7501ce247d4d8aa3f99ca96aa610203da1aca4b44ba24abae`.
+[CI attempt 2](https://github.com/javaDevJT/RouteListToTesla/actions/runs/39617731110/attempts/2)
+passed all security, storage and publication gates with zero High/Critical
+findings. Native qualification passed 22 screenshots with all three OCR engines,
+36 Python tests and nine recorded geocoding cases. Local checks passed 266 Java
+and 42 frontend tests.
+
+The [public app](https://teslarouter.javadevjt.tech) serves the verified source and
+release. Live mobile login, packaged stylesheet, source health, TAP redirect,
+signed-out route/CSRF checks and mocked nine-row review passed. Data mounts,
+resource/security settings and the existing private LAN/proxy binding are
+preserved. Two approved Google requests diagnosed the failure; qualification
+used recorded responses and sent no vehicle commands. See the
+[complete release record](municipal-postal-recovery-2026-10-21.md).
+
+## Historical deployment (2026-10-20)
 
 TrueNAS job **27395** deployed release **20261019-postal-city**, application source
 `22df9aa`, immutable image
@@ -58,8 +77,8 @@ preceding push build also passed. Native qualification passed 21/21 screenshots
 with all three OCR engines, 36 Python tests and seven recorded address cases
 against the packaged geocoder. Local checks passed 254 Java and 39 frontend tests.
 
-The [public app](https://teslarouter.javadevjt.tech) serves the verified source and
-release. Mobile review, live login/source health, TAP redirect and signed-out
+At that deployment, the [public app](https://teslarouter.javadevjt.tech) served the
+verified source and release. Mobile review, live login/source health, TAP redirect and signed-out
 route/CSRF boundaries passed. Existing data mounts and security/resource settings
 are preserved. No additional Google requests or vehicle commands were made during
 implementation/release qualification. See the [complete release record](postal-city-recovery-2026-10-19.md).
