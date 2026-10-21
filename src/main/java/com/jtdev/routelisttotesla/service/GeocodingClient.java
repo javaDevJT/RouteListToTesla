@@ -43,7 +43,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class GeocodingClient {
-    public static final String GEOCODING_VERSION = "street-address-v8";
+    public static final String GEOCODING_VERSION = "street-address-v9";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GeocodingClient.class);
     private static final String CONFLICTING_UNIT = "\u0000";
@@ -426,17 +426,30 @@ public class GeocodingClient {
                     boolean cityMatches = localityMatches(match, expected.localityHint());
                     boolean postalCityMatches = proof != null && proof.postal() != null
                             && proof.postal().matches(match);
-                    if (proof != null && proof.postal() != null && (cityMatches || postalCityMatches) && streetMatches
+                    // A different municipality must not hide another rooftop in
+                    // the requested postal area. This classifies competition only;
+                    // accepting a destination still requires the original proof.
+                    boolean postalCompetitor = proof != null && proof.postal() != null && streetMatches
+                            && unambiguousStreet(match, expected.route())
+                            && postalProof(match, expected, candidate.text()) != null;
+                    if (proof != null && proof.postal() != null
+                            && (cityMatches || postalCityMatches || postalCompetitor) && streetMatches
                             && match.path("geometry").path("location_type").asString("").equals("ROOFTOP")) {
                         JsonNode point = match.path("geometry").path("location");
                         double lat = point.path("lat").asDouble(Double.NaN), lon = point.path("lng").asDouble(Double.NaN);
                         String id = match.path("place_id").asString("");
                         if (point.path("lat").isNumber() && point.path("lng").isNumber()
                                 && Double.isFinite(lat) && Double.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
-                                && !(lat == 0 && lon == 0) && id.matches("[A-Za-z0-9_-]{1,512}")
-                                && (!proof.placeId().equals(id)
-                                    || distanceMetres(proof.latitude(), proof.longitude(), lat, lon) > 2)) {
-                            return new LookupOutcome(LookupStatus.AMBIGUOUS, null);
+                                && !(lat == 0 && lon == 0) && id.matches("[A-Za-z0-9_-]{1,512}")) {
+                            if (!proof.placeId().equals(id)
+                                    || distanceMetres(proof.latitude(), proof.longitude(), lat, lon) > 2) {
+                                return new LookupOutcome(LookupStatus.AMBIGUOUS, null);
+                            }
+                            String unit = returnedUnit(match);
+                            if (postalCompetitor && unit != null && (CONFLICTING_UNIT.equals(unit)
+                                    || expected.unit() == null || !expected.unit().equals(canonicalUnit(unit)))) {
+                                unitConflict = true;
+                            }
                         }
                     }
                     if (proof != null && proof.rejectCompetingDestinations()
@@ -649,10 +662,10 @@ public class GeocodingClient {
         JsonNode point = proposed.path("geometry").path("location");
         if (!PostalLocalityCatalog.supports(zip, hint.city(), hint.state(),
                 point.path("lat").asDouble(Double.NaN), point.path("lng").asDouble(Double.NaN))) return null;
-        String city = singleLocalityName(proposed);
-        if (city == null || city.isBlank()) return null;
-        LocalityHint canonical = new LocalityHint(city, hint.state(), hint.country());
-        return localityMatches(proposed, canonical) ? new PostalProof(canonical, zip, suffix) : null;
+        LocalityComponent city = singleLocalityComponent(proposed);
+        if (city == null || city.name().isBlank()) return null;
+        LocalityHint canonical = new LocalityHint(city.name(), hint.state(), hint.country());
+        return localityMatches(proposed, canonical) ? new PostalProof(canonical, city.type(), zip, suffix) : null;
     }
 
     private static String singlePostalCode(JsonNode result) {
@@ -679,18 +692,31 @@ public class GeocodingClient {
         return suffixes.stream().allMatch(suffixes.getFirst()::equals) ? suffixes.getFirst() : null;
     }
 
-    private static String singleLocalityName(JsonNode result) {
-        for (String type : List.of("locality", "postal_town", "sublocality", "sublocality_level_1")) {
+    private static LocalityComponent singleLocalityComponent(JsonNode result) {
+        // Unincorporated postal communities may be represented only by a township
+        // at administrative level 3, with a different neighborhood inside it.
+        // This name is used only by the ZIP-backed, same-rooftop postal proof;
+        // it does not relax direct township matching or use a neighborhood/county.
+        // A present primary locality must remain authoritative, including conflicts.
+        for (String type : List.of("locality", "postal_town", "sublocality", "sublocality_level_1",
+                "administrative_area_level_3")) {
             int components = 0;
             for (JsonNode component : result.path("address_components")) if (hasType(component, type)) components++;
             if (components == 0) continue;
             List<String> names = componentValues(result, type);
             if (components != 1 || names.isEmpty()) return null;
-            String canonical = canonicalLocality(names.getFirst());
-            return !canonical.isEmpty() && names.stream().allMatch(name -> canonical.equals(canonicalLocality(name)))
-                    ? names.getFirst() : null;
+            String canonical = canonicalLocalityComponent(type, names.getFirst());
+            return !canonical.isEmpty() && names.stream().allMatch(name -> canonical.equals(canonicalLocalityComponent(type, name)))
+                    ? new LocalityComponent(names.getFirst(), type) : null;
         }
         return null;
+    }
+
+    private static String canonicalLocalityComponent(String type, String name) {
+        // Google's long/short township labels may use Township, Twp or the bare
+        // base name. Reuse the existing label parser only at its typed level.
+        String township = type.equals("administrative_area_level_3") ? canonicalTownshipName(name) : null;
+        return township == null ? canonicalLocality(name) : township;
     }
 
     private static boolean sameStreetName(String requested, String returned) {
@@ -1518,11 +1544,20 @@ public class GeocodingClient {
         }
     }
 
-    private record PostalProof(LocalityHint locality, String zip, String suffix) {
+    private record LocalityComponent(String name, String type) { }
+
+    private record PostalProof(LocalityHint locality, String localityType, String zip, String suffix) {
         private boolean matches(JsonNode result) {
-            String city = singleLocalityName(result);
-            return city != null && canonicalLocality(locality.city()).equals(canonicalLocality(city))
-                    && zip.equals(singlePostalCode(result)) && localityMatches(result, locality)
+            LocalityComponent city = singleLocalityComponent(result);
+            if (city == null) return false;
+            boolean municipal = localityType.equals("administrative_area_level_3");
+            if (municipal != city.type().equals("administrative_area_level_3")) return false;
+            boolean sameName = municipal
+                    ? canonicalLocalityComponent(localityType, locality.city()).equals(canonicalLocalityComponent(city.type(), city.name()))
+                    : canonicalLocality(locality.city()).equals(canonicalLocality(city.name()));
+            LocalityHint canonical = municipal
+                    ? new LocalityHint(city.name(), locality.state(), locality.country()) : locality;
+            return sameName && zip.equals(singlePostalCode(result)) && localityMatches(result, canonical)
                     && (suffix == null || suffix.equals(singlePostalSuffix(result)));
         }
     }

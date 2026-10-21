@@ -1,5 +1,7 @@
 # Documentation
 
+- [Municipal postal recovery (2026-10-21)](municipal-postal-recovery-2026-10-21.md): missing-city township responses, typed municipal proof, conflicting destinations and saved-result migration.
+
 - [Postal city recovery (deployed 2026-10-20)](postal-city-recovery-2026-10-19.md): ZIP-based locality evidence, exact reverse rooftop proof, saved-result migration and complete release qualification.
 
 - [General address reliability (2026-10-19)](general-address-reliability-2026-10-19.md): deployed provider-corroborated recovery, OCR metadata boundaries, native quality/speed qualification, release proof and follow-up postal-city diagnosis.
