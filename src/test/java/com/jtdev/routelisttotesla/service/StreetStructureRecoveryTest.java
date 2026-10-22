@@ -164,6 +164,19 @@ class StreetStructureRecoveryTest {
     }
 
     @Test
+    void catalogAbbreviationsInsideProviderNamesPreservePreviouslyValidDirectMatches() throws Exception {
+        for (String supplied : List.of("GOLFVIEW DRIVE BLVD", "GOLFVIEW DR BLVD")) {
+            Address address = new Address("100 " + supplied + ", TESTVILLE, MI", "100", supplied, "TESTVILLE", "MI", null,
+                    new ProviderResult("provider-name-alias", "100", "Golfview Drive Boulevard", "Golfview Dr Blvd",
+                            "Testville", null, "48000", 42.32, -83.2));
+            Probe probe = probe(address, phase -> body(address.provider()));
+            assertEquals("provider-name-alias", probe.result().pid());
+            assertEquals(address.text(), probe.result().text());
+            assertEquals(1, probe.requests().size(), "Provider abbreviation consistency must retain the direct path");
+        }
+    }
+
+    @Test
     void everyDirectPlaceIdentityCountsWhenMixedWithARecoverableStructureInEitherOrder() throws Exception {
         ProviderResult directA = KNOWN_SUFFIX.provider().withPlaceId("completed-main");
         ProviderResult directB = directA.withPlaceId("different-main");

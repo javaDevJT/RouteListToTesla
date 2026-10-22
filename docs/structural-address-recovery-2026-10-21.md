@@ -33,12 +33,20 @@ aliases or guessed street names:
    policy. Preserve OCR, ordering, overlap deduplication, TAP authorization,
    CSRF and uncertain-command holds.
 
-Local validation passed 284 Java tests and 46 frontend tests, including 18 street
+Local validation passed 285 Java tests and 46 frontend tests, including 19 street
 structure tests. The supplied cases first failed on the unchanged validator and
 then passed with the new proof. Additional tests first reproduced unsupported
 township ZIPs, proof-stage ZIP drift, malformed route names, duplicate geographic
 components, contradictory long/short street names and order-dependent competing
 place identities; each is now rejected safely.
+
+An additional compatibility audit covers 27 distinct Google long/short route
+pairs from 11 archived response files, including earlier reported addresses.
+It caught a valid internal abbreviation such as Drive/Dr before deployment.
+The provider-field comparison now uses unambiguous catalog abbreviations inside
+Google's own names while retaining strict input-name matching and explicit
+terminal-suffix identity. All 27 archived pairs pass; contradictory names still
+fail. The regression also preserves the direct single-query path.
 
 An existing suffix token can itself be part of the name before the omitted
 terminal suffix. This is handled by the same three proofs rather than a special

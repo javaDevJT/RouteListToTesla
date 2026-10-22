@@ -821,9 +821,7 @@ public class GeocodingClient {
     private static boolean unambiguousStreet(JsonNode result, String expectedRoute) {
         int components = 0;
         for (JsonNode component : result.path("address_components")) if (hasType(component, "route")) components++;
-        List<String> routes = componentValues(result, "route");
-        return components == 1 && !routes.isEmpty()
-                && routes.stream().allMatch(route -> streetRoutesMatch(expectedRoute, route));
+        return components == 1 && streetsMatch(expectedRoute, result);
     }
 
     private static String singlePostalSuffix(JsonNode result) {
@@ -1491,7 +1489,7 @@ public class GeocodingClient {
             if (!hasType(component, "route")) continue;
             String longRoute = component.path("long_name").asString("");
             String shortRoute = component.path("short_name").asString("");
-            if (!longRoute.isBlank() && !shortRoute.isBlank() && !streetRoutesMatch(longRoute, shortRoute)) continue;
+            if (!longRoute.isBlank() && !shortRoute.isBlank() && !providerRouteNamesConsistent(longRoute, shortRoute)) continue;
             if (streetRoutesMatch(requestedRoute, longRoute)) return true;
             List<String> longWords = routeWords(longRoute);
             List<String> shortWords = routeWords(shortRoute);
@@ -1518,6 +1516,23 @@ public class GeocodingClient {
                 if (!StreetSuffixCatalog.equivalent(requestedWords.get(index), returnedWords.get(index))) return false;
             } else if (!requestedWords.get(index).equals(returnedWords.get(index))) return false;
         }
+        return true;
+    }
+
+    private static boolean providerRouteNamesConsistent(String longName, String shortName) {
+        List<String> full = canonicalStreetWords(longName), abbreviated = canonicalStreetWords(shortName);
+        if (full.isEmpty() || full.size() != abbreviated.size()) return false;
+        int suffix = suffixIndex(full);
+        if (suffix < 0 || suffix != suffixIndex(abbreviated)) return false;
+        for (int index = 0; index < full.size(); index++) {
+            if (index == suffix) {
+                if (!StreetSuffixCatalog.equivalent(full.get(index), abbreviated.get(index))) return false;
+            } else if (!StreetSuffixCatalog.canonical(full.get(index))
+                    .equals(StreetSuffixCatalog.canonical(abbreviated.get(index)))) return false;
+        }
+        // Only compare Google's two representations here. Input name matching
+        // remains literal against either attested representation; ambiguous
+        // abbreviations never rewrite interior words in a supplied street name.
         return true;
     }
 
