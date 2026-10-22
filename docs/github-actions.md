@@ -13,6 +13,11 @@ assembly stages are refreshed for security; the independent OpenCV build stage
 can reuse compatible cached layers. The workflow is the source of truth for
 runner labels and cache configuration.
 
+Both image jobs allow 90 minutes for assembly, security scanning, retained
+reports and release promotion. The October 22 run `39789738837` reached the
+former 60-minute job limit after its build and scan passed; its release tags
+were not promoted. The corrected push run `39802095789` completed all gates.
+
 Successful builds publish `ghcr.io/javadevjt/routelisttotesla:latest` and
 `ghcr.io/javadevjt/routelisttotesla:sha-<full-commit-sha>`. The image revision label
 records that same source commit. The Dockerfile runs Maven tests and checks the

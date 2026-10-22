@@ -1,6 +1,6 @@
 # Documentation
 
-- [Street structure recovery (updated 2026-10-22)](structural-address-recovery-2026-10-21.md): suffixless street names, terminal suffix omissions in either representation, and strict provider confirmation.
+- [Street structure recovery (deployed 2026-10-22)](structural-address-recovery-2026-10-21.md): suffixless street names, terminal suffix omissions in either representation, strict provider confirmation and release verification.
 
 - [Municipal postal recovery (deployed 2026-10-21)](municipal-postal-recovery-2026-10-21.md): missing-city township responses, typed municipal proof, conflicting destinations, saved-result migration and release verification.
 
@@ -49,7 +49,26 @@
 - [Local OCR benchmark](../output/ocr-benchmark/README.md) : image and OCR row-matching records, including the
   Linux application-image check.
 
-## Verified deployment (2026-10-21)
+## Verified deployment (2026-10-22)
+
+TrueNAS job **2968** deployed release **20261022-street-structure**, application
+source `7db86fc`, immutable image
+`sha256:0aabde24f148c62b9bdf15365139836239da1153e44348fe1c2f9eaaa5a403bd`.
+[Push CI](https://github.com/javaDevJT/RouteListToTesla/actions/runs/39802095789)
+passed security, storage, publication and cleanup with zero High/Critical
+findings. The exact image passed 24 ordered-exact screenshot regressions with
+all three OCR engines, 36 Python tests and 14 recorded geocoding cases. Local
+checks passed 293 Java and 46 frontend tests.
+
+The [public app](https://teslarouter.javadevjt.tech) serves the verified source,
+release and stylesheet. Live source health, mobile login, TAP redirect and
+signed-out route/CSRF checks passed; the 14-row mobile review matches the native
+image results. Data mounts, security/resource settings and private LAN/proxy
+bindings are preserved. Qualification used 30 saved responses without external
+geocoding or vehicle commands. See the
+[complete release record](structural-address-recovery-2026-10-21.md).
+
+## Historical deployment (2026-10-21)
 
 TrueNAS job **99** deployed release **20261021-municipal-postal**, application
 source `38d28d0`, immutable image

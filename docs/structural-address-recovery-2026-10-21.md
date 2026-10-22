@@ -58,8 +58,8 @@ The initial change used geocoding policy `street-address-v10`; OCR remains `ocr-
 Current-policy saved/session/cache checks revalidate older location decisions.
 Recovered rows show a positive verification message and Google's map address
 without replacing the screenshot text. Independent correctness review found no
-remaining material blocker. Immutable-image qualification and live deployment
-verification are pending and will be recorded separately after they pass.
+remaining material blocker. The October 22 immutable-image qualification and
+verified deployment are recorded below.
 
 ## October 22: suffix omitted by the provider
 
@@ -91,7 +91,7 @@ matched units, removal of other name/direction tokens, competing destinations,
 ZIP drift and unexpected units at each proof stage. Current validation passes
 293 Java tests (27 street-structure tests) and 46 frontend tests. Older cached
 location decisions revalidate under v11. Final image qualification and deployment
-are pending; the previous verified deployment remains recorded in the index.
+passed as recorded below.
 
 Independent review also reproduced an edge where a later proof could reinterpret
 a remaining name word as a suffix abbreviation. Positive proof acceptance now
@@ -106,3 +106,40 @@ original rooftop/place ID must still be present. Tests cover both proof stages
 with exact-plus-interpolated results, failure when only an interpolated result
 remains, and continued rejection of competing rooftop identities. The recorded
 provider responses are preserved without filtering.
+
+## Verified release: October 22
+
+- Application source: `7db86fce37de72ff6a28645d6a8f11b228c91066` on main.
+- [CI run 39802095789](https://github.com/javaDevJT/RouteListToTesla/actions/runs/39802095789),
+  attempt 1, publish job `119905283724`: build, security, storage, release
+  promotion and artifact cleanup all succeeded. Retained High/Critical findings: zero.
+- Immutable image:
+  `ghcr.io/javadevjt/routelisttotesla@sha256:0aabde24f148c62b9bdf15365139836239da1153e44348fe1c2f9eaaa5a403bd`.
+- Native qualification: 24/24 ordered-exact screenshots, including the original
+  new HEIC and unchanged signatures for all 23 earlier screenshots; all three
+  local OCR engines; 36 Python tests; and 14/14 address cases using all 30 saved
+  provider responses exactly once. Application classes loaded from `/app/app.jar`.
+  Dependency, authentication/CSRF, nonroot, resource and parallel-image quality
+  checks passed. The isolated QA app and fixtures were cleaned up normally.
+- TrueNAS job `2968` succeeded and deployed release `20261022-street-structure`.
+  The router and permission-init service use the exact image. Only their image
+  references and `APP_RELEASE` changed; data mounts, 8 CPUs / 8 GiB, UID/GID
+  10001, read-only root and existing private LAN/proxy bindings were preserved.
+- Live source health, release marker, packaged stylesheet, signed-out route
+  protection, CSRF denial and TAP redirect passed. Mobile Chrome at 390 pixels
+  rendered the live login without overflow or page errors. The 14-row review
+  was tested with recorded responses, retained original text, positive matched-map
+  feedback and no vehicle dispatch; its data exactly matches the native image.
+
+The first native attempt exposed an incorrect new test expectation: `APT4`
+versus the correctly normalized `APT 4`. All 23 earlier screenshots already
+passed. Only that new expected spacing was corrected, independently reviewed,
+and checked against the unchanged prior signatures and payload members before
+the full successful rerun. No OCR implementation or prior expectations changed.
+
+An earlier image job exceeded its 60-minute timeout after building and passing
+the security gate, before release promotion. Both image jobs now allow 90 minutes;
+all gates remain mandatory. The successful run above uses that workflow fix.
+The six earlier West Bloomfield and nine current approved diagnostic Google
+requests are distinct from release qualification, which used only saved responses.
+These tests and deployment checks issued no vehicle commands.
