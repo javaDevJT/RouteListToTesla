@@ -6,7 +6,7 @@ TAP-managed sign-in and stable-subject authorization replace independent Google 
 
 ### October 19 provider-corroborated recovery
 
-Current extraction is `ocr-consensus-v9`; geocoding is `street-address-v10`.
+Current extraction is `ocr-consensus-v9`; geocoding is `street-address-v11`.
 Spatial evidence also excludes vertically adjacent side counters while retaining
 nearby ambiguous unit fragments. Geocoding first applies strict matching, then
 can corroborate a unique precise candidate through reverse locality verification
@@ -30,8 +30,9 @@ cannot supply that identity. Equivalent township labels must retain their typed
 municipal identity across forward and reverse results; competing rooftops and
 unit conflicts still block routing. See [municipal postal recovery](municipal-postal-recovery-2026-10-21.md).
 
-Suffixless streets and one omitted terminal road suffix use a separate stronger
-proof. Name and direction tokens must be preserved, the original street must be
+Suffixless streets and one omitted terminal road suffix in either the supplied
+or provider representation use a separate stronger proof. Name and direction
+tokens must be preserved, the original street must be
 corroborated under locality constraints, and reverse lookup must return the same
 nonpartial rooftop/place ID within two metres. Known-suffix direct matches keep
 their existing path. See [street structure recovery](structural-address-recovery-2026-10-21.md).

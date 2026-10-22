@@ -47,6 +47,10 @@ class StreetStructureRecoveryTest {
             "TESTVILLE", "MI", null,
             new ProviderResult("known-main", "100", "Main Street", "Main St", "Testville", null,
                     "48000", 42.32, -83.2));
+    private static final Address HATHAWAY_SUFFIX_OMITTED = new Address(
+            "31331 HATHAWAY ST, LIVONIA, MI", "31331", "HATHAWAY ST", "LIVONIA", "MI", null,
+            new ProviderResult("hathaway-suffix-omitted", "31331", "Hathaway", "Hathaway", "Livonia", null,
+                    "48150", 42.3605718, -83.351036));
 
     @Test
     void recoversCottonwoodKnollAliasFromThreeProviderAttestations() throws Exception {
@@ -83,6 +87,75 @@ class StreetStructureRecoveryTest {
         assertEquals(KNOWN_SUFFIX.text(), probe.result().text());
         assertEquals(1, probe.requests().size());
         assertFalse(probe.requests().getFirst().containsKey("latlng"));
+    }
+
+    @Test
+    void recoversAProviderRouteThatOmitsOnlyTheSuppliedTerminalSuffix() throws Exception {
+        assertRecovered(HATHAWAY_SUFFIX_OMITTED);
+    }
+
+    @Test
+    void providerSuffixOmissionPreservesTrailingDirectionsAndStreetNameWords() throws Exception {
+        assertRecovered(new Address("75 MAPLE ST N, TESTVILLE, MI", "75", "MAPLE ST N",
+                "TESTVILLE", "MI", null,
+                new ProviderResult("maple-north", "75", "Maple North", "Maple N", "Testville", null,
+                        "48000", 42.3, -83.2)));
+        assertRecovered(new Address("75 MAPLE POINT RD, TESTVILLE, MI", "75", "MAPLE POINT RD",
+                "TESTVILLE", "MI", null,
+                new ProviderResult("maple-point", "75", "Maple Point", "Maple Point", "Testville", null,
+                        "48000", 42.3, -83.2)));
+    }
+
+    @Test
+    void providerSuffixOmissionRequiresTheSuppliedUnitToAgreeInEveryProof() throws Exception {
+        assertRecovered(new Address("31331 HATHAWAY ST APT 4, LIVONIA, MI", "31331", "HATHAWAY ST",
+                "LIVONIA", "MI", "4", HATHAWAY_SUFFIX_OMITTED.provider()
+                .withExtra(new Component("4", "4", "subpremise"))), LocationResolution.Status.VERIFIED_UNIT);
+    }
+
+    @Test
+    void providerSuffixOmissionDoesNotReinterpretANameTokenDuringProof() throws Exception {
+        Address address = new Address("75 MAPLE POINT RD, TESTVILLE, MI", "75", "MAPLE POINT RD",
+                "TESTVILLE", "MI", null,
+                new ProviderResult("maple-point", "75", "Maple Point", "Maple Point", "Testville", null,
+                        "48000", 42.3, -83.2));
+        for (Phase phase : List.of(Phase.STRUCTURED, Phase.REVERSE)) {
+            assertRejected(address, actual -> body(actual == phase
+                    ? address.provider().withRoute("Maple Pt", "Maple Pt") : address.provider()));
+        }
+    }
+
+    @Test
+    void omittedSuppliedSuffixCannotEraseNameOrDirectionTokensAndExistingSuffixRecoveryRemains() throws Exception {
+        Address extraNameToken = new Address("31331 HATHAWAY PARK ST, LIVONIA, MI", "31331",
+                "HATHAWAY PARK ST", "LIVONIA", "MI", null, HATHAWAY_SUFFIX_OMITTED.provider());
+        Address removedDirection = new Address("31331 N HATHAWAY ST, LIVONIA, MI", "31331",
+                "N HATHAWAY ST", "LIVONIA", "MI", null, HATHAWAY_SUFFIX_OMITTED.provider());
+        Address incompatibleSuffix = HATHAWAY_SUFFIX_OMITTED.withProvider(
+                HATHAWAY_SUFFIX_OMITTED.provider().withRoute("Hathaway Road", "Hathaway Rd"));
+
+        assertRejected(extraNameToken);
+        assertRejected(removedDirection);
+        Probe existingRecovery = probe(incompatibleSuffix, phase -> body(incompatibleSuffix.provider()));
+        assertEquals(incompatibleSuffix.provider().placeId, existingRecovery.result().pid());
+        assertEquals("corroborated_street_representation", existingRecovery.result().resolution().strategy());
+    }
+
+    @Test
+    void omittedSuppliedSuffixRecoveryRejectsCompetingDestinationsZipDriftAndUnexpectedUnits() throws Exception {
+        ProviderResult competitor = HATHAWAY_SUFFIX_OMITTED.provider().withPlaceId("competing-hathaway-rooftop")
+                .withPoint(42.3606718, -83.351036);
+        for (Phase phase : Phase.values()) {
+            assertRejected(HATHAWAY_SUFFIX_OMITTED, actual -> actual == phase
+                    ? body(List.of(HATHAWAY_SUFFIX_OMITTED.provider(), competitor))
+                    : body(HATHAWAY_SUFFIX_OMITTED.provider()));
+            assertRejected(HATHAWAY_SUFFIX_OMITTED, actual -> body(actual == phase
+                    ? HATHAWAY_SUFFIX_OMITTED.provider().withZip("48151")
+                    : HATHAWAY_SUFFIX_OMITTED.provider()));
+            assertRejected(HATHAWAY_SUFFIX_OMITTED, actual -> body(actual == phase
+                    ? HATHAWAY_SUFFIX_OMITTED.provider().withExtra(new Component("4", "4", "subpremise"))
+                    : HATHAWAY_SUFFIX_OMITTED.provider()));
+        }
     }
 
     @Test

@@ -1,6 +1,6 @@
 # Documentation
 
-- [Street structure recovery (2026-10-21)](structural-address-recovery-2026-10-21.md): suffixless street names, omitted terminal suffixes and provider-attested proof plan.
+- [Street structure recovery (updated 2026-10-22)](structural-address-recovery-2026-10-21.md): suffixless street names, terminal suffix omissions in either representation, and strict provider confirmation.
 
 - [Municipal postal recovery (deployed 2026-10-21)](municipal-postal-recovery-2026-10-21.md): missing-city township responses, typed municipal proof, conflicting destinations, saved-result migration and release verification.
 

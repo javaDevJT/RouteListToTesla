@@ -47,7 +47,7 @@ class PostalMunicipalityRecoveryTest {
         assertEquals(input, result.text());
         assertEquals(LocationResolution.Status.VERIFIED_BUILDING, result.resolution().status());
         assertEquals("corroborated_postal_locality", result.resolution().strategy());
-        assertEquals("street-address-v10", result.resolution().policyVersion());
+        assertEquals("street-address-v11", result.resolution().policyVersion());
         assertEquals(2, calls.get(), "The exact reverse rooftop result must be reused as the second request");
     }
 

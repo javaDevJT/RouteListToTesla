@@ -54,9 +54,46 @@ suffix allowlist. A regression covers that interpretation and rejection when the
 unchanged constrained street points to a competing destination. No name edit
 distance or arbitrary extra name words are accepted.
 
-Geocoding policy is `street-address-v10`; OCR remains `ocr-consensus-v9`.
+The initial change used geocoding policy `street-address-v10`; OCR remains `ocr-consensus-v9`.
 Current-policy saved/session/cache checks revalidate older location decisions.
 Recovered rows show a positive verification message and Google's map address
 without replacing the screenshot text. Independent correctness review found no
 remaining material blocker. Immutable-image qualification and live deployment
 verification are pending and will be recorded separately after they pass.
+
+## October 22: suffix omitted by the provider
+
+The next original HEIC also has correct OCR. Its failed rows are
+`16909 SHREWSBURY, LIVONIA, MI`, `31331 HATHAWAY ST, LIVONIA, MI` and
+`9115 RIVERDALE, REDFORD, MI`. Nine explicitly approved diagnostic requests
+covered the original, unchanged locality-constrained street and reverse lookup
+for each row. Each set agrees on one exact nonpartial rooftop/place ID.
+
+The first and third rows have provider routes Shrewsbury Street and Riverdale
+Avenue, which the initial missing-suffix recovery covers. The second reveals
+the inverse shape: Google's long and short route names are both Hathaway,
+without the supplied St. The initial change does not resolve that shape.
+
+Policy `street-address-v11` additionally permits a proposal that differs only
+by one known supplied terminal road suffix absent in the provider's route.
+Every remaining name and direction token must match literally after the
+existing direction normalization. The stronger proof still queries the complete
+unchanged supplied street under its locality constraints, then requires reverse
+confirmation of the same rooftop/place ID within two metres. House number,
+locality/state/country, ZIP, unit conflicts and competing-destination checks
+remain mandatory. The screenshot text is retained; no address mapping or guessed
+street name is introduced. The existing separate corroboration for explicit
+street-type differences is preserved.
+
+The Hathaway-shaped positive regression fails on the initial change and passes
+on the extension. Additional cases cover trailing directions, multiword names,
+matched units, removal of other name/direction tokens, competing destinations,
+ZIP drift and unexpected units at each proof stage. Current validation passes
+291 Java tests (25 street-structure tests) and 46 frontend tests. Older cached
+location decisions revalidate under v11. Final image qualification and deployment
+are pending; the previous verified deployment remains recorded in the index.
+
+Independent review also reproduced an edge where a later proof could reinterpret
+a remaining name word as a suffix abbreviation. Positive proof acceptance now
+rechecks the exact residual name/direction tokens against the supplied route,
+in addition to the existing provider-field consistency and destination checks.

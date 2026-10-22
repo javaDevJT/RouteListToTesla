@@ -43,7 +43,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class GeocodingClient {
-    public static final String GEOCODING_VERSION = "street-address-v10";
+    public static final String GEOCODING_VERSION = "street-address-v11";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GeocodingClient.class);
     private static final String CONFLICTING_UNIT = "\u0000";
@@ -432,7 +432,8 @@ public class GeocodingClient {
                             && (cityMatches || postalCityMatches || postalProof(match, expected, candidate.text()) != null)
                             && componentValues(match, "route").stream().anyMatch(route ->
                                 streetRoutesMatch(proof.structure().suppliedRoute(), route)
-                                        || missingTerminalSuffix(proof.structure().suppliedRoute(), route))) {
+                                        || missingTerminalSuffix(proof.structure().suppliedRoute(), route)
+                                        || providerOmittedTerminalSuffix(proof.structure().suppliedRoute(), route))) {
                         JsonNode point = match.path("geometry").path("location");
                         double lat = point.path("lat").asDouble(Double.NaN), lon = point.path("lng").asDouble(Double.NaN);
                         String id = match.path("place_id").asString("");
@@ -508,6 +509,9 @@ public class GeocodingClient {
                     }
                     if (proof != null && proof.structure() != null
                             && (!unambiguousStreet(match, expected.route())
+                                || providerOmittedTerminalSuffix(proof.structure().suppliedRoute(), expected.route())
+                                    && componentValues(match, "route").stream().noneMatch(route ->
+                                        providerOmittedTerminalSuffix(proof.structure().suppliedRoute(), route))
                                 || componentCount(match, "street_number") != 1
                                 || componentCount(match, "administrative_area_level_1") != 1
                                 || componentCount(match, "country") != 1
@@ -694,7 +698,7 @@ public class GeocodingClient {
                         : localityAlias ? "corroborated_locality" : "corroborated_street_representation", display);
     }
 
-    /** Stronger proof for literal suffixless routes or one provider-supplied terminal designator. */
+    /** Stronger proof for suffixless routes or exactly one omitted terminal designator. */
     private static boolean recoverableStreetStructure(JsonNode match, ExpectedAddress expected,
                                                        String originalText, boolean cityMatches) {
         LocalityHint hint = expected.localityHint();
@@ -714,7 +718,8 @@ public class GeocodingClient {
         if (route == null || !unambiguousStreet(match, route)) return false;
         boolean literalSuffixless = !hasStreetSuffix(expected.route())
                 && canonicalStreetWords(expected.route()).equals(canonicalStreetWords(route));
-        if (!literalSuffixless && !missingTerminalSuffix(expected.route(), route)) return false;
+        if (!literalSuffixless && !missingTerminalSuffix(expected.route(), route)
+                && !providerOmittedTerminalSuffix(expected.route(), route)) return false;
         boolean municipalityOnly = singleLocalityComponent(match).type().equals("administrative_area_level_3");
         return cityMatches && !municipalityOnly || postalProof(match, expected, originalText) != null;
     }
@@ -785,6 +790,19 @@ public class GeocodingClient {
             } else if (!input.get(index).equals(stem.get(index))) return false;
         }
         return true;
+    }
+
+    private static boolean providerOmittedTerminalSuffix(String requested, String returned) {
+        List<String> supplied = canonicalStreetWords(requested), provider = canonicalStreetWords(returned);
+        int suffix = suffixIndex(supplied);
+        if (suffix < 1 || supplied.size() != provider.size() + 1
+                || !StreetSuffixCatalog.isKnown(supplied.get(suffix))) return false;
+        List<String> name = new ArrayList<>(supplied);
+        name.remove(suffix);
+        // Preserve the same residual name in proposals and every proof response.
+        // Acceptance still requires the unchanged supplied street query and the
+        // same rooftop/PID in reverse. No name or direction token may disappear.
+        return name.equals(provider);
     }
 
     private static PostalProof postalProof(JsonNode proposed, ExpectedAddress expected, String originalText) {
