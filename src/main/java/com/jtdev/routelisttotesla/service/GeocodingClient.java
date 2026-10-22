@@ -428,7 +428,10 @@ public class GeocodingClient {
                     boolean cityMatches = localityMatches(match, expected.localityHint());
                     boolean postalCityMatches = proof != null && proof.postal() != null
                             && proof.postal().matches(match);
+                    // Approximate road points cannot compete with an exact
+                    // rooftop proof or substitute for its positive evidence.
                     if (proof != null && proof.structure() != null
+                            && match.path("geometry").path("location_type").asString("").equals("ROOFTOP")
                             && (cityMatches || postalCityMatches || postalProof(match, expected, candidate.text()) != null)
                             && componentValues(match, "route").stream().anyMatch(route ->
                                 streetRoutesMatch(proof.structure().suppliedRoute(), route)
@@ -476,6 +479,8 @@ public class GeocodingClient {
                         }
                     }
                     if (proof != null && proof.rejectCompetingDestinations()
+                            && (proof.structure() == null
+                                || match.path("geometry").path("location_type").asString("").equals("ROOFTOP"))
                             && localityMatches(match, expected.localityHint())
                             && componentValues(match, "route").stream().anyMatch(route -> sameStreetName(expected.route(), route))) {
                         JsonNode point = match.path("geometry").path("location");

@@ -89,7 +89,7 @@ The Hathaway-shaped positive regression fails on the initial change and passes
 on the extension. Additional cases cover trailing directions, multiword names,
 matched units, removal of other name/direction tokens, competing destinations,
 ZIP drift and unexpected units at each proof stage. Current validation passes
-291 Java tests (25 street-structure tests) and 46 frontend tests. Older cached
+293 Java tests (27 street-structure tests) and 46 frontend tests. Older cached
 location decisions revalidate under v11. Final image qualification and deployment
 are pending; the previous verified deployment remains recorded in the index.
 
@@ -97,3 +97,12 @@ Independent review also reproduced an edge where a later proof could reinterpret
 a remaining name word as a suffix abbreviation. Positive proof acceptance now
 rechecks the exact residual name/direction tokens against the supplied route,
 in addition to the existing provider-field consistency and destination checks.
+
+Replaying the complete saved reverse response also exposed an approximate
+Riverdale road point 2.54 metres from the exact rooftop, with a different place
+ID. The structural proof now counts only rooftop addresses as competing precise
+destinations. An interpolated result cannot supply positive proof; the exact
+original rooftop/place ID must still be present. Tests cover both proof stages
+with exact-plus-interpolated results, failure when only an interpolated result
+remains, and continued rejection of competing rooftop identities. The recorded
+provider responses are preserved without filtering.

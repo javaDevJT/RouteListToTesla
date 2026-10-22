@@ -95,6 +95,26 @@ class StreetStructureRecoveryTest {
     }
 
     @Test
+    void nearbyInterpolatedResultsDoNotCompeteWithTheAttestedRooftop() throws Exception {
+        ProviderResult rooftop = HATHAWAY_SUFFIX_OMITTED.provider();
+        ProviderResult nearbyInterpolated = rooftop.withPlaceId("nearby-interpolated-hathaway")
+                .withPoint(42.3605946, -83.351036).withLocationType("RANGE_INTERPOLATED");
+
+        assertRecovered(HATHAWAY_SUFFIX_OMITTED, phase -> phase == Phase.ORIGINAL
+                ? body(rooftop) : body(List.of(rooftop, nearbyInterpolated)));
+    }
+
+    @Test
+    void interpolatedOnlyStructureProofsCannotAttestTheRooftop() throws Exception {
+        ProviderResult interpolated = HATHAWAY_SUFFIX_OMITTED.provider()
+                .withLocationType("RANGE_INTERPOLATED");
+        for (Phase phase : List.of(Phase.STRUCTURED, Phase.REVERSE)) {
+            assertRejected(HATHAWAY_SUFFIX_OMITTED, actual -> body(actual == phase
+                    ? interpolated : HATHAWAY_SUFFIX_OMITTED.provider()));
+        }
+    }
+
+    @Test
     void providerSuffixOmissionPreservesTrailingDirectionsAndStreetNameWords() throws Exception {
         assertRecovered(new Address("75 MAPLE ST N, TESTVILLE, MI", "75", "MAPLE ST N",
                 "TESTVILLE", "MI", null,
@@ -305,7 +325,16 @@ class StreetStructureRecoveryTest {
     }
 
     private static void assertRecovered(Address address, LocationResolution.Status expectedStatus) throws Exception {
-        Probe probe = probe(address, phase -> body(address.provider()));
+        assertRecovered(address, expectedStatus, phase -> body(address.provider()));
+    }
+
+    private static void assertRecovered(Address address, Function<Phase, String> response) throws Exception {
+        assertRecovered(address, LocationResolution.Status.VERIFIED_BUILDING, response);
+    }
+
+    private static void assertRecovered(Address address, LocationResolution.Status expectedStatus,
+                                        Function<Phase, String> response) throws Exception {
+        Probe probe = probe(address, response);
         PlaceCandidate result = probe.result();
 
         assertEquals(address.provider().placeId, result.pid());
