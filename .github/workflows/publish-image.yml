@@ -32,7 +32,7 @@ jobs:
       github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.event.pull_request.user.id == 49699333))
     runs-on: truenas-routelisttotesla-storage-40g
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
     steps:
@@ -101,7 +101,7 @@ jobs:
   publish:
     if: github.event_name != 'pull_request_target' && github.ref == 'refs/heads/main'
     runs-on: truenas-routelisttotesla-storage-40g
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write
