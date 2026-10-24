@@ -1,6 +1,6 @@
 # Documentation
 
-- [Explicit township recovery (2026-10-24)](explicit-municipality-recovery-2026-10-24.md): supplied municipal labels, typed locality validation and exact rooftop corroboration.
+- [Explicit township recovery (deployed 2026-10-24)](explicit-municipality-recovery-2026-10-24.md): supplied municipal labels, typed locality validation, exact rooftop corroboration and release verification.
 
 - [Street structure recovery (deployed 2026-10-22)](structural-address-recovery-2026-10-21.md): suffixless street names, terminal suffix omissions in either representation, strict provider confirmation and release verification.
 
@@ -51,7 +51,27 @@
 - [Local OCR benchmark](../output/ocr-benchmark/README.md) : image and OCR row-matching records, including the
   Linux application-image check.
 
-## Verified deployment (2026-10-22)
+## Verified deployment (2026-10-24)
+
+TrueNAS job **9493** deployed release **20261024-gateway**, application source
+`22ab299`, immutable image
+`sha256:4e839e4cf1dff5131977a747921c092fd2d2dc8444bd6af7828a6272864cf5cb`.
+[Push CI](https://github.com/javaDevJT/RouteListToTesla/actions/runs/40094618455)
+passed security, storage, publication and cleanup with zero High/Critical
+findings. Native qualification passed 25 ordered-exact screenshots with all three
+local OCR engines, 36 Python tests and 15 recorded geocoding cases. Local checks
+passed 317 Java and 48 frontend tests.
+
+The [public app](https://teslarouter.javadevjt.tech) serves the verified source,
+release and stylesheet. Live source health, mobile login, TAP redirect and
+signed-out route/CSRF checks passed. The 15-row mobile review exactly matches
+the native image's resolved data; Gateway Ledge shows positive verification
+with original text retained. All existing mounts, security/resource settings
+and private LAN/proxy bindings are preserved. Tests and deployment verification
+sent no vehicle commands. See the
+[complete release record](explicit-municipality-recovery-2026-10-24.md).
+
+## Historical deployment (2026-10-22)
 
 TrueNAS job **2968** deployed release **20261022-street-structure**, application
 source `7db86fc`, immutable image

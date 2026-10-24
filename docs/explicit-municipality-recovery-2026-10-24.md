@@ -44,5 +44,36 @@ explicit municipality. The full clean package passed 317 Java tests, including
 20 explicit-municipality and four ZIP-area tests; 48 frontend tests passed,
 including revalidation of saved v11 successes and failures. Independent source
 safety review passed. Immutable-image qualification and live deployment
-verification remain pending and will be recorded here when complete. Tests use
-saved Google responses and send no routes to a vehicle.
+verification passed as recorded below. Tests use saved Google responses and
+send no routes to a vehicle.
+
+## Verified release
+
+- Application source: `22ab299cd945c836622ad97e70e1aaee02a1984a` on main.
+- [CI run 40094618455](https://github.com/javaDevJT/RouteListToTesla/actions/runs/40094618455),
+  attempt 1, publish job 120874158438: build, security, storage, release promotion
+  and cleanup succeeded. The retained report has zero High/Critical findings.
+- Immutable image:
+  `ghcr.io/javadevjt/routelisttotesla@sha256:4e839e4cf1dff5131977a747921c092fd2d2dc8444bd6af7828a6272864cf5cb`.
+  Registry labels/configuration bind this digest to the source; the packaged
+  frontend, theme and postal catalog match that committed source.
+- Native qualification passed all 25 ordered-exact screenshots, including the
+  original supplied HEIC and unchanged signatures for all 24 earlier cases.
+  All three local OCR engines, 36 Python tests, 15 address cases and all 33 unique
+  saved provider-response requests passed. Application classes loaded from
+  `/app/app.jar`; no source overlays or hosted OCR were used. Dependency,
+  authentication/CSRF, nonroot, resource and parallel-image quality gates passed.
+  The isolated QA app and fixtures were cleaned up normally.
+- TrueNAS job 9493 succeeded, deploying release `20261024-gateway`. Only router
+  image, permission-init image and `APP_RELEASE` changed. Data mounts, 8 CPUs /
+  8 GiB, UID/GID 10001, read-only root and private LAN/proxy bindings were preserved.
+- Public `/health` reports the exact source. The served release marker/theme,
+  TAP redirect and protected-route/CSRF checks passed. Mobile Chrome at 390px
+  rendered the live login without overflow or page errors. A mocked 15-row mobile
+  review retained original text, showed green Gateway verification and allowed
+  route actions without dispatch; its data hash matches native qualification.
+
+Exactly the three approved Google requests diagnosed this case. All subsequent
+qualification used the recorded responses and issued no external Google requests
+or vehicle commands. Reload and sign in through TAP to load the new policy;
+saved older location decisions are revalidated without clearing route data.
