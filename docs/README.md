@@ -1,5 +1,7 @@
 # Documentation
 
+- [Explicit township recovery (2026-10-24)](explicit-municipality-recovery-2026-10-24.md): supplied municipal labels, typed locality validation and exact rooftop corroboration.
+
 - [Street structure recovery (deployed 2026-10-22)](structural-address-recovery-2026-10-21.md): suffixless street names, terminal suffix omissions in either representation, strict provider confirmation and release verification.
 
 - [Municipal postal recovery (deployed 2026-10-21)](municipal-postal-recovery-2026-10-21.md): missing-city township responses, typed municipal proof, conflicting destinations, saved-result migration and release verification.

@@ -43,7 +43,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class GeocodingClient {
-    public static final String GEOCODING_VERSION = "street-address-v11";
+    public static final String GEOCODING_VERSION = "street-address-v12";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GeocodingClient.class);
     private static final String CONFLICTING_UNIT = "\u0000";
@@ -425,7 +425,7 @@ public class GeocodingClient {
                     if (streetNumbers.isEmpty() || streetNumbers.stream()
                             .anyMatch(number -> !expected.houseNumber().equals(canonicalHouseNumber(number)))) continue;
                     boolean streetMatches = streetsMatch(expected.route(), match);
-                    boolean cityMatches = localityMatches(match, expected.localityHint());
+                    boolean cityMatches = lookupLocalityMatches(match, expected.localityHint());
                     boolean postalCityMatches = proof != null && proof.postal() != null
                             && proof.postal().matches(match);
                     // Approximate road points cannot compete with an exact
@@ -481,7 +481,7 @@ public class GeocodingClient {
                     if (proof != null && proof.rejectCompetingDestinations()
                             && (proof.structure() == null
                                 || match.path("geometry").path("location_type").asString("").equals("ROOFTOP"))
-                            && localityMatches(match, expected.localityHint())
+                            && lookupLocalityMatches(match, expected.localityHint())
                             && componentValues(match, "route").stream().anyMatch(route -> sameStreetName(expected.route(), route))) {
                         JsonNode point = match.path("geometry").path("location");
                         double lat = point.path("lat").asDouble(Double.NaN), lon = point.path("lng").asDouble(Double.NaN);
@@ -497,7 +497,8 @@ public class GeocodingClient {
                     boolean structureRecovery = proof == null && form.strategy().equals("original")
                             && recoverableStreetStructure(match, expected, candidate.text(), cityMatches);
                     if (!streetMatches || !cityMatches && !postalCityMatches
-                            || proof == null && !hasStreetSuffix(expected.route())) {
+                            || proof == null && (!hasStreetSuffix(expected.route())
+                                || hasExplicitMunicipalLocality(expected.localityHint()))) {
                         if (proof == null && (structureRecovery || form.strategy().equals("original")
                                 && recoverableRepresentation(match, expected, streetMatches, cityMatches))) {
                             structureProposalSeen |= structureRecovery;
@@ -514,6 +515,8 @@ public class GeocodingClient {
                     }
                     if (proof != null && proof.structure() != null
                             && (!unambiguousStreet(match, expected.route())
+                                || proof.structure().explicitMunicipality()
+                                    && !explicitMunicipalityMatches(match, expected.localityHint())
                                 || providerOmittedTerminalSuffix(proof.structure().suppliedRoute(), expected.route())
                                     && componentValues(match, "route").stream().noneMatch(route ->
                                         providerOmittedTerminalSuffix(proof.structure().suppliedRoute(), route))
@@ -703,7 +706,7 @@ public class GeocodingClient {
                         : localityAlias ? "corroborated_locality" : "corroborated_street_representation", display);
     }
 
-    /** Stronger proof for suffixless routes or exactly one omitted terminal designator. */
+    /** Exact rooftop proof for street structures and explicit municipal locality labels. */
     private static boolean recoverableStreetStructure(JsonNode match, ExpectedAddress expected,
                                                        String originalText, boolean cityMatches) {
         LocalityHint hint = expected.localityHint();
@@ -723,10 +726,13 @@ public class GeocodingClient {
         if (route == null || !unambiguousStreet(match, route)) return false;
         boolean literalSuffixless = !hasStreetSuffix(expected.route())
                 && canonicalStreetWords(expected.route()).equals(canonicalStreetWords(route));
-        if (!literalSuffixless && !missingTerminalSuffix(expected.route(), route)
+        boolean explicitMunicipalStreet = hasExplicitMunicipalLocality(hint)
+                && streetRoutesMatch(expected.route(), route);
+        if (!literalSuffixless && !explicitMunicipalStreet && !missingTerminalSuffix(expected.route(), route)
                 && !providerOmittedTerminalSuffix(expected.route(), route)) return false;
         boolean municipalityOnly = singleLocalityComponent(match).type().equals("administrative_area_level_3");
-        return cityMatches && !municipalityOnly || postalProof(match, expected, originalText) != null;
+        return cityMatches && !municipalityOnly || explicitMunicipalityMatches(match, hint)
+                || postalProof(match, expected, originalText) != null;
     }
 
     private LookupOutcome corroborateStreetStructure(String owner, PlaceCandidate candidate, ExpectedAddress expected,
@@ -741,7 +747,8 @@ public class GeocodingClient {
         // Unlike the older nearby/interpolated locality proof, both new checks
         // require this exact rooftop/PID within 2m, including reverse evidence.
         ProofTarget target = new ProofTarget(lat, lon, id, false, true, postal,
-                new StreetStructureProof(expected.route(), singlePostalCode(proposed)));
+                new StreetStructureProof(expected.route(), singlePostalCode(proposed),
+                        explicitMunicipalityMatches(proposed, expected.localityHint())));
         String originalStreet = expected.houseNumber() + " " + expected.route()
                 + (expected.unit() == null ? "" : " UNIT " + expected.unit());
         LookupOutcome constrained = lookup(owner, candidate, precise,
@@ -1378,6 +1385,54 @@ public class GeocodingClient {
         return null;
     }
 
+    private static boolean hasExplicitMunicipalLocality(LocalityHint hint) {
+        return hint != null && "US".equals(hint.country()) && hint.city() != null
+                && canonicalTownshipName(hint.city()) != null
+                && !canonicalTownshipName(hint.city()).isEmpty();
+    }
+
+    private static boolean lookupLocalityMatches(JsonNode match, LocalityHint hint) {
+        if (!hasExplicitMunicipalLocality(hint)) return localityMatches(match, hint);
+        if (explicitMunicipalityMatches(match, hint)) return true;
+        // Preserve an actual primary city with the exact supplied full label.
+        // An admin3 match must never override a different primary city.
+        LocalityComponent primary = singleLocalityComponent(match);
+        return primary != null && primary.type().equals("locality")
+                && canonicalLocality(hint.city()).equals(canonicalLocality(primary.name()))
+                && localityMatches(match, hint);
+    }
+
+    private static boolean explicitMunicipalityMatches(JsonNode match, LocalityHint hint) {
+        if (!hasExplicitMunicipalLocality(hint) || hint.state() == null
+                || componentCount(match, "administrative_area_level_3") != 1
+                || componentCount(match, "administrative_area_level_1") != 1
+                || componentCount(match, "country") != 1
+                || !localityMatches(match, new LocalityHint(null, hint.state(), hint.country()))) return false;
+        for (JsonNode component : match.path("address_components")) {
+            for (JsonNode type : component.path("types")) {
+                String name = type.asString("");
+                if (name.equals("locality") || name.equals("postal_town") || name.equals("sublocality")
+                        || name.startsWith("sublocality_level_")) return false;
+            }
+        }
+        LocalityComponent municipal = singleLocalityComponent(match);
+        if (municipal == null || !municipal.type().equals("administrative_area_level_3")) return false;
+        String expected = canonicalTownshipName(hint.city());
+        for (JsonNode component : match.path("address_components")) {
+            if (!hasType(component, "administrative_area_level_3")) continue;
+            String longName = component.path("long_name").asString("");
+            String shortName = component.path("short_name").asString("");
+            String shortBase = canonicalTownshipName(shortName);
+            if (!expected.equals(canonicalTownshipName(longName)) || shortName.isBlank()
+                    || !expected.equals(shortBase == null ? canonicalLocality(shortName) : shortBase)) return false;
+        }
+        JsonNode point = match.path("geometry").path("location");
+        // This is geographic ZIP evidence, not a postal-city alias or municipal
+        // boundary. The typed name and all three exact rooftop proofs remain mandatory.
+        return PostalLocalityCatalog.supportsArea(singlePostalCode(match), hint.state(),
+                point.path("lat").asDouble(Double.NaN), point.path("lng").asDouble(Double.NaN));
+    }
+
     private static boolean localityMatches(JsonNode match, LocalityHint hint) {
         if (hint == null) return true;
         if (hint.city() != null) {
@@ -1744,7 +1799,7 @@ public class GeocodingClient {
         }
     }
 
-    private record StreetStructureProof(String suppliedRoute, String zip) { }
+    private record StreetStructureProof(String suppliedRoute, String zip, boolean explicitMunicipality) { }
 
     private record ProofTarget(double latitude, double longitude, String placeId, boolean reverse,
                                boolean rejectCompetingDestinations, PostalProof postal, StreetStructureProof structure) {

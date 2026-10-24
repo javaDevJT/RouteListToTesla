@@ -43,6 +43,11 @@ final class PostalLocalityCatalog {
         return DEFAULT_CATALOG.supports(zip, city, state, lat, lon);
     }
 
+    /** Nearby ZIP/state evidence; the caller must independently prove the municipal name. */
+    static boolean supportsArea(String zip, String state, double lat, double lon) {
+        return DEFAULT_CATALOG.supportsArea(zip, state, lat, lon);
+    }
+
     /** Parses a bounded UTF-8 TSV catalog, rejecting the entire file on any malformed record. */
     static Catalog parse(InputStream input) throws IOException {
         if (input == null) {
@@ -174,15 +179,35 @@ final class PostalLocalityCatalog {
     private record LocalityKey(String zip, String city, String state) {
     }
 
+    private record PostalAreaKey(String zip, String state) {
+    }
+
     private record Locality(double lat, double lon, int accuracy) {
     }
 
     static final class Catalog {
         private static final Catalog EMPTY = new Catalog(Map.of());
         private final Map<LocalityKey, List<Locality>> records;
+        private final Map<PostalAreaKey, List<Locality>> areas;
 
         private Catalog(Map<LocalityKey, List<Locality>> records) {
             this.records = records;
+            Map<PostalAreaKey, List<Locality>> indexed = new HashMap<>();
+            records.forEach((key, values) -> indexed
+                    .computeIfAbsent(new PostalAreaKey(key.zip(), key.state()), ignored -> new ArrayList<>())
+                    .addAll(values));
+            Map<PostalAreaKey, List<Locality>> immutable = new HashMap<>();
+            indexed.forEach((key, values) -> immutable.put(key, values.stream().distinct().toList()));
+            this.areas = Collections.unmodifiableMap(immutable);
+        }
+
+        boolean supportsArea(String zip, String state, double lat, double lon) {
+            String normalizedState = normalize(state);
+            if (zip == null || !ZIP5.matcher(zip).matches() || !STATE2.matcher(normalizedState).matches()
+                    || !validPoint(lat, lon) || lat == 0.0 && lon == 0.0) return false;
+            List<Locality> matches = areas.get(new PostalAreaKey(zip, normalizedState));
+            return matches != null && matches.stream().anyMatch(locality -> locality.accuracy() >= 4
+                    && distanceKm(lat, lon, locality.lat(), locality.lon()) <= MAX_DISTANCE_KM);
         }
 
         boolean supports(String zip, String city, String state, double lat, double lon) {
