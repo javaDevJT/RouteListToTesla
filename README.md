@@ -81,25 +81,25 @@ Image builds and publication are automated on pushes to `main` using the private
 TrueNAS runner. GHCR receives `latest` and `sha-<full-commit-sha>` tags. See
 [GitHub Actions publishing](docs/github-actions.md) for the runner and build setup.
 
-**Verified October 24, 2026.** TeslaRouter runs `20261024-gateway`, TrueNAS
-job **9493**, application source `22ab299`, immutable image
-`sha256:4e839e4cf1dff5131977a747921c092fd2d2dc8444bd6af7828a6272864cf5cb`.
-General recovery covers explicit Township/Twp localities, suffixless street names
-and one terminal suffix omitted by either representation. A typed municipality
-can be verified without inventing a postal-city alias. Acceptance requires the
-original lookup, unchanged locality-constrained lookup and reverse proof to agree
-on the same precise rooftop destination. City centers, unit conflicts, changed
-street names and competing rooftops remain rejected. Original address text stays
-visible beside the verified map address.
+**Verified October 26, 2026.** TeslaRouter runs `20261026-cherrywood`, TrueNAS
+job **15856**, application source `bfe06ec`, immutable image
+`sha256:3b3256e0e2f719074cbdf09d25c67a045a0e99c7233d6b72f9bea59da7257024`.
+Apartment and building place IDs can now be corroborated independently at the
+same precise rooftop without treating them as competing destinations. Two
+unit-bearing forward proofs and matching reverse/building-only parent proofs
+are required; original unit text and its place ID remain the destination.
+Conflicting units, other rooftops and city centers remain rejected. The review
+message also avoids interpreting street names such as STEELE as a suite.
 
-The exact image passed 25 screenshot regressions with all three local OCR engines,
-36 Python tests and 15 recorded address cases. Local checks passed 317 Java
-and 48 frontend tests. CI passed with zero High/Critical findings; live source
-health, TAP/CSRF boundaries and mobile login rendering were verified. Eight CPUs/
-8 GiB, UID 10001, read-only root, data mounts and private LAN/proxy settings are
-preserved. Qualification used recorded responses and sent no vehicle commands.
-See the [explicit township release record](docs/explicit-municipality-recovery-2026-10-24.md)
-and [preceding street structure release](docs/structural-address-recovery-2026-10-21.md).
+The exact image passed 26 screenshot regressions with all three local OCR engines,
+36 Python tests and 19 address cases using 40 saved provider responses. Local
+checks passed 324 Java and 51 frontend tests. CI passed with zero High/Critical
+findings after updating filelock to 4.2.1. Live source health, TAP/CSRF boundaries
+and mobile login rendering were verified. Eight CPUs/8 GiB, UID 10001, read-only
+root, data mounts and private LAN/proxy settings are preserved. Qualification
+used recorded responses and sent no vehicle commands. See the
+[unit and parent release record](docs/unit-parent-recovery-2026-10-26.md) and
+[preceding township release](docs/explicit-municipality-recovery-2026-10-24.md).
 
 **Historical release (September 28, 2026).** TeslaRouter ran `20260928-jlink`, TrueNAS job
 **212741**, from source commit `0fbb774d0cb2913e7e8151e09f4ed01c04dc861e` and image

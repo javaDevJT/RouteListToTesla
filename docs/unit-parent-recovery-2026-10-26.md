@@ -49,6 +49,40 @@ parents/units in both result orders, malformed subpremise results, formatted-onl
 unit claims, missing/changed address components, and drift beyond two metres.
 Saved v12 decisions revalidate alongside the existing v11 migration cases.
 
-Immutable image qualification and deployment verification are in progress. Tests
-use recorded provider bodies after the explicitly authorized diagnostic calls
-and send no vehicle commands.
+The seven explicitly authorized Google requests were saved before qualification.
+All subsequent replay used those responses and preserved the earlier 33 bodies;
+no test route was sent to a vehicle.
+
+## Verified release
+
+- Application source `bfe06ecedb7a0b237508054336e5f4e343ccb0bb` on main.
+  [CI 40356401515](https://github.com/javaDevJT/RouteListToTesla/actions/runs/40356401515),
+  attempt 1, publish job 121689929273, passed build, security, storage, release
+  promotion and cleanup. The retained report contains zero High/Critical findings.
+- Immutable image:
+  `ghcr.io/javadevjt/routelisttotesla@sha256:3b3256e0e2f719074cbdf09d25c67a045a0e99c7233d6b72f9bea59da7257024`.
+  Registry source/configuration labels and packaged frontend, theme and postal
+  catalog match the committed source. The actual image JAR was extracted and
+  hashed before native qualification; application classes/resources loaded from
+  `/app/app.jar`, with no source overlays.
+- Native qualification passed 26 ordered-exact screenshots, retaining all 25
+  earlier signatures. The supplied JPEG produced all five addresses in order,
+  including apartment 2601 and the Halsted road suffix. All three OCR engines,
+  36 Python tests and 19 address cases over 40 unique saved response fixtures
+  passed. Prior address coordinates, place IDs, order and resolution metadata
+  are unchanged apart from the expected policy version update. Actual filelock
+  4.2.1 and dependency compatibility were verified. Peak memory was
+  2,838,966,272 bytes. The isolated QA app and fixtures were cleaned up normally.
+- TrueNAS job 15856 deployed release `20261026-cherrywood`. Only router image,
+  permission-init image and `APP_RELEASE` changed. Credentials, cache/session
+  volumes, eight CPUs/8 GiB, UID/GID 10001, read-only root and private LAN/proxy
+  bindings were preserved, with the predecessor digest retained in the receipt.
+- Fresh public health and runtime/configuration checks report the exact source
+  and digest. Served release/theme identity, TAP redirect and protected-route/
+  CSRF checks passed. Mobile Chrome at 390px rendered the live login without
+  overflow or page errors. The mocked 19-row mobile review uses the exact native
+  image's resolved data: Cherrywood is green and unit-verified, while Steele
+  correctly states that no apartment or suite was supplied.
+
+Reload TeslaRouter in Safari to load v13. Saved older location decisions
+revalidate without clearing route or screenshot data.

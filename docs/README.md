@@ -1,6 +1,6 @@
 # Documentation
 
-- [Apartment and building identities (2026-10-26)](unit-parent-recovery-2026-10-26.md): independent unit/parent place-ID corroboration, strict conflict handling and accurate unit messages.
+- [Apartment and building identities (deployed 2026-10-26)](unit-parent-recovery-2026-10-26.md): independent unit/parent place-ID corroboration, strict conflict handling, accurate unit messages and complete release evidence.
 
 - [Explicit township recovery (deployed 2026-10-24)](explicit-municipality-recovery-2026-10-24.md): supplied municipal labels, typed locality validation, exact rooftop corroboration and release verification.
 
@@ -53,7 +53,25 @@
 - [Local OCR benchmark](../output/ocr-benchmark/README.md) : image and OCR row-matching records, including the
   Linux application-image check.
 
-## Verified deployment (2026-10-24)
+## Verified deployment (2026-10-26)
+
+TrueNAS job **15856** deployed **20261026-cherrywood**, application source
+`bfe06ec`, immutable image
+`sha256:3b3256e0e2f719074cbdf09d25c67a045a0e99c7233d6b72f9bea59da7257024`.
+[Push CI](https://github.com/javaDevJT/RouteListToTesla/actions/runs/40356401515)
+passed security, storage, publication and cleanup with zero High/Critical
+findings. The exact image passed 26 ordered-exact screenshot regressions, all
+three local OCR engines, 36 Python tests and 19 address cases over 40 saved
+provider responses. Local checks passed 324 Java and 51 frontend tests.
+
+The [public app](https://teslarouter.javadevjt.tech) serves the verified source,
+release and theme. Public health, mobile login, TAP redirects and protected
+route/CSRF checks passed. The mobile review uses the exact native-image data:
+Cherrywood's unit verifies and Steele shows no fabricated suite. Existing
+credentials, volumes, resources and private LAN/proxy bindings are preserved.
+See the [complete release record](unit-parent-recovery-2026-10-26.md).
+
+## Historical deployment (2026-10-24)
 
 TrueNAS job **9493** deployed release **20261024-gateway**, application source
 `22ab299`, immutable image
