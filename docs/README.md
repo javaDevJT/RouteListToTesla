@@ -1,5 +1,7 @@
 # Documentation
 
+- [Apartment and building identities (2026-10-26)](unit-parent-recovery-2026-10-26.md): independent unit/parent place-ID corroboration, strict conflict handling and accurate unit messages.
+
 - [Explicit township recovery (deployed 2026-10-24)](explicit-municipality-recovery-2026-10-24.md): supplied municipal labels, typed locality validation, exact rooftop corroboration and release verification.
 
 - [Street structure recovery (deployed 2026-10-22)](structural-address-recovery-2026-10-21.md): suffixless street names, terminal suffix omissions in either representation, strict provider confirmation and release verification.

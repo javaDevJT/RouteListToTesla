@@ -254,7 +254,14 @@
         const locationAddressRows = new WeakMap();
         const LOCATION_RESOLVE_BATCH_SIZE = 500;
         const LOCATION_RESOLVE_MAX_TEXT_LENGTH = 1000;
-        const LOCATION_POLICY_VERSION = 'street-address-v12';
+        const LOCATION_POLICY_VERSION = 'street-address-v13';
+        // Match the backend's accepted unit values and require a segment boundary
+        // so street names like STEELE, UNIT ROAD, and APARTMENT LANE stay intact.
+        const LOCATION_UNIT_VALUE_PATTERN = '(?:[A-Z]?\\d+[A-Z0-9-]*|[A-Z](?:-\\d+[A-Z]?)?)';
+        const LOCATION_BUILDING_UNIT_PATTERN = new RegExp(
+            `(?:^|[\\s,])(?:(APT|APARTMENT|UNIT|STE|SUITE)\\.?\\s*#?\\s*|#\\s*)(${LOCATION_UNIT_VALUE_PATTERN})(?=\\s*(?:,|$))`,
+            'i'
+        );
         const LOCATION_RESOLUTION_STATUSES = new Set([
             'VERIFIED_UNIT', 'VERIFIED_BUILDING', 'NO_MATCH', 'AMBIGUOUS', 'DEFERRED', 'LOOKUP_UNAVAILABLE'
         ]);
@@ -983,7 +990,7 @@
         }
 
         function getBuildingVerificationText(address) {
-            const match = String(address?.text || '').match(/(?:^|[\s,])(?:(APT|APARTMENT|UNIT|STE|SUITE)\.?\s*#?\s*|#\s*)([A-Z0-9][A-Z0-9-]*)\b/i);
+            const match = String(address?.text || '').match(LOCATION_BUILDING_UNIT_PATTERN);
             if (!match) return 'Building verified. No apartment or suite was supplied.';
             const kind = /^(?:APT|APARTMENT)$/i.test(match[1] || '') ? 'Apt'
                 : /^(?:STE|SUITE)$/i.test(match[1] || '') ? 'Suite'

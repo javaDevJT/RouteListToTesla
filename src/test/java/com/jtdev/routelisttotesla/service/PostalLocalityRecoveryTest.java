@@ -35,7 +35,7 @@ class PostalLocalityRecoveryTest {
                 assertEquals(unit == null ? LocationResolution.Status.VERIFIED_BUILDING
                         : LocationResolution.Status.VERIFIED_UNIT, result.resolution().status(), text);
                 assertEquals("corroborated_postal_locality", result.resolution().strategy());
-        assertEquals("street-address-v12", result.resolution().policyVersion());
+        assertEquals("street-address-v13", result.resolution().policyVersion());
                 assertNotNull(result.resolution().matchedAddress());
                 assertEquals(2, calls.get(), "Postal evidence must reuse the existing reverse request");
             }

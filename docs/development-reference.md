@@ -6,7 +6,7 @@ TAP-managed sign-in and stable-subject authorization replace independent Google 
 
 ### October 19 provider-corroborated recovery
 
-Current extraction is `ocr-consensus-v9`; geocoding is `street-address-v12`.
+Current extraction is `ocr-consensus-v9`; geocoding is `street-address-v13`.
 Spatial evidence also excludes vertically adjacent side counters while retaining
 nearby ambiguous unit fragments. Geocoding first applies strict matching, then
 can corroborate a unique precise candidate through reverse locality verification
@@ -43,6 +43,13 @@ ZIP/state catalog evidence can establish municipal identity without inventing a
 postal-city alias. Conflicting primary localities and sublocalities remain
 rejected; exact primary city labels retain their own validation. See
 [explicit township recovery](explicit-municipality-recovery-2026-10-24.md).
+
+When two unchanged-street forward proofs agree on a unit place ID, the reverse
+street-structure proof may corroborate a distinct unitless parent at the same
+rooftop. Exact typed address/locality/ZIP checks and a fourth building-only
+forward proof must agree; the supplied unit and its ID remain the destination.
+The exception does not merge arbitrary nearby place IDs or weaken ordinary
+unitless proofs. See [unit and parent verification](unit-parent-recovery-2026-10-26.md).
 
 ### October 18 spatial OCR evidence
 

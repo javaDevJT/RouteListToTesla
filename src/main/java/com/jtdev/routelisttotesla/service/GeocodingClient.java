@@ -43,7 +43,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class GeocodingClient {
-    public static final String GEOCODING_VERSION = "street-address-v12";
+    public static final String GEOCODING_VERSION = "street-address-v13";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GeocodingClient.class);
     private static final String CONFLICTING_UNIT = "\u0000";
@@ -406,6 +406,7 @@ public class GeocodingClient {
                 Map<String, PlaceCandidate> unitMatches = new LinkedHashMap<>();
                 Map<String, PlaceCandidate> buildingMatches = new LinkedHashMap<>();
                 Set<String> directIdentities = new HashSet<>();
+                Set<String> parentIdentities = new HashSet<>();
                 Set<String> postalUnitMatches = new HashSet<>();
                 Set<String> postalBuildingMatches = new HashSet<>();
                 Map<String, JsonNode> recoveryCandidates = new LinkedHashMap<>();
@@ -428,6 +429,7 @@ public class GeocodingClient {
                     boolean cityMatches = lookupLocalityMatches(match, expected.localityHint());
                     boolean postalCityMatches = proof != null && proof.postal() != null
                             && proof.postal().matches(match);
+                    boolean parentBuilding = form.reverse() && unitlessParentMatches(match, expected, proof);
                     // Approximate road points cannot compete with an exact
                     // rooftop proof or substitute for its positive evidence.
                     if (proof != null && proof.structure() != null
@@ -443,8 +445,8 @@ public class GeocodingClient {
                         if (point.path("lat").isNumber() && point.path("lng").isNumber()
                                 && Double.isFinite(lat) && Double.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
                                 && !(lat == 0 && lon == 0) && id.matches("[A-Za-z0-9_-]{1,512}")) {
-                            if (!proof.placeId().equals(id)
-                                    || distanceMetres(proof.latitude(), proof.longitude(), lat, lon) > 2) {
+                            if (!parentBuilding && (!proof.placeId().equals(id)
+                                    || distanceMetres(proof.latitude(), proof.longitude(), lat, lon) > 2)) {
                                 return new LookupOutcome(LookupStatus.AMBIGUOUS, null);
                             }
                             String unit = returnedUnit(match);
@@ -467,8 +469,8 @@ public class GeocodingClient {
                         if (point.path("lat").isNumber() && point.path("lng").isNumber()
                                 && Double.isFinite(lat) && Double.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
                                 && !(lat == 0 && lon == 0) && id.matches("[A-Za-z0-9_-]{1,512}")) {
-                            if (!proof.placeId().equals(id)
-                                    || distanceMetres(proof.latitude(), proof.longitude(), lat, lon) > 2) {
+                            if (!parentBuilding && (!proof.placeId().equals(id)
+                                    || distanceMetres(proof.latitude(), proof.longitude(), lat, lon) > 2)) {
                                 return new LookupOutcome(LookupStatus.AMBIGUOUS, null);
                             }
                             String unit = returnedUnit(match);
@@ -489,7 +491,7 @@ public class GeocodingClient {
                         if (point.path("lat").isNumber() && point.path("lng").isNumber()
                                 && Double.isFinite(lat) && Double.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
                                 && !(lat == 0 && lon == 0) && id.matches("[A-Za-z0-9_-]{1,512}")
-                                && (!proof.placeId().equals(id)
+                                && !parentBuilding && (!proof.placeId().equals(id)
                                     || distanceMetres(proof.latitude(), proof.longitude(), lat, lon) > 2)) {
                             return new LookupOutcome(LookupStatus.AMBIGUOUS, null);
                         }
@@ -530,9 +532,14 @@ public class GeocodingClient {
                     if (proof != null && !proof.accepts(match,
                             match.path("geometry").path("location").path("lat").asDouble(Double.NaN),
                             match.path("geometry").path("location").path("lng").asDouble(Double.NaN),
-                            match.path("place_id").asString(""), !cityMatches && postalCityMatches)) continue;
+                            match.path("place_id").asString(""), !cityMatches && postalCityMatches, parentBuilding)) continue;
 
                     String returnedUnit = returnedUnit(match);
+                    if (proof != null && proof.structure() != null && expected.unit() == null
+                            && hasSecondaryUnitEvidence(match)) {
+                        unitConflict = true;
+                        continue;
+                    }
                     if (CONFLICTING_UNIT.equals(returnedUnit)) {
                         unitConflict = true;
                         continue;
@@ -556,6 +563,7 @@ public class GeocodingClient {
 
                     PlaceCandidate resolved = candidate.withLatLonPid(latitude, longitude, placeId);
                     String destination = destinationKey(resolved);
+                    if (parentBuilding) parentIdentities.add(placeId);
                     directIdentities.add(placeId + ":" + destination);
                     if (expected.unit() != null && returnedUnit != null) {
                         if (!cityMatches && !unitMatches.containsKey(destination)) postalUnitMatches.add(destination);
@@ -581,7 +589,9 @@ public class GeocodingClient {
                     }
                     if (destinations.size() > 1) return new LookupOutcome(LookupStatus.AMBIGUOUS, null);
                 }
-                if (unitMatches.size() > 1) return new LookupOutcome(LookupStatus.AMBIGUOUS, null);
+                if (parentIdentities.size() > 1 || unitMatches.size() > 1) {
+                    return new LookupOutcome(LookupStatus.AMBIGUOUS, null);
+                }
                 if (unitMatches.size() == 1) {
                     PlaceCandidate match = unitMatches.values().iterator().next();
                     return new LookupOutcome(LookupStatus.UNIT_MATCH, match,
@@ -755,17 +765,71 @@ public class GeocodingClient {
                 new LookupForm(originalStreet, structuredComponents(expected.localityHint()), "original_structure_proof", false),
                 stopDeadline, batchDeadline, state, target);
         if (constrained.status() != LookupStatus.UNIT_MATCH && constrained.status() != LookupStatus.BUILDING_MATCH) return constrained;
+        String unit = returnedUnit(proposed);
+        boolean forwardUnitConfirmed = expected.unit() != null && expected.unit().equals(unit)
+                && constrained.status() == LookupStatus.UNIT_MATCH;
+        ProofTarget reverseTarget = forwardUnitConfirmed
+                ? new ProofTarget(lat, lon, id, false, true, postal, target.structure(),
+                    new ParentBuildingProof(expected.unit(), singleLocalityComponent(proposed))) : target;
         LookupOutcome reverse = lookup(owner, candidate, precise,
                 new LookupForm(lat + "," + lon, null, "reverse_structure_proof", false, true),
-                stopDeadline, batchDeadline, state, target);
+                stopDeadline, batchDeadline, state, reverseTarget);
         if (reverse.status() != LookupStatus.UNIT_MATCH && reverse.status() != LookupStatus.BUILDING_MATCH) return reverse;
-        String unit = returnedUnit(proposed);
+        boolean parentConfirmed = forwardUnitConfirmed && !id.equals(reverse.candidate().pid());
+        if (parentConfirmed) {
+            // Unit and parent place IDs are distinct entities. Require a second,
+            // unchanged-street forward attestation of the unitless parent before
+            // treating its reverse result as corroboration of the unit rooftop.
+            PlaceCandidate parent = reverse.candidate();
+            LookupOutcome parentForward = lookup(owner, candidate,
+                    new ExpectedAddress(expected.houseNumber(), route, null, expected.localityHint()),
+                    new LookupForm(expected.houseNumber() + " " + expected.route(),
+                            structuredComponents(expected.localityHint()), "parent_building_proof", false),
+                    stopDeadline, batchDeadline, state,
+                    new ProofTarget(parent.lat(), parent.lon(), parent.pid(), false, true, postal, target.structure()));
+            if (parentForward.status() != LookupStatus.BUILDING_MATCH) {
+                return parentForward.status() == LookupStatus.UNIT_MATCH
+                        ? new LookupOutcome(LookupStatus.UNIT_CONFLICT, null) : parentForward;
+            }
+            if (distanceMetres(lat, lon, parentForward.candidate().lat(), parentForward.candidate().lon()) > 2) {
+                return new LookupOutcome(LookupStatus.NO_MATCH, null);
+            }
+        }
         LookupStatus status = expected.unit() != null && unit != null && expected.unit().equals(canonicalUnit(unit))
-                && constrained.status() == LookupStatus.UNIT_MATCH && reverse.status() == LookupStatus.UNIT_MATCH
+                && constrained.status() == LookupStatus.UNIT_MATCH
+                && (reverse.status() == LookupStatus.UNIT_MATCH || parentConfirmed)
                 ? LookupStatus.UNIT_MATCH : LookupStatus.BUILDING_MATCH;
         String display = proposed.path("formatted_address").asString(null);
         if (display != null && display.length() > 512) display = null;
-        return new LookupOutcome(status, candidate.withLatLonPid(lat, lon, id), "corroborated_street_structure", display);
+        return new LookupOutcome(status, candidate.withLatLonPid(lat, lon, id),
+                parentConfirmed ? "corroborated_unit_parent" : "corroborated_street_structure", display);
+    }
+
+    private static boolean unitlessParentMatches(JsonNode match, ExpectedAddress expected, ProofTarget proof) {
+        if (proof == null || proof.parentBuilding() == null || proof.structure() == null
+                || expected.unit() == null || !expected.unit().equals(proof.parentBuilding().unit())
+                || hasSecondaryUnitEvidence(match)
+                || !match.path("geometry").path("location_type").asString("").equals("ROOFTOP")
+                || componentCount(match, "street_number") != 1 || componentCount(match, "route") != 1
+                || componentCount(match, "administrative_area_level_1") != 1 || componentCount(match, "country") != 1
+                || !expected.houseNumber().equals(canonicalHouseNumber(addressComponent(match, "street_number")))
+                || !unambiguousStreet(match, expected.route())
+                || !localityMatches(match, new LocalityHint(null, expected.localityHint().state(), expected.localityHint().country()))
+                || !proof.structure().zip().equals(singlePostalCode(match))) return false;
+        LocalityComponent locality = singleLocalityComponent(match), proposed = proof.parentBuilding().locality();
+        if (locality == null || proposed == null || !locality.type().equals(proposed.type())
+                || !canonicalLocalityComponent(locality.type(), locality.name())
+                    .equals(canonicalLocalityComponent(proposed.type(), proposed.name()))) return false;
+        JsonNode point = match.path("geometry").path("location");
+        double lat = point.path("lat").asDouble(Double.NaN), lon = point.path("lng").asDouble(Double.NaN);
+        return point.path("lat").isNumber() && point.path("lng").isNumber()
+                && Double.isFinite(lat) && Double.isFinite(lon)
+                && distanceMetres(proof.latitude(), proof.longitude(), lat, lon) <= 2;
+    }
+
+    private static boolean hasSecondaryUnitEvidence(JsonNode match) {
+        return hasType(match, "subpremise") || componentCount(match, "subpremise") != 0
+                || unitValue(AddressExtractor.normalize(match.path("formatted_address").asString(""))) != null;
     }
 
     private static int componentCount(JsonNode result, String type) {
@@ -1801,8 +1865,15 @@ public class GeocodingClient {
 
     private record StreetStructureProof(String suppliedRoute, String zip, boolean explicitMunicipality) { }
 
+    private record ParentBuildingProof(String unit, LocalityComponent locality) { }
+
     private record ProofTarget(double latitude, double longitude, String placeId, boolean reverse,
-                               boolean rejectCompetingDestinations, PostalProof postal, StreetStructureProof structure) {
+                               boolean rejectCompetingDestinations, PostalProof postal, StreetStructureProof structure,
+                               ParentBuildingProof parentBuilding) {
+        private ProofTarget(double latitude, double longitude, String placeId, boolean reverse,
+                            boolean rejectCompetingDestinations, PostalProof postal, StreetStructureProof structure) {
+            this(latitude, longitude, placeId, reverse, rejectCompetingDestinations, postal, structure, null);
+        }
         private ProofTarget(double latitude, double longitude, String placeId, boolean reverse,
                             boolean rejectCompetingDestinations, PostalProof postal) {
             this(latitude, longitude, placeId, reverse, rejectCompetingDestinations, postal, null);
@@ -1813,11 +1884,18 @@ public class GeocodingClient {
         }
 
         private boolean accepts(JsonNode match, double lat, double lon, String id, boolean postalMatch) {
+            return accepts(match, lat, lon, id, postalMatch, false);
+        }
+
+        private boolean accepts(JsonNode match, double lat, double lon, String id, boolean postalMatch, boolean parentMatch) {
             JsonNode location = match.path("geometry").path("location");
             if (!location.path("lat").isNumber() || !location.path("lng").isNumber()
                     || !Double.isFinite(lat) || !Double.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180
                     || lat == 0 && lon == 0 || !id.matches("[A-Za-z0-9_-]{1,512}")) return false;
             String type = match.path("geometry").path("location_type").asString("");
+            if (parentMatch && parentBuilding != null) {
+                return type.equals("ROOFTOP") && distanceMetres(latitude, longitude, lat, lon) <= 2;
+            }
             if (postalMatch) {
                 return type.equals("ROOFTOP") && placeId.equals(id)
                         && distanceMetres(latitude, longitude, lat, lon) <= 2;
