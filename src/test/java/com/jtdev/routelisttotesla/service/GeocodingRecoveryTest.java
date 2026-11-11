@@ -21,6 +21,68 @@ class GeocodingRecoveryTest {
     private static final String EMPTY = "{\"status\":\"ZERO_RESULTS\",\"results\":[]}";
 
     @Test
+    void matchesApostropheVariantsWithoutChangingLettersOrWordBoundaries() throws Exception {
+        for (String[] pair : List.of(new String[]{"CARINA'S WAY CT", "Carinas Way Court"},
+                new String[]{"O’BRIEN RD", "OBrien Road"}, new String[]{"D'ANGELO ST", "DAngelo Street"})) {
+            String body = roof("same-street", "12345", pair[1], "TESTVILLE", "MI", null, 42.3, -83.2);
+            HttpServer server = server(exchange -> respond(exchange, body));
+            server.start();
+            try {
+                String text = "12345 " + pair[0] + ", TESTVILLE, MI";
+                PlaceCandidate result = client(server, 100).batchGeocode("owner", List.of(place(text))).getFirst();
+                assertEquals("same-street", result.pid(), text);
+                assertEquals(text, result.text());
+            } finally { server.stop(0); }
+        }
+        for (String route : List.of("Carina Way Court", "Carinasway Court", "Carinas Ways Court", "West Carinas Way Court")) {
+            String body = roof("wrong-street", "12345", route, "TESTVILLE", "MI", null, 42.3, -83.2);
+            HttpServer server = server(exchange -> respond(exchange,
+                    parameters(exchange).getOrDefault("address", "").equals("12345 CARINA'S WAY CT, TESTVILLE, MI")
+                            ? body : EMPTY));
+            server.start();
+            try {
+                assertNull(client(server, 100).batchGeocode("owner",
+                        List.of(place("12345 CARINA'S WAY CT, TESTVILLE, MI"))).getFirst().pid(), route);
+            } finally { server.stop(0); }
+        }
+    }
+
+    @Test
+    void reportsCityMismatchAsAnUnverifiedHintAndVerifiesOnlyTheEditedCity() throws Exception {
+        String body = roof("other-city", "12345", "Sample Circle", "DEARBORN", "MI", null, 42.3, -83.2)
+                .replace("ROOFTOP", "RANGE_INTERPOLATED");
+        HttpServer server = server(exchange -> respond(exchange, body));
+        server.start();
+        try {
+            PlaceCandidate rejected = client(server, 100).batchGeocode("owner",
+                    List.of(place("12345 SAMPLE CIR, DETROIT, MI"))).getFirst();
+            assertNull(rejected.pid());
+            assertEquals(0, rejected.lat());
+            assertEquals(LocationResolution.Status.NO_MATCH, rejected.resolution().status());
+            assertEquals("locality_mismatch", rejected.resolution().reasonCode());
+            assertTrue(rejected.resolution().matchedAddress().contains("DEARBORN"));
+            PlaceCandidate edited = client(server, 100).batchGeocode("owner",
+                    List.of(place("12345 SAMPLE CIR, DEARBORN, MI"))).getFirst();
+            assertEquals("other-city", edited.pid());
+        } finally { server.stop(0); }
+    }
+
+    @Test
+    void missingMunicipalAreaProofDoesNotPretendTheMunicipalNameDiffers() throws Exception {
+        String body = roof("unproven", "12345", "Sample Court", "EXAMPLE TOWNSHIP", "MI", null, 42.3, -83.2)
+                .replace("\"types\":[\"locality\"]", "\"types\":[\"administrative_area_level_3\"]");
+        HttpServer server = server(exchange -> respond(exchange, body));
+        server.start();
+        try {
+            PlaceCandidate rejected = client(server, 100).batchGeocode("owner",
+                    List.of(place("12345 SAMPLE CT, EXAMPLE TOWNSHIP, MI"))).getFirst();
+            assertNull(rejected.pid());
+            assertEquals("no_safe_match", rejected.resolution().reasonCode());
+            assertNull(rejected.resolution().matchedAddress());
+        } finally { server.stop(0); }
+    }
+
+    @Test
     void corroboratesStreetRepresentationsAcrossNamesStatesAndUnitsWithoutChangingInput() throws Exception {
         for (String[] pair : List.of(new String[]{"MEADOW CT", "Meadow Drive"},
                 new String[]{"COUNTRY SIDE LN", "Countryside Lane"},

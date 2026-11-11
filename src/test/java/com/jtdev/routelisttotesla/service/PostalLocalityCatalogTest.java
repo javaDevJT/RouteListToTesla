@@ -18,6 +18,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PostalLocalityCatalogTest {
     @Test
+    void recognizesOnlyCatalogCityStateNamesWithoutTreatingThemAsDestinations() throws IOException {
+        PostalLocalityCatalog.Catalog catalog = parse("48383\tMI\tWhite Lake\t42.658\t-83.5398\t4\n"
+                + "48382\tMI\tCommerce Township\t42.5834\t-83.5009\t1\n");
+        assertTrue(catalog.recognizesLocality("white lake", "MI"));
+        assertFalse(catalog.recognizesLocality("WHITE LAKE", "OH"));
+        assertFalse(catalog.recognizesLocality("LAKE", "MI"));
+        assertFalse(catalog.recognizesLocality("COMMERCE TOWNSHIP", "MI"));
+        assertFalse(catalog.recognizesLocality(null, "MI"));
+        assertFalse(catalog.recognizesLocality("WHITE LAKE", null));
+        assertTrue(catalog.recognizesLocalityLine("White Lake, MI 48383", "OH"));
+        assertTrue(catalog.recognizesLocalityLine("White Lake MI", "OH"));
+        assertFalse(catalog.recognizesLocalityLine("White Lake OH", "MI"));
+    }
+
+    @Test
     void matchesExactZipCityAndStateAcrossMultipleLocalities() throws IOException {
         PostalLocalityCatalog.Catalog catalog = parse(
                 "#ZIP5\tstate2\tcity\tlatitude\tlongitude\taccuracy\n"

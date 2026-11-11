@@ -46,7 +46,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class AddressOcrService {
-    public static final String EXTRACTION_VERSION = "ocr-consensus-v9";
+    public static final String EXTRACTION_VERSION = "ocr-consensus-v10";
 
     static final int MAX_IMAGE_BYTES = 12 * 1024 * 1024;
     static final long MAX_IMAGE_PIXELS = 20_000_000L;
@@ -217,6 +217,20 @@ public class AddressOcrService {
                     OcrLine nextLine = lines.get(nextLineIndex);
                     String continuation = nextLine.text().trim();
                     boolean addressContinuation = isAddressContinuation(addressText, continuation);
+                    // A suffixless street can be followed by a city whose last
+                    // word is also a suffix (WHITE LAKE, SILVER SPRING). Keep
+                    // that attested city boundary unless another city follows
+                    // the wrapped street. Geocoding still proves the destination.
+                    String followingLocality = nextLineIndex + 1 < lines.size()
+                            ? adjacentLocality(nextLine, lines.get(nextLineIndex + 1)) : null;
+                    boolean anotherLocalityFollows = followingLocality != null
+                            && PostalLocalityCatalog.recognizesLocalityLine(followingLocality, defaultState);
+                    if (!AddressExtractor.containsStreetType(addressText)
+                            && continuation.trim().contains(" ")
+                            && PostalLocalityCatalog.recognizesLocalityLine(continuation, defaultState)
+                            && !anotherLocalityFollows) {
+                        addressContinuation = false;
+                    }
                     boolean smallFragment = continuation.length() <= 3
                             && addressCandidateText(continuation) == null
                             && !isStateOnlyLine(continuation);

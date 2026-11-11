@@ -16,6 +16,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.HashSet;
 import java.util.regex.Pattern;
 
 /**
@@ -33,6 +35,8 @@ final class PostalLocalityCatalog {
     private static final double EARTH_RADIUS_KM = 6_371.0088;
     private static final Pattern ZIP5 = Pattern.compile("[0-9]{5}");
     private static final Pattern STATE2 = Pattern.compile("[A-Z]{2}");
+    private static final Pattern LOCALITY_WITH_STATE = Pattern.compile(
+            "^(.+?)\\s+([A-Z]{2})(?:\\s+\\d{5}(?:-\\d{4})?)?$");
 
     private static final Catalog DEFAULT_CATALOG = loadDefault();
 
@@ -46,6 +50,15 @@ final class PostalLocalityCatalog {
     /** Nearby ZIP/state evidence; the caller must independently prove the municipal name. */
     static boolean supportsArea(String zip, String state, double lat, double lon) {
         return DEFAULT_CATALOG.supportsArea(zip, state, lat, lon);
+    }
+
+    /** Text-boundary evidence only; this never establishes a street destination. */
+    static boolean recognizesLocality(String city, String state) {
+        return DEFAULT_CATALOG.recognizesLocality(city, state);
+    }
+
+    static boolean recognizesLocalityLine(String line, String defaultState) {
+        return DEFAULT_CATALOG.recognizesLocalityLine(line, defaultState);
     }
 
     /** Parses a bounded UTF-8 TSV catalog, rejecting the entire file on any malformed record. */
@@ -182,6 +195,8 @@ final class PostalLocalityCatalog {
     private record PostalAreaKey(String zip, String state) {
     }
 
+    private record CityState(String city, String state) { }
+
     private record Locality(double lat, double lon, int accuracy) {
     }
 
@@ -189,6 +204,7 @@ final class PostalLocalityCatalog {
         private static final Catalog EMPTY = new Catalog(Map.of());
         private final Map<LocalityKey, List<Locality>> records;
         private final Map<PostalAreaKey, List<Locality>> areas;
+        private final Set<CityState> cityNames;
 
         private Catalog(Map<LocalityKey, List<Locality>> records) {
             this.records = records;
@@ -199,6 +215,26 @@ final class PostalLocalityCatalog {
             Map<PostalAreaKey, List<Locality>> immutable = new HashMap<>();
             indexed.forEach((key, values) -> immutable.put(key, values.stream().distinct().toList()));
             this.areas = Collections.unmodifiableMap(immutable);
+            Set<CityState> names = new HashSet<>();
+            records.forEach((key, values) -> {
+                if (values.stream().anyMatch(value -> value.accuracy() >= 4)) {
+                    names.add(new CityState(key.city(), key.state()));
+                }
+            });
+            this.cityNames = Set.copyOf(names);
+        }
+
+        boolean recognizesLocality(String city, String state) {
+            return cityNames.contains(new CityState(normalize(city), normalize(state)));
+        }
+
+        boolean recognizesLocalityLine(String line, String defaultState) {
+            if (line == null) return false;
+            String text = line.toUpperCase(Locale.ROOT).replace(',', ' ').replaceAll("\\s+", " ").trim();
+            var explicitState = LOCALITY_WITH_STATE.matcher(text);
+            return explicitState.matches()
+                    ? recognizesLocality(explicitState.group(1), explicitState.group(2))
+                    : recognizesLocality(text, defaultState);
         }
 
         boolean supportsArea(String zip, String state, double lat, double lon) {

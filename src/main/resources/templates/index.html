@@ -254,7 +254,7 @@
         const locationAddressRows = new WeakMap();
         const LOCATION_RESOLVE_BATCH_SIZE = 500;
         const LOCATION_RESOLVE_MAX_TEXT_LENGTH = 1000;
-        const LOCATION_POLICY_VERSION = 'street-address-v13';
+        const LOCATION_POLICY_VERSION = 'street-address-v14';
         // Match the backend's accepted unit values and require a segment boundary
         // so street names like STEELE, UNIT ROAD, and APARTMENT LANE stay intact.
         const LOCATION_UNIT_VALUE_PATTERN = '(?:[A-Z]?\\d+[A-Z0-9-]*|[A-Z](?:-\\d+[A-Z]?)?)';
@@ -955,7 +955,11 @@
                 switch (resolution.status) {
                     case 'VERIFIED_UNIT': return `Apartment or suite verified.${getRecoveredLocationDetails(resolution)}`;
                     case 'VERIFIED_BUILDING': return `${getBuildingVerificationText(address)}${getRecoveredLocationDetails(resolution)}`;
-                    case 'NO_MATCH': return 'No safe street match after automatic attempts. Edit the address or retry lookup.';
+                    case 'NO_MATCH':
+                        if (resolution.reasonCode === 'locality_mismatch') {
+                            return getLocalityMismatchDetails(resolution);
+                        }
+                        return 'No safe street match after automatic attempts. Edit the address or retry lookup.';
                     case 'AMBIGUOUS': return 'Several street matches remain. Edit the address to clarify it or retry lookup.';
                     case 'DEFERRED': return `Lookup paused before completion${Number.isFinite(resolution.retryAfterSeconds) ? `; try again in about ${resolution.retryAfterSeconds} seconds` : ''}.`;
                     case 'LOOKUP_UNAVAILABLE': return 'Address lookup is temporarily unavailable. Retry; the address has not been changed.';
@@ -965,6 +969,17 @@
                 return 'Address lookup is temporarily unavailable. Retry; the address has not been changed.';
             }
             return 'No current street-location verification. Retry lookup or edit this address.';
+        }
+
+        function getLocalityMismatchDetails(resolution) {
+            const matchedAddress = typeof resolution?.matchedAddress === 'string'
+                ? resolution.matchedAddress.trim() : '';
+            const safeMatchedAddress = matchedAddress.length > 0 && matchedAddress.length <= 512
+                ? matchedAddress : null;
+            const providerResult = safeMatchedAddress
+                ? `Google returned ${safeMatchedAddress}.`
+                : 'Google returned a different locality, but no usable address was provided.';
+            return `${providerResult} Check and edit the city against the source image before retrying location lookup. The extracted address is unchanged.`;
         }
 
         function getRecoveredLocationDetails(resolution) {

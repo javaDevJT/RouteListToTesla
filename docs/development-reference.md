@@ -6,7 +6,14 @@ TAP-managed sign-in and stable-subject authorization replace independent Google 
 
 ### October 19 provider-corroborated recovery
 
-Current extraction is `ocr-consensus-v9`; geocoding is `street-address-v13`.
+Current source extraction is `ocr-consensus-v10`; geocoding is `street-address-v14`.
+These versions separate suffix-like city lines from suffixless streets and tolerate apostrophe
+omission without changing street-name letters. Unverified city mismatches show
+the provider's address as an editing hint and retain the dispatch hold. See the
+[November 11 diagnosis and validation](address-verification-triage-2026-11-11.md)
+for the source/runtime boundary. Older saved rows with a merged street/city
+boundary remain held until explicitly edited or re-extracted from the source
+image; the geocoder does not infer lost line boundaries.
 Spatial evidence also excludes vertically adjacent side counters while retaining
 nearby ambiguous unit fragments. Geocoding first applies strict matching, then
 can corroborate a unique precise candidate through reverse locality verification
@@ -39,10 +46,15 @@ their existing path. See [street structure recovery](structural-address-recovery
 
 Explicit Township/Twp input labels also use all three exact rooftop proofs,
 including normally suffixed streets. A consistent typed municipality and nearby
-ZIP/state catalog evidence can establish municipal identity without inventing a
+ZIP-area catalog evidence can establish municipal identity without inventing a
 postal-city alias. Conflicting primary localities and sublocalities remain
 rejected; exact primary city labels retain their own validation. See
 [explicit township recovery](explicit-municipality-recovery-2026-10-24.md).
+For exact municipal proofs only, the complete offline
+[Census ZCTA representative-point catalog](../src/main/resources/postal/CENSUS.md)
+can supply missing ZIP-area evidence within ten kilometres. It does not provide
+city/state aliases or navigation coordinates; input/provider state and country
+must still agree, and the three proofs must agree on the actual rooftop.
 
 When two unchanged-street forward proofs agree on a unit place ID, the reverse
 street-structure proof may corroborate a distinct unitless parent at the same

@@ -51,6 +51,46 @@ class StreetStructureRecoveryTest {
             "31331 HATHAWAY ST, LIVONIA, MI", "31331", "HATHAWAY ST", "LIVONIA", "MI", null,
             new ProviderResult("hathaway-suffix-omitted", "31331", "Hathaway", "Hathaway", "Livonia", null,
                     "48150", 42.3605718, -83.351036));
+    private static final ProviderResult WOODLAND = new ProviderResult("woodland", "5337", "Woodland Drive",
+            "Woodland Dr", null, "White Lake Township", "48383", 42.6667952, -83.5397448);
+    private static final ProviderResult CARINAS = new ProviderResult("carinas", "5055", "Carinas Way Court",
+            "Carinas Way Ct", null, "Commerce Township", "48382", 42.595293, -83.48270769999999);
+
+    @Test
+    void missingGeonamesAreaUsesCensusOnlyWithExactMunicipalityAndThreeRooftops() throws Exception {
+        Address supplied = new Address("5055 CARINA'S WAY COURT, COMMERCE TOWNSHIP, MI", "5055",
+                "CARINA'S WAY COURT", "COMMERCE TOWNSHIP", "MI", null, CARINAS);
+        assertRecovered(supplied);
+        for (Phase phase : List.of(Phase.STRUCTURED, Phase.REVERSE)) {
+            assertRejected(supplied, actual -> body(actual == phase
+                    ? CARINAS.withPoint(42.595393, -83.48270769999999) : CARINAS));
+            assertRejected(supplied, actual -> body(actual == phase
+                    ? CARINAS.withPlaceId("another-building") : CARINAS));
+        }
+        Address wrongCity = new Address("5055 CARINA'S WAY COURT, OTHER TOWNSHIP, MI", "5055",
+                "CARINA'S WAY COURT", "OTHER TOWNSHIP", "MI", null, CARINAS);
+        assertRejected(wrongCity, phase -> body(CARINAS));
+    }
+
+    @Test
+    void ambiguousJoinedTextStaysHeldUntilTheCityBoundaryIsExplicitlyEdited() throws Exception {
+        Address joined = new Address("5337 WOODLAND WHITE LAKE, MI", "5337", "WOODLAND",
+                "WHITE LAKE", "MI", null, WOODLAND);
+        assertRejected(joined, phase -> body(WOODLAND));
+        Address edited = new Address("5337 WOODLAND, WHITE LAKE, MI", "5337", "WOODLAND",
+                "WHITE LAKE", "MI", null, WOODLAND);
+        assertRecovered(edited);
+        for (Phase phase : List.of(Phase.STRUCTURED, Phase.REVERSE)) {
+            assertRejected(edited, actual -> body(actual == phase ? WOODLAND.withPlaceId("different") : WOODLAND));
+        }
+    }
+
+    @Test
+    void doesNotSplitAStreetNameWhenAnExplicitCityIsAlreadyPresent() throws Exception {
+        Address suppliedCity = new Address("5337 WOODLAND WHITE LAKE, DETROIT, MI", "5337",
+                "WOODLAND WHITE LAKE", "DETROIT", "MI", null, WOODLAND);
+        assertRejected(suppliedCity, phase -> body(WOODLAND));
+    }
 
     @Test
     void recoversCottonwoodKnollAliasFromThreeProviderAttestations() throws Exception {

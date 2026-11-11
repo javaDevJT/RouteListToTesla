@@ -43,7 +43,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class GeocodingClient {
-    public static final String GEOCODING_VERSION = "street-address-v13";
+    public static final String GEOCODING_VERSION = "street-address-v14";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GeocodingClient.class);
     private static final String CONFLICTING_UNIT = "\u0000";
@@ -332,7 +332,10 @@ public class GeocodingClient {
             return outcome(candidate, match.candidate(), LocationResolution.Status.VERIFIED_BUILDING,
                     match.strategy(), "unit_not_confirmed", state, null, match.matchedAddress());
         }
-        return outcome(candidate, null, LocationResolution.Status.NO_MATCH, "recovery_exhausted", "no_safe_match", state, null);
+        String localityHint = state.localityMismatches.size() == 1
+                ? state.localityMismatches.iterator().next() : null;
+        return outcome(candidate, null, LocationResolution.Status.NO_MATCH, "recovery_exhausted",
+                localityHint == null ? "no_safe_match" : "locality_mismatch", state, null, localityHint);
     }
 
     private LookupOutcome lookup(String owner, PlaceCandidate candidate, ExpectedAddress expected, LookupForm form,
@@ -427,6 +430,20 @@ public class GeocodingClient {
                             .anyMatch(number -> !expected.houseNumber().equals(canonicalHouseNumber(number)))) continue;
                     boolean streetMatches = streetsMatch(expected.route(), match);
                     boolean cityMatches = lookupLocalityMatches(match, expected.localityHint());
+                    if (proof == null && form.strategy().equals("original") && streetMatches && !cityMatches
+                            && expected.unit() == null && expected.localityHint().city() != null
+                            && expected.localityHint().state() != null && expected.localityHint().country() != null
+                            && !localityMatches(match, expected.localityHint())
+                            && componentCount(match, "street_number") == 1
+                            && unambiguousStreet(match, expected.route())
+                            && localityMatches(match, new LocalityHint(null, expected.localityHint().state(),
+                                expected.localityHint().country()))
+                            && singleLocalityComponent(match) != null
+                            && Set.of("ROOFTOP", "RANGE_INTERPOLATED").contains(
+                                match.path("geometry").path("location_type").asString(""))) {
+                        String display = match.path("formatted_address").asString("").trim();
+                        if (!display.isEmpty() && display.length() <= 512) state.localityMismatches.add(display);
+                    }
                     boolean postalCityMatches = proof != null && proof.postal() != null
                             && proof.postal().matches(match);
                     boolean parentBuilding = form.reverse() && unitlessParentMatches(match, expected, proof);
@@ -1493,8 +1510,13 @@ public class GeocodingClient {
         JsonNode point = match.path("geometry").path("location");
         // This is geographic ZIP evidence, not a postal-city alias or municipal
         // boundary. The typed name and all three exact rooftop proofs remain mandatory.
-        return PostalLocalityCatalog.supportsArea(singlePostalCode(match), hint.state(),
-                point.path("lat").asDouble(Double.NaN), point.path("lng").asDouble(Double.NaN));
+        String zip = singlePostalCode(match);
+        double lat = point.path("lat").asDouble(Double.NaN), lon = point.path("lng").asDouble(Double.NaN);
+        return PostalLocalityCatalog.supportsArea(zip, hint.state(), lat, lon)
+                // Census supplies area proximity only. The typed municipality,
+                // state/country and all three exact rooftop proofs above still
+                // establish identity; this never authorizes a postal-city alias.
+                || CensusPostalAreaCatalog.supports(zip, lat, lon);
     }
 
     private static boolean localityMatches(JsonNode match, LocalityHint hint) {
@@ -1688,6 +1710,9 @@ public class GeocodingClient {
 
     private static List<String> canonicalStreetWords(String route) {
         List<String> tokens = routeWords(route);
+        // Apostrophes do not change letters, word boundaries or direction
+        // placement. Providers commonly omit them in otherwise identical names.
+        tokens.replaceAll(token -> token.replace("'", ""));
         if (tokens.size() > 2 && diagonalDirection(tokens.get(0), tokens.get(1)) != null) {
             tokens.set(0, diagonalDirection(tokens.get(0), tokens.get(1)));
             tokens.remove(1);
@@ -1828,6 +1853,7 @@ public class GeocodingClient {
     private record Reservation(long atNanos, int calls) { }
 
     private static final class RecoveryState {
+        private final Set<String> localityMismatches = new HashSet<>();
         private int attempts;
     }
 

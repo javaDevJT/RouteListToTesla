@@ -1,5 +1,7 @@
 # Documentation
 
+- [November 11 address verification fixes (unreleased)](address-verification-triage-2026-11-11.md): two supplied screenshot cases, diagnosis, fixes and validation.
+
 - [Apartment and building identities (deployed 2026-10-26)](unit-parent-recovery-2026-10-26.md): independent unit/parent place-ID corroboration, strict conflict handling, accurate unit messages and complete release evidence.
 
 - [Explicit township recovery (deployed 2026-10-24)](explicit-municipality-recovery-2026-10-24.md): supplied municipal labels, typed locality validation, exact rooftop corroboration and release verification.
