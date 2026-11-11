@@ -11,7 +11,7 @@ These versions separate suffix-like city lines from suffixless streets and toler
 omission without changing street-name letters. Unverified city mismatches show
 the provider's address as an editing hint and retain the dispatch hold. See the
 [November 11 diagnosis and validation](address-verification-triage-2026-11-11.md)
-for the source/runtime boundary. Older saved rows with a merged street/city
+for the source, native-image and production release evidence. Older saved rows with a merged street/city
 boundary remain held until explicitly edited or re-extracted from the source
 image; the geocoder does not infer lost line boundaries.
 Spatial evidence also excludes vertically adjacent side counters while retaining

@@ -133,12 +133,80 @@ Private evidence is under `output/private/address-triage-20261111/`, including
 `ocr-evidence.md`, `ocr-replay-results.json`, `replay-results.json`,
 `replay-requests.json`, `frontend-tests.log`, and
 `package-reviewed.log` and `replay-reviewed.log`. The primary reviewed worker changes and
-performed the final checks. This is a local source/package result; no production
-deployment or full native-image qualification has been performed for this change.
+performed the final source checks. The subsequent native-image qualification and
+production deployment are recorded below.
 Publication checks against only the exact staged source are recorded in
 `index-package.log`, `index-frontend-tests.log` and `index-replay.log`; all pass.
 The latter replays the same nine source rows and five provider cases using the
 exported staged application's classes, with no telemetry source overlay.
+
+## Native qualification and production release
+
+Deployed source is `47969db8179d569921402afe3d43ece5386902f8`, release
+`20261111-addresses`. Exact push CI `43100047301`, attempt 1, completed with
+successful publication and cleanup. Its retained security artifact was verified
+against the GitHub metadata digest and reports zero High/Critical findings.
+The immutable image is
+`ghcr.io/javadevjt/routelisttotesla@sha256:6d410faa695bfaaa3d2a56af847291438d9e130acadba769eef7e56a7779d2bf`.
+The extracted application JAR SHA-256 is
+`1d4ca655cc61978688d17ebdeb3e64634749d969ec5b7291baca728f1ce595e5`.
+Packaged template, theme, postal catalogs and version constants match the commit;
+uncommitted application telemetry classes are absent.
+
+Native x86 qualification used the immutable image with its application JAR and
+OCR scripts, UID 10001, eight CPUs, 8 GiB, read-only filesystem and no external
+network. All 28 ordered screenshot cases passed through the three-engine OCR
+contract, including all nine supplied stops and apartment 100. The 36 Python
+tests, runtime authentication/CSRF checks and two speed trials passed. Peak
+memory was 2,562,355,200 bytes.
+
+The combined QA harness failed in its test-only fixture metadata count after
+OCR had passed. The original failed report remains intact. The corrected probe
+checks the eleven captured IDs without counting inherited fixture IDs, accepts
+the actual OCR report export and retains underlying Java diagnostics. A separate
+provider-only run on the same image used hash-bound retained native OCR rows;
+it did not rerun OCR or overlay application classes. All 19 prior address rows
+matched, allowing only the intended policy-version change. All five new cases
+passed their expected statuses and destination identities. It made 53 loopback
+fixture requests: 49 matched retained bodies and four uncaptured variants
+returned explicit empty responses. There were no external calls or Tesla
+commands. `native-completion.json` records both evidence parts and the original
+harness failure. Disposable QA apps and their owned staging files were removed.
+
+The mobile browser check rendered the actual packaged template and assets with
+the native provider results and mocked APIs. Carina and new Woodland verified;
+Morrow displayed the Dearborn hint while manual and automatic dispatch stayed
+blocked. Text, source order, 3/3 OCR agreement and the absence of horizontal
+overflow were checked. This check issued no external calls or vehicle commands.
+
+TrueNAS production update job `33264` succeeded on November 11 at 22:37 UTC.
+The immediate readback was still `DEPLOYING`; read-only reconciliation observed
+settled `RUNNING` on the same successful job. Exactly one production `app.update`
+was submitted. Only the router image, permission-init image and `APP_RELEASE`
+changed. Full configuration and runtime-volume fingerprints confirm preservation
+of credentials, networks, resources, UID, read-only settings and `route-data`.
+No command/entrypoint override or injected Java agent is present. The predecessor
+image remains available and was not deleted.
+
+Production verification at 22:38 UTC observed HTTP 200 health with the exact
+source commit, reachable login and theme bytes matching the qualified image.
+The live 390-pixel mobile login rendered the expected release metadata, TAP sign-in
+link and no horizontal overflow or page errors. The signed-in address review was
+verified with the packaged-template fixture above; no authenticated production
+route send or new Google request was used as release evidence.
+
+The persistent production URL is [TeslaRouter](https://teslarouter.javadevjt.tech),
+with no preset expiry. Refresh the app to load v14. For a previously saved joined
+Woodland row, re-upload its source image or explicitly insert the street/city
+comma. Morrow remains held until the user checks and explicitly corrects the city;
+the application never silently changes Detroit to Dearborn.
+
+Release receipts, original failed attempts and screenshots remain under
+`output/private/address-triage-20261111/`: `release-binding.json`, CI/registry/image
+verification receipts, `native-completion.json`, `native-ocr.runner.json`,
+`native-provider.runner.json`, `browser-addresses.json`, `deployment-intent.jsonl`,
+`deployment.json`, `production-verification.json` and `production-browser.json`.
+Documentation-only commits after the release are distinct from deployed source.
 
 ## Worker dispositions
 
