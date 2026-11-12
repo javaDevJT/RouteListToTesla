@@ -1,6 +1,6 @@
 # Documentation
 
-- [Miller Avenue apartment verification (in progress)](miller-apartment-verification-2026-11-11.md): supplied screenshot, unit-preserving diagnosis and release evidence.
+- [Miller Avenue apartment verification](miller-apartment-verification-2026-11-11.md): deployed v15 postal-city and unit corroboration, native checks and release evidence.
 
 - [November 11 address verification fixes (deployed)](address-verification-triage-2026-11-11.md): two supplied screenshot cases, diagnosis, fixes, native qualification and production verification.
 
