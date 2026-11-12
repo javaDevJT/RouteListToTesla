@@ -6,7 +6,7 @@ TAP-managed sign-in and stable-subject authorization replace independent Google 
 
 ### October 19 provider-corroborated recovery
 
-Current source extraction is `ocr-consensus-v10`; geocoding is `street-address-v14`.
+Current source extraction is `ocr-consensus-v10`; geocoding is `street-address-v15`.
 These versions separate suffix-like city lines from suffixless streets and tolerate apostrophe
 omission without changing street-name letters. Unverified city mismatches show
 the provider's address as an editing hint and retain the dispatch hold. See the
@@ -14,6 +14,13 @@ the provider's address as an editing hint and retain the dispatch hold. See the
 for the source, native-image and production release evidence. Older saved rows with a merged street/city
 boundary remain held until explicitly edited or re-extracted from the source
 image; the geocoder does not infer lost line boundaries.
+
+For exact unit rooftops whose postal city is absent from the offline city
+catalog, a reverse ZIP result can explicitly attest both city names through
+`postcode_localities`. Recovery still requires the exact original unit rooftop,
+constrained unit proof, and a matching reverse/forward parent if IDs differ.
+The original unit destination and text are retained; ZIP coordinates never
+become destinations. See [Miller apartment verification](miller-apartment-verification-2026-11-11.md).
 Spatial evidence also excludes vertically adjacent side counters while retaining
 nearby ambiguous unit fragments. Geocoding first applies strict matching, then
 can corroborate a unique precise candidate through reverse locality verification

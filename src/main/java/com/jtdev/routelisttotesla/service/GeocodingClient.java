@@ -43,7 +43,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class GeocodingClient {
-    public static final String GEOCODING_VERSION = "street-address-v14";
+    public static final String GEOCODING_VERSION = "street-address-v15";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GeocodingClient.class);
     private static final String CONFLICTING_UNIT = "\u0000";
@@ -406,6 +406,9 @@ public class GeocodingClient {
                 throw new ProviderLookupFailure("provider_quota", true, 60);
             }
             if ("OK".equals(status) && body.path("results").isArray()) {
+                if (proof != null && form.reverse() && form.strategy().equals("reverse_locality_proof")) {
+                    state.reverseLocalityResponse = body.path("results");
+                }
                 Map<String, PlaceCandidate> unitMatches = new LinkedHashMap<>();
                 Map<String, PlaceCandidate> buildingMatches = new LinkedHashMap<>();
                 Set<String> directIdentities = new HashSet<>();
@@ -451,7 +454,8 @@ public class GeocodingClient {
                     // rooftop proof or substitute for its positive evidence.
                     if (proof != null && proof.structure() != null
                             && match.path("geometry").path("location_type").asString("").equals("ROOFTOP")
-                            && (cityMatches || postalCityMatches || postalProof(match, expected, candidate.text()) != null)
+                            && (cityMatches || postalCityMatches || postalProof(match, expected, candidate.text()) != null
+                                || providerPostalCityMatches(match, expected, proof))
                             && componentValues(match, "route").stream().anyMatch(route ->
                                 streetRoutesMatch(proof.structure().suppliedRoute(), route)
                                         || missingTerminalSuffix(proof.structure().suppliedRoute(), route)
@@ -552,8 +556,14 @@ public class GeocodingClient {
                             match.path("place_id").asString(""), !cityMatches && postalCityMatches, parentBuilding)) continue;
 
                     String returnedUnit = returnedUnit(match);
+                    if (proof != null && proof.providerPostal() != null && expected.unit() != null
+                            && !providerUnitAgrees(match, expected.unit())) {
+                        unitConflict = true;
+                        continue;
+                    }
                     if (proof != null && proof.structure() != null && expected.unit() == null
-                            && hasSecondaryUnitEvidence(match)) {
+                            && hasSecondaryUnitEvidence(match)
+                            && !(proof.providerPostal() != null && bareUnitlessParent(match))) {
                         unitConflict = true;
                         continue;
                     }
@@ -694,6 +704,7 @@ public class GeocodingClient {
         ExpectedAddress proofExpected = expected;
         LookupForm proofForm;
         if (localityAlias) {
+            state.reverseLocalityResponse = null;
             proofForm = new LookupForm(lat + "," + lon, null, "reverse_locality_proof", false, true);
         } else {
             String route = addressComponent(proposed, "route");
@@ -720,6 +731,10 @@ public class GeocodingClient {
             return corroboration;
         }
         if (corroboration.status() != LookupStatus.UNIT_MATCH && corroboration.status() != LookupStatus.BUILDING_MATCH) {
+            if (localityAlias && state.reverseLocalityResponse != null && providerPostalUnitProposal(proposed, expected)) {
+                return corroborateProviderPostalUnit(owner, candidate, expected, proposed,
+                        state.reverseLocalityResponse, stopDeadline, batchDeadline, state);
+            }
             return new LookupOutcome(LookupStatus.NO_MATCH, null);
         }
         String returnedUnit = returnedUnit(proposed);
@@ -731,6 +746,167 @@ public class GeocodingClient {
         return new LookupOutcome(status, candidate.withLatLonPid(lat, lon, id),
                 "postal_locality_proof".equals(corroboration.strategy()) ? "corroborated_postal_locality"
                         : localityAlias ? "corroborated_locality" : "corroborated_street_representation", display);
+    }
+
+    private static boolean providerPostalUnitProposal(JsonNode proposed, ExpectedAddress expected) {
+        LocalityHint hint = expected.localityHint();
+        LocalityComponent city = singleLocalityComponent(proposed);
+        return expected.unit() != null && hint != null && "US".equals(hint.country())
+                && hint.city() != null && hint.state() != null && city != null && city.type().equals("locality")
+                && !canonicalLocality(hint.city()).equals(canonicalLocality(city.name()))
+                && providerUnitAgrees(proposed, expected.unit())
+                && strictPostalStreet(proposed, expected, singlePostalCode(proposed));
+    }
+
+    /** A reverse ZIP's explicit city list can supplement an incomplete offline city catalog. */
+    private LookupOutcome corroborateProviderPostalUnit(String owner, PlaceCandidate candidate, ExpectedAddress expected,
+                                                        JsonNode proposed, JsonNode reverseResults,
+                                                        long stopDeadline, long batchDeadline, RecoveryState state) {
+        double lat = proposed.path("geometry").path("location").path("lat").asDouble();
+        double lon = proposed.path("geometry").path("location").path("lng").asDouble();
+        String id = proposed.path("place_id").asString();
+        String zip = singlePostalCode(proposed);
+        LocalityComponent city = singleLocalityComponent(proposed);
+        LocalityHint canonical = new LocalityHint(city.name(), expected.localityHint().state(), "US");
+        ProviderPostalAlias alias = new ProviderPostalAlias(expected.localityHint().city(), city.name(), zip);
+        if (!suppliedPostalCodeMatches(proposed, candidate.text())
+                || !reversePostalCitiesAgree(reverseResults, expected.localityHint(), alias, lat, lon)) {
+            return new LookupOutcome(LookupStatus.NO_MATCH, null);
+        }
+        ExpectedAddress precise = new ExpectedAddress(expected.houseNumber(), expected.route(), expected.unit(), canonical);
+        LookupOutcome reverse = providerPostalReverse(reverseResults, candidate, precise, alias, lat, lon, id);
+        if (reverse.status() != LookupStatus.UNIT_MATCH && reverse.status() != LookupStatus.BUILDING_MATCH) return reverse;
+        StreetStructureProof street = new StreetStructureProof(expected.route(), zip, false);
+        ProofTarget unitTarget = new ProofTarget(lat, lon, id, false, true, null, street, null, alias);
+        LookupOutcome unit = lookup(owner, candidate, precise,
+                new LookupForm(expected.houseNumber() + " " + expected.route() + " UNIT " + expected.unit(),
+                        structuredComponents(expected.localityHint()), "provider_postal_unit_proof", false),
+                stopDeadline, batchDeadline, state, unitTarget);
+        if (unit.status() != LookupStatus.UNIT_MATCH) return unit.status() == LookupStatus.BUILDING_MATCH
+                ? new LookupOutcome(LookupStatus.NO_MATCH, null) : unit;
+        boolean parent = reverse.status() == LookupStatus.BUILDING_MATCH;
+        if (parent) {
+            PlaceCandidate selected = reverse.candidate();
+            LookupOutcome forward = lookup(owner, candidate,
+                    new ExpectedAddress(expected.houseNumber(), expected.route(), null, canonical),
+                    new LookupForm(expected.houseNumber() + " " + expected.route(),
+                            structuredComponents(expected.localityHint()), "provider_postal_parent_proof", false),
+                    stopDeadline, batchDeadline, state,
+                    new ProofTarget(selected.lat(), selected.lon(), selected.pid(), false, true, null, street, null, alias));
+            if (forward.status() != LookupStatus.BUILDING_MATCH) return forward.status() == LookupStatus.UNIT_MATCH
+                    ? new LookupOutcome(LookupStatus.UNIT_CONFLICT, null) : forward;
+        }
+        String display = proposed.path("formatted_address").asString(null);
+        if (display != null && display.length() > 512) display = null;
+        return new LookupOutcome(LookupStatus.UNIT_MATCH, candidate.withLatLonPid(lat, lon, id),
+                parent ? "corroborated_postal_unit_parent" : "corroborated_postal_locality", display);
+    }
+
+    private static boolean strictPostalStreet(JsonNode match, ExpectedAddress expected, String zip) {
+        JsonNode point = match.path("geometry").path("location");
+        double lat = point.path("lat").asDouble(Double.NaN), lon = point.path("lng").asDouble(Double.NaN);
+        return zip != null && !match.path("partial_match").asBoolean(false)
+                && (hasType(match, "street_address") || hasType(match, "premise") || hasType(match, "subpremise"))
+                && match.path("geometry").path("location_type").asString("").equals("ROOFTOP")
+                && componentCount(match, "street_number") == 1 && componentCount(match, "route") == 1
+                && componentCount(match, "administrative_area_level_1") == 1 && componentCount(match, "country") == 1
+                && expected.houseNumber().equals(canonicalHouseNumber(addressComponent(match, "street_number")))
+                && unambiguousStreet(match, expected.route()) && zip.equals(singlePostalCode(match))
+                && localityMatches(match, new LocalityHint(null, expected.localityHint().state(), expected.localityHint().country()))
+                && singleLocalityComponent(match) != null && point.path("lat").isNumber() && point.path("lng").isNumber()
+                && Double.isFinite(lat) && Double.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
+                && !(lat == 0 && lon == 0) && match.path("place_id").asString("").matches("[A-Za-z0-9_-]{1,512}");
+    }
+
+    private static LookupOutcome providerPostalReverse(JsonNode results, PlaceCandidate candidate, ExpectedAddress expected,
+                                                       ProviderPostalAlias alias, double lat, double lon, String unitId) {
+        Map<String, PlaceCandidate> parents = new LinkedHashMap<>(), units = new LinkedHashMap<>();
+        for (JsonNode match : results) {
+            if (!(hasType(match, "street_address") || hasType(match, "premise") || hasType(match, "subpremise"))) continue;
+            if (!componentValues(match, "street_number").contains(expected.houseNumber())
+                    || componentValues(match, "route").stream().noneMatch(route -> sameStreetName(expected.route(), route))) continue;
+            if (!strictPostalStreet(match, expected, alias.zip()) || !suppliedPostalCodeMatches(match, candidate.text())
+                    || !localityMatches(match, expected.localityHint())) return new LookupOutcome(LookupStatus.NO_MATCH, null);
+            double actualLat = match.path("geometry").path("location").path("lat").asDouble();
+            double actualLon = match.path("geometry").path("location").path("lng").asDouble();
+            if (distanceMetres(lat, lon, actualLat, actualLon) > 2) return new LookupOutcome(LookupStatus.AMBIGUOUS, null);
+            String id = match.path("place_id").asString(), unit = returnedUnit(match);
+            if (unit != null) {
+                if (!providerUnitAgrees(match, expected.unit())) return new LookupOutcome(LookupStatus.UNIT_CONFLICT, null);
+                if (!unitId.equals(id)) return new LookupOutcome(LookupStatus.AMBIGUOUS, null);
+                units.put(id, candidate.withLatLonPid(actualLat, actualLon, id));
+            } else {
+                if (!bareUnitlessParent(match) || unitId.equals(id)) return new LookupOutcome(LookupStatus.NO_MATCH, null);
+                parents.put(id, candidate.withLatLonPid(actualLat, actualLon, id));
+            }
+        }
+        if (parents.size() > 1 || units.size() > 1) return new LookupOutcome(LookupStatus.AMBIGUOUS, null);
+        if (!units.isEmpty()) return new LookupOutcome(LookupStatus.UNIT_MATCH, units.values().iterator().next());
+        return parents.isEmpty() ? new LookupOutcome(LookupStatus.NO_MATCH, null)
+                : new LookupOutcome(LookupStatus.BUILDING_MATCH, parents.values().iterator().next());
+    }
+
+    private static boolean bareUnitlessParent(JsonNode match) {
+        JsonNode display = match.path("formatted_address");
+        return (hasType(match, "street_address") || hasType(match, "premise"))
+                && componentCount(match, "subpremise") == 0
+                && display.isString() && !display.asString().isBlank() && display.asString().length() <= 512
+                && unitValue(AddressExtractor.normalize(display.asString())) == null;
+    }
+
+    private static boolean providerUnitAgrees(JsonNode match, String expected) {
+        if (componentCount(match, "subpremise") != 1 || !expected.equals(returnedUnit(match))) return false;
+        Matcher units = UNIT_MARKER_WITH_VALUE.matcher(AddressExtractor.normalize(match.path("formatted_address").asString("")));
+        while (units.find()) if (!expected.equals(canonicalUnit(units.group(1)))) return false;
+        return true;
+    }
+
+    private static boolean providerPostalCityMatches(JsonNode match, ExpectedAddress expected, ProofTarget proof) {
+        return proof != null && proof.providerPostal() != null
+                && proof.providerPostal().zip().equals(singlePostalCode(match))
+                && localityMatches(match, new LocalityHint(proof.providerPostal().suppliedCity(),
+                        expected.localityHint().state(), expected.localityHint().country()));
+    }
+
+    private static boolean reversePostalCitiesAgree(JsonNode results, LocalityHint hint, ProviderPostalAlias alias,
+                                                    double latitude, double longitude) {
+        JsonNode postal = null;
+        for (JsonNode result : results) {
+            if (!hasType(result, "postal_code")) continue;
+            if (postal != null) return false;
+            postal = result;
+        }
+        if (postal == null || postal.path("partial_match").asBoolean(false) || postal.path("types").size() != 1
+                || !alias.zip().equals(singlePostalCode(postal))
+                || componentCount(postal, "administrative_area_level_1") != 1 || componentCount(postal, "country") != 1
+                || !localityMatches(postal, new LocalityHint(null, hint.state(), hint.country()))
+                || !postal.path("place_id").asString("").matches("[A-Za-z0-9_-]{1,512}")) return false;
+        JsonNode names = postal.path("postcode_localities");
+        if (!names.isArray() || names.size() < 2 || names.size() > 100) return false;
+        Set<String> cities = new HashSet<>();
+        for (JsonNode name : names) {
+            if (!name.isString() || name.asString().isBlank() || name.asString().length() > 128
+                    || !cities.add(canonicalLocality(name.asString()))) return false;
+        }
+        LocalityComponent postalCity = singleLocalityComponent(postal);
+        if (postalCity == null || !postalCity.type().equals("locality") || !cities.contains(canonicalLocality(postalCity.name()))
+                || !cities.contains(canonicalLocality(alias.suppliedCity()))
+                || !cities.contains(canonicalLocality(alias.canonicalCity()))) return false;
+        JsonNode geometry = postal.path("geometry"), bounds = geometry.path("bounds");
+        if (!Set.of("APPROXIMATE", "GEOMETRIC_CENTER").contains(geometry.path("location_type").asString(""))) return false;
+        JsonNode north = bounds.path("northeast").path("lat"), east = bounds.path("northeast").path("lng");
+        JsonNode south = bounds.path("southwest").path("lat"), west = bounds.path("southwest").path("lng");
+        if (!north.isNumber() || !east.isNumber() || !south.isNumber() || !west.isNumber()) return false;
+        double n = north.asDouble(), e = east.asDouble(), s = south.asDouble(), w = west.asDouble();
+        JsonNode center = geometry.path("location");
+        double lat = center.path("lat").asDouble(Double.NaN), lon = center.path("lng").asDouble(Double.NaN);
+        return Double.isFinite(n) && Double.isFinite(e) && Double.isFinite(s) && Double.isFinite(w)
+                && n <= 90 && s >= -90 && e <= 180 && w >= -180 && n > s && e > w
+                && latitude >= s && latitude <= n && longitude >= w && longitude <= e
+                && center.path("lat").isNumber() && center.path("lng").isNumber()
+                && Double.isFinite(lat) && Double.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
+                && lat >= s && lat <= n && lon >= w && lon <= e
+                && distanceMetres(latitude, longitude, lat, lon) <= 10_000;
     }
 
     /** Exact rooftop proof for street structures and explicit municipal locality labels. */
@@ -1854,6 +2030,7 @@ public class GeocodingClient {
 
     private static final class RecoveryState {
         private final Set<String> localityMismatches = new HashSet<>();
+        private JsonNode reverseLocalityResponse;
         private int attempts;
     }
 
@@ -1893,9 +2070,16 @@ public class GeocodingClient {
 
     private record ParentBuildingProof(String unit, LocalityComponent locality) { }
 
+    private record ProviderPostalAlias(String suppliedCity, String canonicalCity, String zip) { }
+
     private record ProofTarget(double latitude, double longitude, String placeId, boolean reverse,
                                boolean rejectCompetingDestinations, PostalProof postal, StreetStructureProof structure,
-                               ParentBuildingProof parentBuilding) {
+                               ParentBuildingProof parentBuilding, ProviderPostalAlias providerPostal) {
+        private ProofTarget(double latitude, double longitude, String placeId, boolean reverse,
+                            boolean rejectCompetingDestinations, PostalProof postal, StreetStructureProof structure,
+                            ParentBuildingProof parentBuilding) {
+            this(latitude, longitude, placeId, reverse, rejectCompetingDestinations, postal, structure, parentBuilding, null);
+        }
         private ProofTarget(double latitude, double longitude, String placeId, boolean reverse,
                             boolean rejectCompetingDestinations, PostalProof postal, StreetStructureProof structure) {
             this(latitude, longitude, placeId, reverse, rejectCompetingDestinations, postal, structure, null);

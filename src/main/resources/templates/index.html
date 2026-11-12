@@ -254,7 +254,7 @@
         const locationAddressRows = new WeakMap();
         const LOCATION_RESOLVE_BATCH_SIZE = 500;
         const LOCATION_RESOLVE_MAX_TEXT_LENGTH = 1000;
-        const LOCATION_POLICY_VERSION = 'street-address-v14';
+        const LOCATION_POLICY_VERSION = 'street-address-v15';
         // Match the backend's accepted unit values and require a segment boundary
         // so street names like STEELE, UNIT ROAD, and APARTMENT LANE stay intact.
         const LOCATION_UNIT_VALUE_PATTERN = '(?:[A-Z]?\\d+[A-Z0-9-]*|[A-Z](?:-\\d+[A-Z]?)?)';
@@ -984,7 +984,7 @@
 
         function getRecoveredLocationDetails(resolution) {
             let recoveryMessage;
-            if (resolution?.strategy === 'corroborated_postal_locality') {
+            if (['corroborated_postal_locality', 'corroborated_postal_unit_parent'].includes(resolution?.strategy)) {
                 recoveryMessage = ' Postal city verified. Google lists this street under a different city name.';
             } else if (resolution?.strategy === 'corroborated_locality') {
                 recoveryMessage = ' Google lists this street location under a different city name.';
