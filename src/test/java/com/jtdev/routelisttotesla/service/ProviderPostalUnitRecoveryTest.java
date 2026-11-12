@@ -143,6 +143,9 @@ class ProviderPostalUnitRecoveryTest {
                         : body(UNIT, UNIT.replace("unit-rooftop", "competing-unit")) : normal(phase));
             String otherCity = UNIT.replace("unit-rooftop", "other-city-unit").replace("Testville\",", "Testville Heights\",");
             held(INPUT, phase -> phase == Phase.UNIT ? body(UNIT, otherCity) : normal(phase));
+            String otherZip = otherCity.replace("48307", "48308");
+            held(INPUT, phase -> phase == Phase.UNIT
+                    ? reverseOrder ? body(otherZip, UNIT) : body(UNIT, otherZip) : normal(phase));
         }
     }
 

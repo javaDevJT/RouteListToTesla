@@ -455,7 +455,7 @@ public class GeocodingClient {
                     if (proof != null && proof.structure() != null
                             && match.path("geometry").path("location_type").asString("").equals("ROOFTOP")
                             && (cityMatches || postalCityMatches || postalProof(match, expected, candidate.text()) != null
-                                || providerPostalCityMatches(match, expected, proof))
+                                || providerSuppliedCityMatches(match, expected, proof))
                             && componentValues(match, "route").stream().anyMatch(route ->
                                 streetRoutesMatch(proof.structure().suppliedRoute(), route)
                                         || missingTerminalSuffix(proof.structure().suppliedRoute(), route)
@@ -861,9 +861,9 @@ public class GeocodingClient {
         return true;
     }
 
-    private static boolean providerPostalCityMatches(JsonNode match, ExpectedAddress expected, ProofTarget proof) {
+    private static boolean providerSuppliedCityMatches(JsonNode match, ExpectedAddress expected, ProofTarget proof) {
+        // Count supplied-city rivals across ZIP boundaries before accepting a target.
         return proof != null && proof.providerPostal() != null
-                && proof.providerPostal().zip().equals(singlePostalCode(match))
                 && localityMatches(match, new LocalityHint(proof.providerPostal().suppliedCity(),
                         expected.localityHint().state(), expected.localityHint().country()));
     }

@@ -128,3 +128,11 @@ export's application classes: original, reverse, constrained-unit and parent
 requests, four matched fixture bodies, zero external calls. Five of twelve
 authorized live requests were used and all five bodies are retained. No further
 paid calls are needed for release qualification, which uses these saved bodies.
+
+A final pre-release ambiguity check exposed a rival in the supplied city whose
+different ZIP could hide it from competition detection. The new regression
+failed, then passed after root counted supplied-city rivals across ZIP boundaries
+in either result order. Positive target acceptance still requires the original
+exact ZIP and rooftop proof; this correction only strengthens ambiguity holds.
+The first source build was canceled as obsolete before deployment and is retained
+in CI history. The corrective source receives a separate exact-source build.
