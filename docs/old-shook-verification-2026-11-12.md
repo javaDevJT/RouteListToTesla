@@ -49,6 +49,16 @@ replays the retained responses as `VERIFIED_BUILDING`, preserving the original
 place ID, coordinates, text, filename and row index in three fixture requests.
 Immutable-image and production qualification remain pending.
 
+The first exact-source build passed but publication was blocked by ten
+High/Critical findings in the existing Tomcat 11.0.25 pin. Its failed log,
+hash-verified minimized report and unpublished image identity are retained.
+The release updates the existing `tomcat.version` property to 11.0.27, preserving
+Spring Boot 4.1.1 and keeping embedded Tomcat components aligned. The fixed
+artifact is available on Maven Central; Apache documents security corrections
+in [Tomcat 11 advisories](https://tomcat.apache.org/security-11.html). The gate
+remains enabled. A new source build must pass before native qualification or
+deployment; the failed image was never deployed.
+
 ## Authority and evidence
 
 The user approved up to twelve read-only Google requests for this new case,
