@@ -43,7 +43,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class GeocodingClient {
-    public static final String GEOCODING_VERSION = "street-address-v15";
+    public static final String GEOCODING_VERSION = "street-address-v16";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GeocodingClient.class);
     private static final String CONFLICTING_UNIT = "\u0000";
@@ -526,7 +526,8 @@ public class GeocodingClient {
                                 && recoverableRepresentation(match, expected, streetMatches, cityMatches))) {
                             structureProposalSeen |= structureRecovery;
                             String unit = returnedUnit(match);
-                            if (unit != null && (CONFLICTING_UNIT.equals(unit)
+                            if ((expected.unit() == null && hasSecondaryUnitEvidence(match))
+                                    || unit != null && (CONFLICTING_UNIT.equals(unit)
                                     || expected.unit() == null || !expected.unit().equals(unit))) {
                                 unitConflict = true;
                             } else {
@@ -562,8 +563,7 @@ public class GeocodingClient {
                         continue;
                     }
                     if (proof != null && proof.structure() != null && expected.unit() == null
-                            && hasSecondaryUnitEvidence(match)
-                            && !(proof.providerPostal() != null && bareUnitlessParent(match))) {
+                            && hasSecondaryUnitEvidence(match)) {
                         unitConflict = true;
                         continue;
                     }
@@ -836,7 +836,7 @@ public class GeocodingClient {
                 if (!unitId.equals(id)) return new LookupOutcome(LookupStatus.AMBIGUOUS, null);
                 units.put(id, candidate.withLatLonPid(actualLat, actualLon, id));
             } else {
-                if (!bareUnitlessParent(match) || unitId.equals(id)) return new LookupOutcome(LookupStatus.NO_MATCH, null);
+                if (!bareUnitlessBuilding(match) || unitId.equals(id)) return new LookupOutcome(LookupStatus.NO_MATCH, null);
                 parents.put(id, candidate.withLatLonPid(actualLat, actualLon, id));
             }
         }
@@ -846,7 +846,7 @@ public class GeocodingClient {
                 : new LookupOutcome(LookupStatus.BUILDING_MATCH, parents.values().iterator().next());
     }
 
-    private static boolean bareUnitlessParent(JsonNode match) {
+    private static boolean bareUnitlessBuilding(JsonNode match) {
         JsonNode display = match.path("formatted_address");
         return (hasType(match, "street_address") || hasType(match, "premise"))
                 && componentCount(match, "subpremise") == 0
@@ -1021,7 +1021,12 @@ public class GeocodingClient {
     }
 
     private static boolean hasSecondaryUnitEvidence(JsonNode match) {
-        return hasType(match, "subpremise") || componentCount(match, "subpremise") != 0
+        // Result types can describe the same unitless rooftop as both a building
+        // and subpremise. Keep actual/malformed unit components and formatted
+        // units blocked; the overlapping tag alone is not an apartment identity.
+        // Strict proof callers retain their independent identity attestations.
+        return (hasType(match, "subpremise") && !bareUnitlessBuilding(match))
+                || componentCount(match, "subpremise") != 0
                 || unitValue(AddressExtractor.normalize(match.path("formatted_address").asString(""))) != null;
     }
 

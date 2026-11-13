@@ -55,6 +55,67 @@ class StreetStructureRecoveryTest {
             "Woodland Dr", null, "White Lake Township", "48383", 42.6667952, -83.5397448);
     private static final ProviderResult CARINAS = new ProviderResult("carinas", "5055", "Carinas Way Court",
             "Carinas Way Ct", null, "Commerce Township", "48382", 42.595293, -83.48270769999999);
+    private static final Address OLD_SHOOK = new Address(
+            "26095 OLD SHOOK ROAD, HARRISON TOWNSHIP, MI", "26095", "OLD SHOOK ROAD",
+            "HARRISON TOWNSHIP", "MI", null,
+            new ProviderResult("old-shook", "26095", "Old Shook Road", "Old Shook Rd", null,
+                    "Harrison Township", "48045", 42.5541668, -82.85222)
+                    .withTypes("street_address", "subpremise"));
+
+    @Test
+    void overlappingBuildingAndSubpremiseTagsNeedNoUnitWhenThreeRooftopsAgree() throws Exception {
+        for (Address address : List.of(OLD_SHOOK, COTTONWOOD, SILVER_POND, HATHAWAY_SUFFIX_OMITTED)) {
+            for (List<String> types : List.of(List.of("street_address", "subpremise"),
+                    List.of("subpremise", "premise"), List.of("premise", "street_address", "subpremise"))) {
+                assertRecovered(address.withProvider(address.provider().withTypes(types.toArray(String[]::new))));
+            }
+        }
+    }
+
+    @Test
+    void overlappingTypeTagsCannotReplaceAnyRooftopIdentityOrAddressProof() throws Exception {
+        for (Phase phase : List.of(Phase.STRUCTURED, Phase.REVERSE)) {
+            for (ProviderResult invalid : List.of(
+                    OLD_SHOOK.provider().withPlaceId("another-building"),
+                    OLD_SHOOK.provider().withPoint(42.5542668, -82.85222),
+                    OLD_SHOOK.provider().withHouse("26096"),
+                    OLD_SHOOK.provider().withRoute("Other Road", "Other Rd"),
+                    OLD_SHOOK.provider().withLocality("Detroit"),
+                    OLD_SHOOK.provider().withState("Ohio", "OH"),
+                    OLD_SHOOK.provider().withExtra(new Component("Canada", "CA", "country")),
+                    OLD_SHOOK.provider().withZip("48046"),
+                    OLD_SHOOK.provider().withPartial(true),
+                    OLD_SHOOK.provider().withLocationType("RANGE_INTERPOLATED"))) {
+                assertRejected(OLD_SHOOK, actual -> body(actual == phase ? invalid : OLD_SHOOK.provider()));
+            }
+            assertRejected(OLD_SHOOK, actual -> actual == phase ? EMPTY : body(OLD_SHOOK.provider()));
+            ProviderResult rival = OLD_SHOOK.provider().withPlaceId("competing-rooftop");
+            for (List<ProviderResult> order : List.of(List.of(OLD_SHOOK.provider(), rival),
+                    List.of(rival, OLD_SHOOK.provider()))) {
+                assertRejected(OLD_SHOOK, actual -> actual == phase ? body(order) : body(OLD_SHOOK.provider()));
+            }
+        }
+    }
+
+    @Test
+    void explicitUnitsAndUnresolvedSubpremiseTagsStayHeldAtEveryProofStage() throws Exception {
+        for (Phase phase : Phase.values()) {
+            for (ProviderResult invalid : List.of(
+                    OLD_SHOOK.provider().withExtra(new Component("109", "109", "subpremise")),
+                    OLD_SHOOK.provider().withExtra(new Component("", "", "subpremise")),
+                    OLD_SHOOK.provider().withTypes("subpremise"),
+                    OLD_SHOOK.provider().withFormattedAddress("26095 Old Shook Rd #109, Harrison Township, MI 48045"),
+                    OLD_SHOOK.provider().withFormattedAddress("26095 Old Shook Rd APT 109, Harrison Township, MI 48045"),
+                    OLD_SHOOK.provider().withFormattedAddress(""),
+                    OLD_SHOOK.provider().withFormattedAddress("X".repeat(513)))) {
+                assertRejected(OLD_SHOOK, actual -> body(actual == phase ? invalid : OLD_SHOOK.provider()));
+            }
+            assertRejected(OLD_SHOOK, actual -> {
+                String value = body(OLD_SHOOK.provider());
+                return actual == phase ? value.replace("\"formatted_address\":", "\"unused_display\":") : value;
+            });
+        }
+    }
 
     @Test
     void missingGeonamesAreaUsesCensusOnlyWithExactMunicipalityAndThreeRooftops() throws Exception {
@@ -525,6 +586,7 @@ class StreetStructureRecoveryTest {
         private boolean partial;
         private String locationType = "ROOFTOP";
         private List<String> resultTypes = new ArrayList<>(List.of("street_address"));
+        private String formattedOverride;
         private final List<Component> extraComponents = new ArrayList<>();
         private final List<String> omittedTypes = new ArrayList<>();
 
@@ -549,6 +611,7 @@ class StreetStructureRecoveryTest {
             copy.stateLong = stateLong;
             copy.stateShort = stateShort;
             copy.resultTypes = new ArrayList<>(resultTypes);
+            copy.formattedOverride = formattedOverride;
             copy.extraComponents.addAll(extraComponents);
             copy.omittedTypes.addAll(omittedTypes);
             return copy;
@@ -568,6 +631,9 @@ class StreetStructureRecoveryTest {
         ProviderResult withLocationType(String value) { ProviderResult copy = copy(); copy.locationType = value; return copy; }
         ProviderResult withTypes(String... values) {
             ProviderResult copy = copy(); copy.resultTypes = new ArrayList<>(List.of(values)); return copy;
+        }
+        ProviderResult withFormattedAddress(String value) {
+            ProviderResult copy = copy(); copy.formattedOverride = value; return copy;
         }
         ProviderResult withExtra(Component component) { ProviderResult copy = copy(); copy.extraComponents.add(component); return copy; }
         ProviderResult withState(String longName, String shortName) {
@@ -596,6 +662,7 @@ class StreetStructureRecoveryTest {
             String formatted = (house == null ? "" : house + " ") + (routeLong == null ? "" : routeLong)
                     + (formattedCity == null ? "" : ", " + formattedCity)
                     + (zip == null ? "" : " " + zip) + ", " + stateShort;
+            if (formattedOverride != null) formatted = formattedOverride;
             return "{\"place_id\":" + quote(placeId) + ",\"partial_match\":" + partial
                     + ",\"types\":[" + String.join(",", resultTypes.stream().map(StreetStructureRecoveryTest::quote).toList())
                     + "],\"formatted_address\":" + quote(formatted) + ",\"address_components\":["

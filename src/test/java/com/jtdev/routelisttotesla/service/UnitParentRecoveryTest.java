@@ -27,6 +27,28 @@ class UnitParentRecoveryTest {
     private static final String ZERO_RESULTS = "{\"status\":\"ZERO_RESULTS\",\"results\":[]}";
 
     @Test
+    void overlappingParentTypeTagsStillRequireBothIndependentUnitlessParentProofs() throws Exception {
+        for (Fixture fixture : List.of(CHERRYWOOD, SYNTHETIC)) {
+            Result parent = fixture.parent().withTypes("street_address", "subpremise");
+            Responses responses = Responses.success(fixture).with(Phase.REVERSE, List.of(parent))
+                    .with(Phase.PARENT, List.of(parent));
+            Probe probe = resolve(fixture, responses);
+            assertEquals(LocationResolution.Status.VERIFIED_UNIT, probe.result().resolution().status());
+            assertEquals(fixture.unitPlaceId(), probe.result().pid());
+            assertEquals(fixture.input, probe.result().text());
+            assertEquals(4, probe.requests().size());
+            assertNull(resolve(fixture, responses.with(Phase.PARENT, List.of())).result().pid());
+            for (Phase phase : List.of(Phase.REVERSE, Phase.PARENT)) {
+                for (Result invalid : List.of(parent.withTypes("subpremise"), parent.withUnit("9"),
+                        parent.withFormattedAddress("100 Main #9, Testville, MI 48000"),
+                        parent.withFormattedAddress(""), parent.withFormattedAddress("X".repeat(513)))) {
+                    assertNull(resolve(fixture, responses.with(phase, List.of(invalid))).result().pid());
+                }
+            }
+        }
+    }
+
+    @Test
     void compactCherrywoodUnitAndSyntheticUnitNeedTwoUnitAndTwoParentProofs() throws Exception {
         for (Fixture fixture : List.of(CHERRYWOOD, SYNTHETIC)) {
             Result parent = fixture.parent();
@@ -86,7 +108,7 @@ class UnitParentRecoveryTest {
         List<Result> invalidReverseResults = List.of(
                 parent.withUnit(fixture.unit),
                 parent.withUnit("2602"),
-                parent.withTypes("street_address", "subpremise"),
+                parent.withTypes("subpremise"),
                 parent.withFormattedAddress("5845 Cherrywood #2602, West Bloomfield Township, MI 48322, USA"),
                 parent.withHouse("5846"),
                 parent.withRoute("Other Road"),
@@ -118,7 +140,7 @@ class UnitParentRecoveryTest {
                 parent.withPointOffsetMetres(2.1),
                 parent.withUnit(fixture.unit),
                 parent.withUnit("2602"),
-                parent.withTypes("street_address", "subpremise"),
+                parent.withTypes("subpremise"),
                 parent.withFormattedAddress("5845 Cherrywood Apt 2602, West Bloomfield Township, MI 48322, USA"),
                 parent.withHouse("5846"),
                 parent.withRoute("Other Road"),

@@ -6,7 +6,7 @@ TAP-managed sign-in and stable-subject authorization replace independent Google 
 
 ### October 19 provider-corroborated recovery
 
-Current source extraction is `ocr-consensus-v10`; geocoding is `street-address-v15`.
+Current source extraction is `ocr-consensus-v10`; geocoding is `street-address-v16`.
 These versions separate suffix-like city lines from suffixless streets and tolerate apostrophe
 omission without changing street-name letters. Unverified city mismatches show
 the provider's address as an editing hint and retain the dispatch hold. See the

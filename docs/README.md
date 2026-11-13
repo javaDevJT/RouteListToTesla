@@ -1,5 +1,6 @@
 # Documentation
 
+- [Old Shook Road verification (in progress)](old-shook-verification-2026-11-12.md): shared building/unit type classification, regression coverage and release evidence.
 - [Miller Avenue apartment verification](miller-apartment-verification-2026-11-11.md): deployed v15 postal-city and unit corroboration, native checks and release evidence.
 
 - [November 11 address verification fixes (deployed)](address-verification-triage-2026-11-11.md): two supplied screenshot cases, diagnosis, fixes, native qualification and production verification.
