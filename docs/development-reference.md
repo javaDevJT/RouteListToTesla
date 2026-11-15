@@ -6,7 +6,13 @@ TAP-managed sign-in and stable-subject authorization replace independent Google 
 
 ### October 19 provider-corroborated recovery
 
-Current source extraction is `ocr-consensus-v10`; geocoding is `street-address-v17`.
+Current source extraction is `ocr-consensus-v10`; geocoding is `street-address-v18`.
+
+When a unitless original address omits a road suffix and Google returns only an
+eligible interpolated street address, review shows that provider address as an
+unverified editing hint. It does not become a destination or weaken the rooftop
+proof. Check the full street name against delivery details before editing; the
+stop remains held. See [Norfolk street estimate review](norfolk-verification-2026-11-15.md).
 These versions separate suffix-like city lines from suffixless streets and tolerate apostrophe
 omission without changing street-name letters. Unverified city mismatches show
 the provider's address as an editing hint and retain the dispatch hold. See the

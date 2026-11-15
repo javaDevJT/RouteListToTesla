@@ -55,6 +55,12 @@ class StreetStructureRecoveryTest {
             "31331 HATHAWAY ST, LIVONIA, MI", "31331", "HATHAWAY ST", "LIVONIA", "MI", null,
             new ProviderResult("hathaway-suffix-omitted", "31331", "Hathaway", "Hathaway", "Livonia", null,
                     "48150", 42.3605718, -83.351036));
+    private static final Address NORFOLK_SUFFIX_OMITTED = new Address(
+            "13342 S NORFOLK, DETROIT, MI", "13342", "S NORFOLK", "DETROIT", "MI", null,
+            new ProviderResult("norfolk-detroit", "13342", "South Norfolk Court", "S Norfolk Ct", "Detroit",
+                    null, "48235", 42.4430414, -83.179406)
+                    .withLocationType("RANGE_INTERPOLATED")
+                    .withFormattedAddress("13342 S Norfolk Ct, Detroit, MI 48235, USA"));
     private static final ProviderResult WOODLAND = new ProviderResult("woodland", "5337", "Woodland Drive",
             "Woodland Dr", null, "White Lake Township", "48383", 42.6667952, -83.5397448);
     private static final ProviderResult CARINAS = new ProviderResult("carinas", "5055", "Carinas Way Court",
@@ -264,6 +270,103 @@ class StreetStructureRecoveryTest {
             assertRejected(HATHAWAY_SUFFIX_OMITTED, actual -> body(actual == phase
                     ? interpolated : HATHAWAY_SUFFIX_OMITTED.provider()));
         }
+    }
+
+    @Test
+    void suffixlessNorfolkInterpolationProducesOnlyAnEditingHint() throws Exception {
+        assertStreetLocationHint(NORFOLK_SUFFIX_OMITTED, phase -> phase == Phase.ORIGINAL
+                ? body(NORFOLK_SUFFIX_OMITTED.provider()) : EMPTY);
+    }
+
+    @Test
+    void suffixlessDirectionalStreetsCanProduceHintsWithoutAcceptingNavigationPoints() throws Exception {
+        for (Direction direction : List.of(new Direction("N", "North"), new Direction("S", "South"),
+                new Direction("E", "East"), new Direction("W", "West"))) {
+            Address address = new Address("200 " + direction.abbreviation() + " OAK, DETROIT, MI", "200",
+                    direction.abbreviation() + " OAK", "DETROIT", "MI", null,
+                    new ProviderResult("directional-oak-" + direction.abbreviation(), "200",
+                            direction.fullName() + " Oak Avenue", direction.abbreviation() + " Oak Ave", "Detroit",
+                            null, "48235", 42.4430414, -83.179406)
+                            .withLocationType("RANGE_INTERPOLATED"));
+            assertStreetLocationHint(address, phase -> phase == Phase.ORIGINAL
+                    ? body(address.provider()) : EMPTY);
+        }
+    }
+
+    @Test
+    void suffixlessInterpolationHintRequiresTheExactStreetHouseLocalityStateCountryAndPostalCode() throws Exception {
+        ProviderResult valid = NORFOLK_SUFFIX_OMITTED.provider();
+        for (ProviderResult invalid : List.of(
+                valid.withHouse("13343"),
+                valid.withRoute("South Highland Court", "S Highland Ct"),
+                valid.withRoute("North Norfolk Court", "N Norfolk Ct"),
+                valid.withLocality("Dearborn"),
+                valid.withState("Ohio", "OH"),
+                valid.withCountry("Canada", "CA"),
+                valid.withZip(null),
+                valid.withPlaceId(null),
+                valid.withPlaceId(""),
+                valid.withPartial(true),
+                valid.withLocationType("APPROXIMATE"),
+                valid.withPoint(91, -83.179406),
+                valid.withPoint(42.4430414, 181),
+                valid.withPoint(0, 0),
+                valid.withExtra(new Component("Other Street", "Other St", "route")),
+                valid.withExtra(new Component("Another Detroit", "Another Detroit", "locality")),
+                valid.withExtra(new Component("Michigan", "MI", "administrative_area_level_1")),
+                valid.withExtra(new Component("United States", "US", "country")),
+                valid.withExtra(new Component("48235", "48235", "postal_code")),
+                valid.withTypes("locality"),
+                valid.withFormattedAddress(""),
+                valid.withFormattedAddress("X".repeat(513)))) {
+            assertNoStreetLocationHint(NORFOLK_SUFFIX_OMITTED, phase -> phase == Phase.ORIGINAL
+                    ? body(invalid) : EMPTY);
+        }
+        Address typedZip = new Address("13342 S NORFOLK, DETROIT, MI 48236", "13342", "S NORFOLK",
+                "DETROIT", "MI", null, valid);
+        assertNoStreetLocationHint(typedZip, phase -> phase == Phase.ORIGINAL ? body(valid) : EMPTY);
+    }
+
+    @Test
+    void suffixlessInterpolationHintRequiresUnitlessInputAndNoProviderSubpremise() throws Exception {
+        Address unitInput = new Address("13342 S NORFOLK APT 4, DETROIT, MI", "13342", "S NORFOLK",
+                "DETROIT", "MI", "4", NORFOLK_SUFFIX_OMITTED.provider()
+                .withExtra(new Component("4", "4", "subpremise")));
+        assertNoStreetLocationHint(unitInput, phase -> phase == Phase.ORIGINAL
+                ? body(unitInput.provider()) : EMPTY);
+
+        for (Component subpremise : List.of(new Component("4", "4", "subpremise"),
+                new Component("", "", "subpremise"))) {
+            ProviderResult result = NORFOLK_SUFFIX_OMITTED.provider().withExtra(subpremise);
+            assertNoStreetLocationHint(NORFOLK_SUFFIX_OMITTED, phase -> phase == Phase.ORIGINAL
+                    ? body(result) : EMPTY);
+        }
+    }
+
+    @Test
+    void inferredSuffixAndInterpolatedRooftopFromFallbacksNeverBecomeAnEditingHintOrNavigationPoint() throws Exception {
+        ProviderResult inferred = NORFOLK_SUFFIX_OMITTED.provider();
+        assertNoStreetLocationHint(NORFOLK_SUFFIX_OMITTED, phase -> phase == Phase.ORIGINAL
+                ? EMPTY : body(inferred));
+    }
+
+    @Test
+    void unrelatedStreetReplacementAndMultiplePlausibleHintsStayGenericNoMatch() throws Exception {
+        ProviderResult unrelated = NORFOLK_SUFFIX_OMITTED.provider()
+                .withRoute("South Highland Court", "S Highland Ct");
+        assertNoStreetLocationHint(NORFOLK_SUFFIX_OMITTED, phase -> phase == Phase.ORIGINAL
+                ? body(unrelated) : EMPTY);
+
+        ProviderResult rival = NORFOLK_SUFFIX_OMITTED.provider().withPlaceId("other-norfolk-destination")
+                .withPoint(42.4432, -83.1795);
+        PlaceCandidate multiple = probe(NORFOLK_SUFFIX_OMITTED, phase -> phase == Phase.ORIGINAL
+                ? body(List.of(NORFOLK_SUFFIX_OMITTED.provider(), rival)) : EMPTY).result();
+        assertNull(multiple.pid());
+        assertEquals(0, multiple.lat());
+        assertEquals(0, multiple.lon());
+        assertEquals(LocationResolution.Status.NO_MATCH, multiple.resolution().status());
+        assertNotEquals("street_location_estimated", multiple.resolution().reasonCode());
+        assertNull(multiple.resolution().matchedAddress(), "Do not select one formatted hint from multiple plausible results");
     }
 
     @Test
@@ -555,6 +658,43 @@ class StreetStructureRecoveryTest {
         assertNull(probe.result().pid(), message);
     }
 
+    private static void assertStreetLocationHint(Address address, Function<Phase, String> response) throws Exception {
+        PlaceCandidate input = place(address.text());
+        PlaceCandidate result = probe(address, response).result();
+
+        assertNull(result.pid(), "An interpolated estimate must never become a navigation destination");
+        assertEquals(0, result.lat());
+        assertEquals(0, result.lon());
+        assertEquals(input.text(), result.text());
+        assertEquals(input.normalized(), result.normalized());
+        assertEquals(input.sourceImage(), result.sourceImage());
+        assertEquals(input.lineIndex(), result.lineIndex());
+        assertEquals(input.ocrAgreement(), result.ocrAgreement());
+        assertEquals(input.ocrReviewRequired(), result.ocrReviewRequired());
+        assertEquals(input.ocrAlternatives(), result.ocrAlternatives());
+        assertNotNull(result.resolution());
+        assertEquals(LocationResolution.Status.NO_MATCH, result.resolution().status());
+        assertEquals("recovery_exhausted", result.resolution().strategy());
+        assertEquals("street_location_estimated", result.resolution().reasonCode());
+        assertEquals(address.provider().formattedAddress(), result.resolution().matchedAddress());
+    }
+
+    private static void assertNoStreetLocationHint(Address address, Function<Phase, String> response) throws Exception {
+        PlaceCandidate input = place(address.text());
+        PlaceCandidate result = probe(address, response).result();
+
+        assertNull(result.pid(), "An unverified estimate must not become a navigation destination");
+        assertEquals(0, result.lat());
+        assertEquals(0, result.lon());
+        assertEquals(input.text(), result.text());
+        assertEquals(input.normalized(), result.normalized());
+        assertEquals(input.sourceImage(), result.sourceImage());
+        assertEquals(input.lineIndex(), result.lineIndex());
+        assertNotNull(result.resolution());
+        assertEquals(LocationResolution.Status.NO_MATCH, result.resolution().status());
+        assertNotEquals("street_location_estimated", result.resolution().reasonCode());
+    }
+
     private static int indexOf(List<Map<String, String>> values, Function<Map<String, String>, Boolean> predicate) {
         for (int index = 0; index < values.size(); index++) if (predicate.apply(values.get(index))) return index;
         return -1;
@@ -656,6 +796,8 @@ class StreetStructureRecoveryTest {
         private String zip;
         private String stateLong = "Michigan";
         private String stateShort = "MI";
+        private String countryLong = "United States";
+        private String countryShort = "US";
         private double lat;
         private double lon;
         private boolean partial;
@@ -685,6 +827,8 @@ class StreetStructureRecoveryTest {
             copy.locationType = locationType;
             copy.stateLong = stateLong;
             copy.stateShort = stateShort;
+            copy.countryLong = countryLong;
+            copy.countryShort = countryShort;
             copy.resultTypes = new ArrayList<>(resultTypes);
             copy.formattedOverride = formattedOverride;
             copy.extraComponents.addAll(extraComponents);
@@ -714,6 +858,9 @@ class StreetStructureRecoveryTest {
         ProviderResult withState(String longName, String shortName) {
             ProviderResult copy = copy(); copy.stateLong = longName; copy.stateShort = shortName; return copy;
         }
+        ProviderResult withCountry(String longName, String shortName) {
+            ProviderResult copy = copy(); copy.countryLong = longName; copy.countryShort = shortName; return copy;
+        }
         ProviderResult withoutType(String type) {
             ProviderResult copy = copy(); copy.omittedTypes.add(type); return copy;
         }
@@ -725,19 +872,24 @@ class StreetStructureRecoveryTest {
             if (locality != null) components.add(new Component(locality, locality, "locality"));
             if (municipality != null) components.add(new Component(municipality, municipality, "administrative_area_level_3"));
             components.add(new Component(stateLong, stateShort, "administrative_area_level_1"));
-            components.add(new Component("United States", "US", "country"));
+            components.add(new Component(countryLong, countryShort, "country"));
             if (zip != null) components.add(new Component(zip, zip, "postal_code"));
             components.addAll(extraComponents);
             components.removeIf(component -> omittedTypes.contains(component.type()));
             return components;
         }
 
-        private String json() {
+        private String formattedAddress() {
             String formattedCity = locality == null ? municipality : locality;
             String formatted = (house == null ? "" : house + " ") + (routeLong == null ? "" : routeLong)
                     + (formattedCity == null ? "" : ", " + formattedCity)
                     + (zip == null ? "" : " " + zip) + ", " + stateShort;
             if (formattedOverride != null) formatted = formattedOverride;
+            return formatted;
+        }
+
+        private String json() {
+            String formatted = formattedAddress();
             return "{\"place_id\":" + quote(placeId) + ",\"partial_match\":" + partial
                     + ",\"types\":[" + String.join(",", resultTypes.stream().map(StreetStructureRecoveryTest::quote).toList())
                     + "],\"formatted_address\":" + quote(formatted) + ",\"address_components\":["
@@ -748,6 +900,7 @@ class StreetStructureRecoveryTest {
     }
 
     private static String quote(String value) {
+        if (value == null) return "null";
         return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 }

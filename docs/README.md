@@ -1,5 +1,6 @@
 # Documentation
 
+- [Norfolk street estimate review (in progress)](norfolk-verification-2026-11-15.md): explicit interpolation hints with the stop held pending full-street/building evidence.
 - [Fenton and Linden verification](fenton-linden-verification-2026-11-14.md): deployed v17 omitted-direction corroboration, explicit provider-coverage holds and release evidence.
 - [Old Shook Road verification](old-shook-verification-2026-11-12.md): deployed v16 shared building/unit type classification, native regressions and release evidence.
 - [Miller Avenue apartment verification](miller-apartment-verification-2026-11-11.md): deployed v15 postal-city and unit corroboration, native checks and release evidence.
