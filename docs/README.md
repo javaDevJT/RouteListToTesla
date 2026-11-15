@@ -1,5 +1,6 @@
 # Documentation
 
+- [Fenton and Linden verification (in progress)](fenton-linden-verification-2026-11-14.md): corroborated omitted street direction and explicit provider-coverage holds.
 - [Old Shook Road verification](old-shook-verification-2026-11-12.md): deployed v16 shared building/unit type classification, native regressions and release evidence.
 - [Miller Avenue apartment verification](miller-apartment-verification-2026-11-11.md): deployed v15 postal-city and unit corroboration, native checks and release evidence.
 

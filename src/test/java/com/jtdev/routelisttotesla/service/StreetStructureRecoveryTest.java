@@ -43,6 +43,10 @@ class StreetStructureRecoveryTest {
             "TESTVILLE", "MI", null,
             new ProviderResult("north-main", "100", "North Main Street", "N Main St", "Testville", null,
                     "48000", 42.31, -83.2));
+    private static final Address SEYMOUR = new Address("16402 SEYMOUR RD, LINDEN, MI", "16402", "SEYMOUR RD",
+            "LINDEN", "MI", null,
+            new ProviderResult("ChIJx3hrlwJsI4gReI5U7sjbaMM", "16402", "South Seymour Road", "S Seymour Rd",
+                    "Linden", null, "48451", 42.7849967, -83.8480367));
     private static final Address KNOWN_SUFFIX = new Address("100 MAIN ST, TESTVILLE, MI", "100", "MAIN ST",
             "TESTVILLE", "MI", null,
             new ProviderResult("known-main", "100", "Main Street", "Main St", "Testville", null,
@@ -171,6 +175,53 @@ class StreetStructureRecoveryTest {
     }
 
     @Test
+    void recoversAnUnspecifiedLeadingCardinalDirectionOnlyWithThreeMatchingRooftopProofs() throws Exception {
+        assertEquals(3, assertRecovered(SEYMOUR).requests().size(), "Seymour recovery needs all three provider proofs");
+
+        for (Direction direction : List.of(new Direction("N", "North"), new Direction("S", "South"),
+                new Direction("E", "East"), new Direction("W", "West"))) {
+            Address address = new Address("100 MAIN ST, TESTVILLE, MI", "100", "MAIN ST", "TESTVILLE", "MI", null,
+                    new ProviderResult("main-" + direction.abbreviation().toLowerCase(Locale.ROOT), "100",
+                            direction.fullName() + " Main Street", direction.abbreviation() + " Main St",
+                            "Testville", null, "48000", 42.32, -83.2));
+            assertEquals(3, assertRecovered(address).requests().size(),
+                    "An omitted " + direction.fullName() + " prefix needs all three provider proofs");
+        }
+    }
+
+    @Test
+    void addedLeadingDirectionRecoveryRejectsMissingOrDriftingProofsAndDirectionalCompetition() throws Exception {
+        Address genericNorth = new Address("100 MAIN ST, TESTVILLE, MI", "100", "MAIN ST", "TESTVILLE", "MI", null,
+                new ProviderResult("north-main-recovery", "100", "North Main Street", "N Main St", "Testville",
+                        null, "48000", 42.32, -83.2));
+        for (Address address : List.of(SEYMOUR, genericNorth)) {
+            ProviderResult rooftop = address.provider();
+            for (Phase phase : Phase.values()) {
+                assertRejected(address, actual -> actual == phase ? EMPTY : body(rooftop));
+                assertRejected(address, actual -> body(actual == phase ? rooftop.withPlaceId("different-rooftop") : rooftop));
+                assertRejected(address, actual -> body(actual == phase
+                        ? rooftop.withPoint(rooftop.lat + 0.0001, rooftop.lon) : rooftop));
+                String otherZip = rooftop.zip.equals("48000") ? "48001" : "48000";
+                assertRejected(address, actual -> body(actual == phase ? rooftop.withZip(otherZip) : rooftop));
+                assertRejected(address, actual -> body(actual == phase
+                        ? rooftop.withExtra(new Component("4", "4", "subpremise")) : rooftop));
+
+                ProviderResult rival = rooftop.withPlaceId("competing-directional-rooftop")
+                        .withRoute(address == SEYMOUR ? "North Seymour Road" : "South Main Street",
+                                address == SEYMOUR ? "N Seymour Rd" : "S Main St")
+                        .withPoint(rooftop.lat + 0.01, rooftop.lon);
+                for (List<ProviderResult> order : List.of(List.of(rooftop, rival), List.of(rival, rooftop))) {
+                    assertRejected(address, actual -> actual == phase ? body(order) : body(rooftop));
+                }
+            }
+            for (Phase phase : Phase.values()) {
+                assertRejected(address, actual -> body(actual == phase ? rooftop.withLocality("Different City") : rooftop),
+                        "A locality mismatch in " + phase + " must hold " + address.text());
+            }
+        }
+    }
+
+    @Test
     void verifiesTheRequestedUnitOnlyWhenAllStructureProofsAgree() throws Exception {
         Address apartment = new Address("100 MAIN APT 4, TESTVILLE, MI", "100", "MAIN",
                 "TESTVILLE", "MI", "4",
@@ -280,7 +331,7 @@ class StreetStructureRecoveryTest {
     }
 
     @Test
-    void rejectsWrongHouseAddedNameOrDirectionTokensAndInconsistentProviderNames() throws Exception {
+    void rejectsWrongHouseAddedInteriorNameTokensSuppliedDirectionConflictsAndInconsistentProviderNames() throws Exception {
         assertRejected(COTTONWOOD.withProvider(COTTONWOOD.provider().withHouse("6735")));
         assertRejected(COTTONWOOD.withProvider(COTTONWOOD.provider()
                 .withRoute("Cottonwood East Knoll Court", "Cottonwood East Knoll Ct")));
@@ -288,6 +339,24 @@ class StreetStructureRecoveryTest {
                 .withRoute("South Main Street", "S Main St")));
         assertRejected(SILVER_POND.withProvider(SILVER_POND.provider()
                 .withRoute("Silver Pond", "Silver Ponds")));
+    }
+
+    @Test
+    void suppliedSuffixDirectionsCannotBeRemovedOrSwappedAndUnspecifiedDirectionsCannotBeAddedAtTheSuffix() throws Exception {
+        Address suppliedNorthSuffix = new Address("75 MAPLE ST N, TESTVILLE, MI", "75", "MAPLE ST N",
+                "TESTVILLE", "MI", null,
+                new ProviderResult("maple-north-suffix", "75", "Maple North", "Maple N", "Testville", null,
+                        "48000", 42.3, -83.2));
+        assertRejected(suppliedNorthSuffix.withProvider(suppliedNorthSuffix.provider()
+                .withRoute("Maple St", "Maple St")));
+        assertRejected(suppliedNorthSuffix.withProvider(suppliedNorthSuffix.provider()
+                .withRoute("Maple South", "Maple S")));
+
+        Address suppliedNoDirection = new Address("100 MAIN ST, TESTVILLE, MI", "100", "MAIN ST",
+                "TESTVILLE", "MI", null,
+                new ProviderResult("main-terminal-direction", "100", "Main Street North", "Main St N",
+                        "Testville", null, "48000", 42.32, -83.2));
+        assertRejected(suppliedNoDirection);
     }
 
     @Test
@@ -421,20 +490,20 @@ class StreetStructureRecoveryTest {
         assertRejected(apartment);
     }
 
-    private static void assertRecovered(Address address) throws Exception {
-        assertRecovered(address, LocationResolution.Status.VERIFIED_BUILDING);
+    private static Probe assertRecovered(Address address) throws Exception {
+        return assertRecovered(address, LocationResolution.Status.VERIFIED_BUILDING);
     }
 
-    private static void assertRecovered(Address address, LocationResolution.Status expectedStatus) throws Exception {
-        assertRecovered(address, expectedStatus, phase -> body(address.provider()));
+    private static Probe assertRecovered(Address address, LocationResolution.Status expectedStatus) throws Exception {
+        return assertRecovered(address, expectedStatus, phase -> body(address.provider()));
     }
 
-    private static void assertRecovered(Address address, Function<Phase, String> response) throws Exception {
-        assertRecovered(address, LocationResolution.Status.VERIFIED_BUILDING, response);
+    private static Probe assertRecovered(Address address, Function<Phase, String> response) throws Exception {
+        return assertRecovered(address, LocationResolution.Status.VERIFIED_BUILDING, response);
     }
 
-    private static void assertRecovered(Address address, LocationResolution.Status expectedStatus,
-                                        Function<Phase, String> response) throws Exception {
+    private static Probe assertRecovered(Address address, LocationResolution.Status expectedStatus,
+                                         Function<Phase, String> response) throws Exception {
         Probe probe = probe(address, response);
         PlaceCandidate result = probe.result();
 
@@ -462,6 +531,7 @@ class StreetStructureRecoveryTest {
         String[] point = probe.requests().get(reverse).get("latlng").split(",", 2);
         assertEquals(address.provider().lat, Double.parseDouble(point[0]), 0.0000001);
         assertEquals(address.provider().lon, Double.parseDouble(point[1]), 0.0000001);
+        return probe;
     }
 
     private static void assertVerified(Address address) throws Exception {
@@ -477,8 +547,12 @@ class StreetStructureRecoveryTest {
     }
 
     private static void assertRejected(Address address, Function<Phase, String> response) throws Exception {
+        assertRejected(address, response, "An unproved or ambiguous street structure must not be navigable");
+    }
+
+    private static void assertRejected(Address address, Function<Phase, String> response, String message) throws Exception {
         Probe probe = probe(address, response);
-        assertNull(probe.result().pid(), "An unproved or ambiguous street structure must not be navigable");
+        assertNull(probe.result().pid(), message);
     }
 
     private static int indexOf(List<Map<String, String>> values, Function<Map<String, String>, Boolean> predicate) {
@@ -556,6 +630,7 @@ class StreetStructureRecoveryTest {
     }
 
     private enum Phase { ORIGINAL, STRUCTURED, REVERSE }
+    private record Direction(String abbreviation, String fullName) { }
     private record Probe(PlaceCandidate result, List<Map<String, String>> requests) { }
     private record Address(String text, String house, String street, String city, String state, String unit,
                            ProviderResult provider) {

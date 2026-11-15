@@ -36,6 +36,43 @@ import static org.mockito.Mockito.*;
 
 class GeocodingClientTest {
     @Test
+    void areaOnlyProviderResultsKeepTheStopHeldWithASpecificReason() throws Exception {
+        HttpServer server = server(exchange -> respond(exchange, partialCityResult()));
+        server.start();
+        try {
+            String text = "9440 CRYSTAL TARN, FENTON, MI";
+            PlaceCandidate result = client(server, 30, 30, 1, 1)
+                    .batchGeocode("area-only", List.of(place(text, "IMG_0744.jpg", 1))).getFirst();
+            assertEquals(LocationResolution.Status.NO_MATCH, result.resolution().status());
+            assertEquals("provider_area_only", result.resolution().reasonCode());
+            assertFalse(result.resolution().verified());
+            assertNull(result.pid());
+            assertEquals(text, result.text());
+            assertEquals("IMG_0744.jpg", result.sourceImage());
+            assertEquals(1, result.lineIndex());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void rejectedStreetResultsDoNotClaimTheProviderReturnedOnlyAnArea() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = server(exchange -> respond(exchange, requests.incrementAndGet() == 1
+                ? partialCityResult() : okAddress("wrong-house", "9999", "CRYSTAL TARN", 42.3, -83.2, false)));
+        server.start();
+        try {
+            PlaceCandidate result = client(server, 30, 30, 1, 1).batchGeocode("mixed-results",
+                    List.of(place("9440 CRYSTAL TARN, FENTON, MI", "IMG_0744.jpg", 1))).getFirst();
+            assertEquals(LocationResolution.Status.NO_MATCH, result.resolution().status());
+            assertEquals("no_safe_match", result.resolution().reasonCode());
+            assertNull(result.pid());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void cityMatchFallsBackWithinTheSameBatchAndPreservesDuplicateStops() throws Exception {
         List<String> lookups = Collections.synchronizedList(new ArrayList<>());
         List<Long> starts = Collections.synchronizedList(new ArrayList<>());
@@ -351,7 +388,7 @@ class GeocodingClientTest {
             assertEquals(inbound.ocrAgreement(), result.ocrAgreement());
             assertTrue(result.resolution() != null);
             assertEquals(LocationResolution.Status.NO_MATCH, result.resolution().status());
-            assertEquals("no_safe_match", result.resolution().reasonCode());
+            assertEquals("provider_area_only", result.resolution().reasonCode());
             assertEquals(GeocodingClient.GEOCODING_VERSION, result.resolution().policyVersion());
             assertNull(result.pid());
             assertEquals(0, result.lat());

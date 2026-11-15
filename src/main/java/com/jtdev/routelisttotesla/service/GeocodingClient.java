@@ -43,7 +43,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class GeocodingClient {
-    public static final String GEOCODING_VERSION = "street-address-v16";
+    public static final String GEOCODING_VERSION = "street-address-v17";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GeocodingClient.class);
     private static final String CONFLICTING_UNIT = "\u0000";
@@ -335,7 +335,9 @@ public class GeocodingClient {
         String localityHint = state.localityMismatches.size() == 1
                 ? state.localityMismatches.iterator().next() : null;
         return outcome(candidate, null, LocationResolution.Status.NO_MATCH, "recovery_exhausted",
-                localityHint == null ? "no_safe_match" : "locality_mismatch", state, null, localityHint);
+                localityHint != null ? "locality_mismatch"
+                        : state.areaResultSeen && !state.addressResultSeen ? "provider_area_only" : "no_safe_match",
+                state, null, localityHint);
     }
 
     private LookupOutcome lookup(String owner, PlaceCandidate candidate, ExpectedAddress expected, LookupForm form,
@@ -426,6 +428,9 @@ public class GeocodingClient {
                 for (JsonNode match : body.path("results")) {
                     boolean addressType = hasType(match, "street_address") || hasType(match, "premise")
                             || hasType(match, "subpremise");
+                    state.addressResultSeen |= addressType || hasType(match, "route");
+                    state.areaResultSeen |= hasType(match, "locality") || hasType(match, "postal_code")
+                            || hasType(match, "administrative_area_level_3");
                     if (match.path("partial_match").asBoolean(false) || !addressType) continue;
 
                     List<String> streetNumbers = componentValues(match, "street_number");
@@ -459,7 +464,8 @@ public class GeocodingClient {
                             && componentValues(match, "route").stream().anyMatch(route ->
                                 streetRoutesMatch(proof.structure().suppliedRoute(), route)
                                         || missingTerminalSuffix(proof.structure().suppliedRoute(), route)
-                                        || providerOmittedTerminalSuffix(proof.structure().suppliedRoute(), route))) {
+                                        || providerOmittedTerminalSuffix(proof.structure().suppliedRoute(), route)
+                                        || providerAddedLeadingDirection(proof.structure().suppliedRoute(), route))) {
                         JsonNode point = match.path("geometry").path("location");
                         double lat = point.path("lat").asDouble(Double.NaN), lon = point.path("lng").asDouble(Double.NaN);
                         String id = match.path("place_id").asString("");
@@ -932,8 +938,10 @@ public class GeocodingClient {
         boolean explicitMunicipalStreet = hasExplicitMunicipalLocality(hint)
                 && streetRoutesMatch(expected.route(), route);
         if (!literalSuffixless && !explicitMunicipalStreet && !missingTerminalSuffix(expected.route(), route)
-                && !providerOmittedTerminalSuffix(expected.route(), route)) return false;
+                && !providerOmittedTerminalSuffix(expected.route(), route)
+                && !providerAddedLeadingDirection(expected.route(), route)) return false;
         boolean municipalityOnly = singleLocalityComponent(match).type().equals("administrative_area_level_3");
+        if (providerAddedLeadingDirection(expected.route(), route) && (!cityMatches || municipalityOnly)) return false;
         return cityMatches && !municipalityOnly || explicitMunicipalityMatches(match, hint)
                 || postalProof(match, expected, originalText) != null;
     }
@@ -1077,6 +1085,19 @@ public class GeocodingClient {
         // Acceptance still requires the unchanged supplied street query and the
         // same rooftop/PID in reverse. No name or direction token may disappear.
         return name.equals(provider);
+    }
+
+    private static boolean providerAddedLeadingDirection(String requested, String returned) {
+        List<String> supplied = canonicalStreetWords(requested), provider = canonicalStreetWords(returned);
+        if (supplied.size() < 2 || provider.size() != supplied.size() + 1
+                || CARDINAL_DIRECTIONS.contains(supplied.getFirst())
+                || CARDINAL_DIRECTIONS.contains(supplied.getLast())
+                || !CARDINAL_DIRECTIONS.contains(provider.getFirst())
+                || !hasStreetSuffix(requested)) return false;
+        // This only proposes a missing prefix. The unchanged supplied street,
+        // locality/ZIP and exact rooftop/PID must agree in forward and reverse
+        // proofs; directional competitors remain ambiguous in every response.
+        return streetRoutesMatch(requested, String.join(" ", provider.subList(1, provider.size())));
     }
 
     private static PostalProof postalProof(JsonNode proposed, ExpectedAddress expected, String originalText) {
@@ -2036,6 +2057,8 @@ public class GeocodingClient {
     private static final class RecoveryState {
         private final Set<String> localityMismatches = new HashSet<>();
         private JsonNode reverseLocalityResponse;
+        private boolean areaResultSeen;
+        private boolean addressResultSeen;
         private int attempts;
     }
 
