@@ -254,12 +254,12 @@
         const locationAddressRows = new WeakMap();
         const LOCATION_RESOLVE_BATCH_SIZE = 500;
         const LOCATION_RESOLVE_MAX_TEXT_LENGTH = 1000;
-        const LOCATION_POLICY_VERSION = 'street-address-v18';
+        const LOCATION_POLICY_VERSION = 'street-address-v19';
         // Match the backend's accepted unit values and require a segment boundary
         // so street names like STEELE, UNIT ROAD, and APARTMENT LANE stay intact.
         const LOCATION_UNIT_VALUE_PATTERN = '(?:[A-Z]?\\d+[A-Z0-9-]*|[A-Z](?:-\\d+[A-Z]?)?)';
         const LOCATION_BUILDING_UNIT_PATTERN = new RegExp(
-            `(?:^|[\\s,])(?:(APT|APARTMENT|UNIT|STE|SUITE)\\.?\\s*#?\\s*|#\\s*)(${LOCATION_UNIT_VALUE_PATTERN})(?=\\s*(?:,|$))`,
+            `(?:^|[\\s,])(?:(APT|APARTMENT|UNIT|STE|SUITE|BLDG|BUILDING)\\.?\\s*#?\\s*|#\\s*)(${LOCATION_UNIT_VALUE_PATTERN})(?=\\s*(?:,|$))`,
             'i'
         );
         const LOCATION_RESOLUTION_STATUSES = new Set([
@@ -1002,6 +1002,8 @@
                 recoveryMessage = ' Google uses a different street spelling or type.';
             } else if (resolution?.strategy === 'corroborated_street_structure') {
                 recoveryMessage = ' Street name verified with additional location checks.';
+            } else if (resolution?.strategy === 'corroborated_building_label') {
+                recoveryMessage = ' Building label verified with additional location checks.';
             } else {
                 return '';
             }
@@ -1017,6 +1019,12 @@
         function getBuildingVerificationText(address) {
             const match = String(address?.text || '').match(LOCATION_BUILDING_UNIT_PATTERN);
             if (!match) return 'Building verified. No apartment or suite was supplied.';
+            if (/^(?:BLDG|BUILDING)$/i.test(match[1] || '')) {
+                return address?.resolution?.reasonCode === 'exact_building_match'
+                    && address?.resolution?.strategy === 'corroborated_building_label'
+                    ? `Building ${match[2]} verified.`
+                    : `Building location verified — Building ${match[2]} retained; the building label was not verified.`;
+            }
             const kind = /^(?:APT|APARTMENT)$/i.test(match[1] || '') ? 'Apt'
                 : /^(?:STE|SUITE)$/i.test(match[1] || '') ? 'Suite'
                     : match[1] ? 'Unit' : 'Unit';

@@ -43,7 +43,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class GeocodingClient {
-    public static final String GEOCODING_VERSION = "street-address-v18";
+    public static final String GEOCODING_VERSION = "street-address-v19";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GeocodingClient.class);
     private static final String CONFLICTING_UNIT = "\u0000";
@@ -71,6 +71,8 @@ public class GeocodingClient {
                     + "((?:[A-Z]?\\d+[A-Z0-9-]*|[A-Z](?:-\\d+[A-Z]?)?))(?=\\s|$)");
     private static final Pattern RETURNED_UNIT_LABEL = Pattern.compile(
             "(?i)^(?:APARTMENT|APT|UNIT|SUITE|STE|ROOM|RM)\\.?\\s+");
+    private static final Pattern BUILDING_LABEL = Pattern.compile(
+            "(?i)^\\s*(?:BLDG|BUILDING)\\.?\\s+#?\\s*([A-Z]?\\d+[A-Z0-9-]*|[A-Z](?:-\\d+[A-Z]?)?)\\s*$");
     private static final Pattern TRAILING_POSTAL_CODE = Pattern.compile("(?i)^(.*?)(?:\\s+)?(\\d{5}(?:-\\d{4})?)$");
     private static final Set<String> CARDINAL_DIRECTIONS = Set.of("N", "S", "E", "W", "NE", "NW", "SE", "SW",
             "NORTH", "SOUTH", "EAST", "WEST", "NORTHEAST", "NORTHWEST", "SOUTHEAST", "SOUTHWEST");
@@ -274,6 +276,10 @@ public class GeocodingClient {
     private PlaceCandidate geocodeOne(String owner, PlaceCandidate candidate, long stopDeadline, long batchDeadline) {
         RecoveryState state = new RecoveryState();
         ExpectedAddress expected = expectedAddress(candidate.text());
+        if (hasBuildingMarker(candidate.text()) && buildingLabel(candidate.text()) == null) {
+            return outcome(candidate, null, LocationResolution.Status.NO_MATCH, "original",
+                    "unit_conflict", state, null);
+        }
         if (expected.houseNumber() == null || expected.route() == null
                 || routeWords(expected.route()).isEmpty()) {
             return outcome(candidate, null, LocationResolution.Status.NO_MATCH, "original",
@@ -308,6 +314,10 @@ public class GeocodingClient {
                         "unit_conflict", state, null);
             }
             if (lookup.status() == LookupStatus.UNIT_MATCH) {
+                if ("corroborated_building_label".equals(lookup.strategy())) {
+                    return outcome(candidate, lookup.candidate(), LocationResolution.Status.VERIFIED_BUILDING,
+                            lookup.strategy(), "exact_building_match", state, null, lookup.matchedAddress());
+                }
                 return outcome(candidate, lookup.candidate(), LocationResolution.Status.VERIFIED_UNIT,
                         lookup.strategy() == null ? form.strategy() : lookup.strategy(),
                         "exact_unit_match", state, null, lookup.matchedAddress());
@@ -486,7 +496,7 @@ public class GeocodingClient {
                                     || distanceMetres(proof.latitude(), proof.longitude(), lat, lon) > 2)) {
                                 return new LookupOutcome(LookupStatus.AMBIGUOUS, null);
                             }
-                            String unit = returnedUnit(match);
+                            String unit = returnedUnit(match, candidate.text());
                             if (unit != null && (CONFLICTING_UNIT.equals(unit)
                                     || expected.unit() == null || !expected.unit().equals(canonicalUnit(unit)))) unitConflict = true;
                         }
@@ -510,7 +520,7 @@ public class GeocodingClient {
                                     || distanceMetres(proof.latitude(), proof.longitude(), lat, lon) > 2)) {
                                 return new LookupOutcome(LookupStatus.AMBIGUOUS, null);
                             }
-                            String unit = returnedUnit(match);
+                            String unit = returnedUnit(match, candidate.text());
                             if (postalCompetitor && unit != null && (CONFLICTING_UNIT.equals(unit)
                                     || expected.unit() == null || !expected.unit().equals(canonicalUnit(unit)))) {
                                 unitConflict = true;
@@ -537,11 +547,12 @@ public class GeocodingClient {
                             && recoverableStreetStructure(match, expected, candidate.text(), cityMatches);
                     if (!streetMatches || !cityMatches && !postalCityMatches
                             || proof == null && (!hasStreetSuffix(expected.route())
-                                || hasExplicitMunicipalLocality(expected.localityHint()))) {
+                                || hasExplicitMunicipalLocality(expected.localityHint())
+                                || buildingLabel(candidate.text()) != null)) {
                         if (proof == null && (structureRecovery || form.strategy().equals("original")
                                 && recoverableRepresentation(match, expected, streetMatches, cityMatches))) {
                             structureProposalSeen |= structureRecovery;
-                            String unit = returnedUnit(match);
+                            String unit = returnedUnit(match, candidate.text());
                             if ((expected.unit() == null && hasSecondaryUnitEvidence(match))
                                     || unit != null && (CONFLICTING_UNIT.equals(unit)
                                     || expected.unit() == null || !expected.unit().equals(unit))) {
@@ -572,7 +583,7 @@ public class GeocodingClient {
                             match.path("geometry").path("location").path("lng").asDouble(Double.NaN),
                             match.path("place_id").asString(""), !cityMatches && postalCityMatches, parentBuilding)) continue;
 
-                    String returnedUnit = returnedUnit(match);
+                    String returnedUnit = returnedUnit(match, candidate.text());
                     if (proof != null && proof.providerPostal() != null && expected.unit() != null
                             && !providerUnitAgrees(match, expected.unit())) {
                         unitConflict = true;
@@ -965,7 +976,10 @@ public class GeocodingClient {
                 && canonicalStreetWords(expected.route()).equals(canonicalStreetWords(route));
         boolean explicitMunicipalStreet = hasExplicitMunicipalLocality(hint)
                 && streetRoutesMatch(expected.route(), route);
-        if (!literalSuffixless && !explicitMunicipalStreet && !missingTerminalSuffix(expected.route(), route)
+        boolean explicitBuilding = buildingLabel(originalText) != null && cityMatches
+                && streetRoutesMatch(expected.route(), route)
+                && expected.unit() != null && expected.unit().equals(returnedUnit(match, originalText));
+        if (!explicitBuilding && !literalSuffixless && !explicitMunicipalStreet && !missingTerminalSuffix(expected.route(), route)
                 && !providerOmittedTerminalSuffix(expected.route(), route)
                 && !providerAddedLeadingDirection(expected.route(), route)) return false;
         boolean municipalityOnly = singleLocalityComponent(match).type().equals("administrative_area_level_3");
@@ -989,12 +1003,12 @@ public class GeocodingClient {
                 new StreetStructureProof(expected.route(), singlePostalCode(proposed),
                         explicitMunicipalityMatches(proposed, expected.localityHint())));
         String originalStreet = expected.houseNumber() + " " + expected.route()
-                + (expected.unit() == null ? "" : " UNIT " + expected.unit());
+                + queryUnitSuffix(candidate.text(), expected.unit());
         LookupOutcome constrained = lookup(owner, candidate, precise,
                 new LookupForm(originalStreet, structuredComponents(expected.localityHint()), "original_structure_proof", false),
                 stopDeadline, batchDeadline, state, target);
         if (constrained.status() != LookupStatus.UNIT_MATCH && constrained.status() != LookupStatus.BUILDING_MATCH) return constrained;
-        String unit = returnedUnit(proposed);
+        String unit = returnedUnit(proposed, candidate.text());
         boolean forwardUnitConfirmed = expected.unit() != null && expected.unit().equals(unit)
                 && constrained.status() == LookupStatus.UNIT_MATCH;
         ProofTarget reverseTarget = forwardUnitConfirmed
@@ -1031,7 +1045,9 @@ public class GeocodingClient {
         String display = proposed.path("formatted_address").asString(null);
         if (display != null && display.length() > 512) display = null;
         return new LookupOutcome(status, candidate.withLatLonPid(lat, lon, id),
-                parentConfirmed ? "corroborated_unit_parent" : "corroborated_street_structure", display);
+                status == LookupStatus.UNIT_MATCH && buildingLabel(candidate.text()) != null
+                        ? "corroborated_building_label"
+                        : parentConfirmed ? "corroborated_unit_parent" : "corroborated_street_structure", display);
     }
 
     private static boolean unitlessParentMatches(JsonNode match, ExpectedAddress expected, ProofTarget proof) {
@@ -1608,6 +1624,53 @@ public class GeocodingClient {
         return returned.isEmpty() ? null : returned.size() == 1 ? returned.getFirst() : CONFLICTING_UNIT;
     }
 
+    /** Building labels are a separate secondary identity, never apartment aliases. */
+    private static boolean hasBuildingMarker(String address) {
+        Matcher markers = UNIT_MARKER_WITH_VALUE.matcher(AddressExtractor.normalize(address));
+        while (markers.find()) {
+            String marker = markers.group().strip();
+            if (marker.startsWith("BLDG") || marker.startsWith("BUILDING")) return true;
+        }
+        return false;
+    }
+
+    private static BuildingLabel buildingLabel(String address) {
+        UnitSpan span = unitSpan(address);
+        if (span == null) return null;
+        String label = address.substring(span.start(), span.end()).strip();
+        Matcher building = BUILDING_LABEL.matcher(label);
+        if (!building.matches()) return null;
+        Matcher markers = UNIT_MARKER_WITH_VALUE.matcher(AddressExtractor.normalize(address));
+        if (!markers.find() || markers.find()) return null;
+        return new BuildingLabel(label.toUpperCase(Locale.ROOT), building.group(1).toUpperCase(Locale.ROOT));
+    }
+
+    private static String queryUnitSuffix(String originalText, String unit) {
+        if (unit == null) return "";
+        BuildingLabel building = buildingLabel(originalText);
+        return building == null ? " UNIT " + unit : " " + building.label();
+    }
+
+    private static String returnedUnit(JsonNode result, String originalText) {
+        BuildingLabel supplied = buildingLabel(originalText);
+        if (supplied == null) return returnedUnit(result);
+        if (componentCount(result, "subpremise") == 0) return null;
+        if (componentCount(result, "subpremise") != 1) return CONFLICTING_UNIT;
+        String display = result.path("formatted_address").asString("");
+        if (display.isBlank() || display.length() > 512) return CONFLICTING_UNIT;
+        BuildingLabel formatted = buildingLabel(display);
+        if (formatted == null || !supplied.value().equals(formatted.value())) return CONFLICTING_UNIT;
+        List<String> values = componentValues(result, "subpremise");
+        if (values.isEmpty()) return CONFLICTING_UNIT;
+        for (String value : values) {
+            Matcher building = BUILDING_LABEL.matcher(Normalizer.normalize(value, Normalizer.Form.NFKC));
+            String identity = building.matches() ? building.group(1).toUpperCase(Locale.ROOT)
+                    : value.strip().matches("[A-Za-z0-9-]+") ? value.strip().toUpperCase(Locale.ROOT) : CONFLICTING_UNIT;
+            if (!supplied.value().equals(identity)) return CONFLICTING_UNIT;
+        }
+        return canonicalUnit(supplied.value());
+    }
+
     private static String canonicalUnit(String unit) {
         return unit.toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]", "");
     }
@@ -2182,6 +2245,7 @@ public class GeocodingClient {
     private record UnitBoundary(int start, int end) { }
 
     private record UnitSpan(int start, int end, String value) { }
+    private record BuildingLabel(String label, String value) { }
 
     private record StateSuffix(String prefix, String code) { }
 

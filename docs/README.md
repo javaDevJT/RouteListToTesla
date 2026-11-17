@@ -1,5 +1,6 @@
 # Documentation
 
+- [Laporte building verification](laporte-building-verification-2026-11-17.md): typed building labels, exact rooftop and parent corroboration, retained source text.
 - [Norfolk street estimate review](norfolk-verification-2026-11-15.md): deployed v18 estimate feedback, unverified-stop safeguards and release evidence.
 - [Fenton and Linden verification](fenton-linden-verification-2026-11-14.md): deployed v17 omitted-direction corroboration, explicit provider-coverage holds and release evidence.
 - [Old Shook Road verification](old-shook-verification-2026-11-12.md): deployed v16 shared building/unit type classification, native regressions and release evidence.

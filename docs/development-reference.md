@@ -6,7 +6,13 @@ TAP-managed sign-in and stable-subject authorization replace independent Google 
 
 ### October 19 provider-corroborated recovery
 
-Current source extraction is `ocr-consensus-v10`; geocoding is `street-address-v18`.
+Current source extraction is `ocr-consensus-v10`; geocoding is `street-address-v19`.
+
+Explicit `BLDG`/`BUILDING` identities have a separate corroborated path. Provider
+subpremise and formatted labels must agree with the supplied building number;
+constrained queries retain its type. A distinct unitless reverse parent requires
+a fourth matching forward proof. Review verifies the building label without
+claiming apartment verification. See [Laporte building verification](laporte-building-verification-2026-11-17.md).
 
 When a unitless original address omits a road suffix and Google returns only an
 eligible interpolated street address, review shows that provider address as an
