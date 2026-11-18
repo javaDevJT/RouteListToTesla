@@ -16,10 +16,14 @@ public record LocationResolution(
     }
 
     public enum Status {
-        VERIFIED_UNIT, VERIFIED_BUILDING, NO_MATCH, AMBIGUOUS, DEFERRED, LOOKUP_UNAVAILABLE
+        VERIFIED_UNIT, VERIFIED_BUILDING, ESTIMATED_STREET, NO_MATCH, AMBIGUOUS, DEFERRED, LOOKUP_UNAVAILABLE
     }
 
     public boolean verified() {
         return status == Status.VERIFIED_UNIT || status == Status.VERIFIED_BUILDING;
+    }
+
+    public boolean navigable() {
+        return verified() || status == Status.ESTIMATED_STREET;
     }
 }

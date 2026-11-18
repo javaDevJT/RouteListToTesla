@@ -254,7 +254,7 @@
         const locationAddressRows = new WeakMap();
         const LOCATION_RESOLVE_BATCH_SIZE = 500;
         const LOCATION_RESOLVE_MAX_TEXT_LENGTH = 1000;
-        const LOCATION_POLICY_VERSION = 'street-address-v19';
+        const LOCATION_POLICY_VERSION = 'street-address-v20';
         // Match the backend's accepted unit values and require a segment boundary
         // so street names like STEELE, UNIT ROAD, and APARTMENT LANE stay intact.
         const LOCATION_UNIT_VALUE_PATTERN = '(?:[A-Z]?\\d+[A-Z0-9-]*|[A-Z](?:-\\d+[A-Z]?)?)';
@@ -263,7 +263,7 @@
             'i'
         );
         const LOCATION_RESOLUTION_STATUSES = new Set([
-            'VERIFIED_UNIT', 'VERIFIED_BUILDING', 'NO_MATCH', 'AMBIGUOUS', 'DEFERRED', 'LOOKUP_UNAVAILABLE'
+            'VERIFIED_UNIT', 'VERIFIED_BUILDING', 'ESTIMATED_STREET', 'NO_MATCH', 'AMBIGUOUS', 'DEFERRED', 'LOOKUP_UNAVAILABLE'
         ]);
         let locationBlockedSendTargets = null;
         const MANUAL_COMMAND_HOLD_PREFIX = 'route-list-to-tesla:manual-command-hold:';
@@ -434,7 +434,7 @@
                     }
                     button.disabled = blocked || locationBlocked;
                     button.title = locationBlocked
-                        ? 'Resolve every stop to a verified location before starting.' : '';
+                        ? 'Resolve every stop to a usable location before starting.' : '';
                 });
             }
 
@@ -837,7 +837,7 @@
                 if (extractedAddresses.length > 0) {
                     const cacheMsg = cachedCount > 0 ? ` (${cachedCount} from cache)` : '';
                     const verifiedCount = extractedAddresses.filter(isLocated).length;
-                    showStatus(`Read ${extractedAddresses.length} address candidate(s)${cacheMsg}. ${verifiedCount} of ${extractedAddresses.length} stops verified; review each lookup result before sending.`, verifiedCount === extractedAddresses.length ? 'success' : 'loading', processStatus);
+                    showStatus(`Read ${extractedAddresses.length} address candidate(s)${cacheMsg}. ${verifiedCount} of ${extractedAddresses.length} stops have usable locations; review each lookup result before sending.`, verifiedCount === extractedAddresses.length ? 'success' : 'loading', processStatus);
                     
                     // Save session for recovery
                     await saveCurrentSession();
@@ -876,7 +876,11 @@
         function isLocated(address) {
             if (!hasUsableCoordinates(address)) return false;
             const resolution = getCurrentLocationResolution(address);
-            return resolution?.status === 'VERIFIED_UNIT' || resolution?.status === 'VERIFIED_BUILDING';
+            return isNavigableResolution(resolution);
+        }
+
+        function isNavigableResolution(resolution) {
+            return ['VERIFIED_UNIT', 'VERIFIED_BUILDING', 'ESTIMATED_STREET'].includes(resolution?.status);
         }
 
         function hasUsableCoordinates(address) {
@@ -914,24 +918,35 @@
                 return;
             }
 
-            const verifiedCount = extractedAddresses.filter(isLocated).length;
+            const locatedCount = extractedAddresses.filter(isLocated).length;
+            const verifiedCount = extractedAddresses.filter(address => isLocated(address)
+                && getCurrentLocationResolution(address)?.status !== 'ESTIMATED_STREET').length;
+            const acceptedEstimates = locatedCount - verifiedCount;
             const pendingCount = extractedAddresses.filter(address =>
                 getLocationResolutionState(address).status === 'pending').length;
             const outcomeCount = status => extractedAddresses.filter(address =>
                 getCurrentLocationResolution(address)?.status === status).length;
+            const estimatedCount = extractedAddresses.filter(address => {
+                const resolution = getCurrentLocationResolution(address);
+                return resolution?.status === 'NO_MATCH' &&
+                    ['street_location_estimated', 'street_estimate_unconfirmed'].includes(resolution.reasonCode);
+            }).length;
             const counts = [
-                ['no safe match', outcomeCount('NO_MATCH')],
+                ['estimated location', estimatedCount],
+                ['no safe match', outcomeCount('NO_MATCH') - estimatedCount],
                 ['ambiguous', outcomeCount('AMBIGUOUS')],
                 ['deferred', outcomeCount('DEFERRED')],
                 ['temporarily unavailable', outcomeCount('LOOKUP_UNAVAILABLE')]
             ].filter(([, count]) => count > 0).map(([label, count]) => `${count} ${label}`);
             const message = pendingCount > 0
-                ? `${verifiedCount} of ${total} stops verified. Checking locations for ${pendingCount} more; routes with unverified stops are paused.`
-                : verifiedCount === total
-                    ? `${verifiedCount} of ${total} stops verified.`
-                    : `${verifiedCount} of ${total} stops verified. ${counts.length > 0 ? counts.join(', ') + '.' : `${total - verifiedCount} still need a verified location.`} Retry lookup or edit those addresses; routes stay paused until their locations are verified.`;
+                ? `${verifiedCount} of ${total} stops verified. Checking locations for ${pendingCount} more; routes with unresolved stops are paused.`
+                : locatedCount === total
+                    ? acceptedEstimates > 0
+                        ? `${locatedCount} of ${total} stops ready: ${verifiedCount} verified, ${acceptedEstimates} estimated road location${acceptedEstimates === 1 ? '' : 's'} accepted.`
+                        : `${verifiedCount} of ${total} stops verified.`
+                    : `${verifiedCount} of ${total} stops verified. ${acceptedEstimates > 0 ? `${acceptedEstimates} estimated road location(s) accepted. ` : ''}${counts.length > 0 ? counts.join(', ') + '.' : `${total - locatedCount} still need a usable location.`} Review the flagged stops below; routes stay paused until every stop has a usable location.`;
             notice.textContent = message;
-            notice.className = `status ${verifiedCount === total ? 'success' : pendingCount > 0 ? 'loading' : 'error'}`;
+            notice.className = `status ${locatedCount === total ? acceptedEstimates > 0 ? 'estimated' : 'success' : pendingCount > 0 ? 'loading' : 'error'}`;
         }
 
         function refreshLocationPresentation() {
@@ -948,19 +963,32 @@
 
             const resolution = getCurrentLocationResolution(address);
             if (resolution) {
-                if ((resolution.status === 'VERIFIED_UNIT' || resolution.status === 'VERIFIED_BUILDING')
-                    && !hasUsableCoordinates(address)) {
+                if (isNavigableResolution(resolution) && !hasUsableCoordinates(address)) {
                     return 'The lookup result is missing a usable street location. Retry lookup.';
                 }
                 switch (resolution.status) {
                     case 'VERIFIED_UNIT': return `Apartment or suite verified.${getRecoveredLocationDetails(resolution)}`;
                     case 'VERIFIED_BUILDING': return `${getBuildingVerificationText(address)}${getRecoveredLocationDetails(resolution)}`;
+                    case 'ESTIMATED_STREET': {
+                        const suggestion = typeof resolution.matchedAddress === 'string'
+                            ? resolution.matchedAddress.trim() : '';
+                        const mapAddress = suggestion.length > 0 && suggestion.length <= 512
+                            ? ` Map address: ${suggestion}.` : '';
+                        return `Estimated road location accepted. Google matched the house number, street and city; no verified building location was available.${mapAddress} Your address text is retained.`;
+                    }
                     case 'NO_MATCH':
                         if (resolution.reasonCode === 'locality_mismatch') {
                             return getLocalityMismatchDetails(resolution);
                         }
                         if (resolution.reasonCode === 'provider_area_only') {
                             return 'Google returned only a city or area. Check the complete street address and try again; this stop is still unverified.';
+                        }
+                        if (resolution.reasonCode === 'street_estimate_unconfirmed') {
+                            const suggestion = typeof resolution.matchedAddress === 'string'
+                                ? resolution.matchedAddress.trim() : '';
+                            const address = suggestion.length > 0 && suggestion.length <= 512
+                                ? suggestion : 'this street address';
+                            return `Google returned an estimated road location for ${address}, but could not confirm it consistently. This stop remains unresolved and your address text is retained.`;
                         }
                         if (resolution.reasonCode === 'street_location_estimated') {
                             const suggestion = typeof resolution.matchedAddress === 'string'
@@ -1092,9 +1120,10 @@
                 row.appendChild(locationStatus);
             }
             const verified = isLocated(address);
+            const estimated = verified && getCurrentLocationResolution(address)?.status === 'ESTIMATED_STREET';
             const state = getLocationResolutionState(address);
             locationStatus.textContent = getLocationStatusText(address);
-            locationStatus.className = `status location-status ${verified ? 'success' : state.status === 'pending' ? 'loading' : 'error'}`;
+            locationStatus.className = `status location-status ${estimated ? 'estimated' : verified ? 'success' : state.status === 'pending' ? 'loading' : 'error'}`;
 
             let retryButton = row.querySelector('.location-retry-button');
             if (verified) {
@@ -1199,9 +1228,7 @@
                             || before[2] !== target.address.pid
                             || JSON.stringify(before[3] || null) !== JSON.stringify(target.address.resolution);
                         const finalResolution = getCurrentLocationResolution(target.address);
-                        const verifiedNow = (finalResolution?.status === 'VERIFIED_UNIT'
-                            || finalResolution?.status === 'VERIFIED_BUILDING')
-                            && hasUsableCoordinates(target.address);
+                        const verifiedNow = isNavigableResolution(finalResolution) && hasUsableCoordinates(target.address);
                         setLocationResolutionState(target.address, {
                             version: target.version,
                             status: verifiedNow ? 'located'
@@ -1243,7 +1270,7 @@
             if (autoStartButton) {
                 autoStartButton.disabled = extractedAddresses.some(address => !isLocated(address));
                 if (autoStartButton.disabled) {
-                    autoStartButton.title = 'Resolve every stop to a verified location before starting.';
+                    autoStartButton.title = 'Resolve every stop to a usable location before starting.';
                 } else {
                     autoStartButton.title = '';
                 }
@@ -1271,7 +1298,7 @@
             sendButton.dataset.addressStart = String(startIndex);
             sendButton.dataset.addressCount = String(addresses.length);
             sendButton.disabled = addresses.some(address => !isLocated(address));
-            if (sendButton.disabled) sendButton.title = 'Resolve every stop to a verified location before sending.';
+            if (sendButton.disabled) sendButton.title = 'Resolve every stop to a usable location before sending.';
             sendButton.onclick = () => sendGroupToTesla(groupIndex, startIndex, addresses.length);
             
             groupHeader.appendChild(groupTitle);
@@ -1441,7 +1468,7 @@
             const groupAddresses = extractedAddresses.slice(startIndex, startIndex + groupSize);
 
             if (groupAddresses.some(address => !isLocated(address))) {
-                showLocationBlockedSendStatus('Resolve a verified location for every stop in this route before sending. Retry the lookup or edit the address.', groupAddresses);
+                showLocationBlockedSendStatus('Resolve a usable location for every stop in this route before sending. Retry the lookup or edit the address.', groupAddresses);
                 return;
             }
 
@@ -1830,7 +1857,7 @@
             }
 
             if (extractedAddresses.some(address => !isLocated(address))) {
-                showLocationBlockedSendStatus('Resolve a verified location for every stop before starting automatic navigation. Retry the lookup or edit the address.', extractedAddresses);
+                showLocationBlockedSendStatus('Resolve a usable location for every stop before starting automatic navigation. Retry the lookup or edit the address.', extractedAddresses);
                 return;
             }
 
@@ -1924,7 +1951,7 @@
                 const locationBlocked = extractedAddresses.some(address => !isLocated(address));
                 if (locationBlocked) {
                     button.disabled = true;
-                    button.title = 'Resolve every stop to a verified location before starting.';
+                    button.title = 'Resolve every stop to a usable location before starting.';
                 }
                 if (getManualCommandHold(currentVin) || manualCommandInFlight.has(currentVin)) {
                     button.disabled = true;

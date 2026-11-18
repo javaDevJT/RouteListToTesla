@@ -302,7 +302,7 @@ function candidate(overrides = {}) {
         ],
         resolution: {
             status: 'VERIFIED_UNIT', strategy: 'original', reasonCode: 'street_match', attempts: 1,
-            policyVersion: 'street-address-v19', retryAfterSeconds: null
+            policyVersion: 'street-address-v20', retryAfterSeconds: null
         },
         ...overrides
     };
@@ -317,7 +317,7 @@ function resolvedCandidate(address, placeId = 'resolved-place') {
         text: address.text, lat: 42.31, lon: -83.81, pid: placeId,
         resolution: {
             status: 'VERIFIED_UNIT', strategy: 'original', reasonCode: 'street_match', attempts: 1,
-            policyVersion: 'street-address-v19', retryAfterSeconds: null
+            policyVersion: 'street-address-v20', retryAfterSeconds: null
         }
     };
 }
@@ -545,7 +545,7 @@ test('new-policy upload shows screenshot and lookup progress without an immediat
     finishUpload({ ok: true, json: async () => ({ candidates: [address], imageCandidates: [[address]] }) });
     await pending;
     assert.equal(resolveCalls, 0);
-    assert.match(harness.statuses.at(-1).message, /1 of 1 stops verified/);
+    assert.match(harness.statuses.at(-1).message, /1 of 1 stops have usable locations/);
 });
 
 test('terminal upload outcomes do not trigger an automatic second lookup', async () => {
@@ -555,7 +555,7 @@ test('terminal upload outcomes do not trigger an automatic second lookup', async
             text: `120 Main St Apt 104, Ann Arbor MI ${status}`,
             resolution: {
                 status, strategy: 'bounded_recovery', reasonCode: status.toLowerCase(), attempts: 8,
-                policyVersion: 'street-address-v19', retryAfterSeconds: status === 'DEFERRED' ? 30 : null
+                policyVersion: 'street-address-v20', retryAfterSeconds: status === 'DEFERRED' ? 30 : null
             }
         });
         const harness = createUploadHarness(async url => {
@@ -566,7 +566,7 @@ test('terminal upload outcomes do not trigger an automatic second lookup', async
         harness.context.configureUpload([{ file: {}, hash: `${status}-hash`, name: 'route.png' }]);
         await harness.context.uploadUi.submit({ preventDefault() {} });
         assert.equal(resolveCalls, 0, `${status} must remain terminal until manual retry`);
-        assert.match(harness.statuses.at(-1).message, /0 of 1 stops verified/);
+        assert.match(harness.statuses.at(-1).message, /0 of 1 stops have usable locations/);
     }
 });
 
@@ -743,7 +743,7 @@ test('every terminal location outcome stays visible and only verified unit/build
     const addresses = statuses.map(status => {
         const resolution = {
             status, strategy: 'bounded_recovery', reasonCode: status.toLowerCase(), attempts: 4,
-            policyVersion: 'street-address-v19', retryAfterSeconds: status === 'DEFERRED' ? 30 : null
+            policyVersion: 'street-address-v20', retryAfterSeconds: status === 'DEFERRED' ? 30 : null
         };
         if (status === 'VERIFIED_UNIT') return candidate({ text: '120 Main St Apt 104, Ann Arbor MI', resolution });
         if (status === 'VERIFIED_BUILDING') return candidate({ text: '120 Main St Apt 104, Ann Arbor MI', resolution });
@@ -784,7 +784,7 @@ test('building verification does not infer units from alphabetic street names', 
     ];
     const addresses = texts.map(text => candidate({ text, resolution: {
         status: 'VERIFIED_BUILDING', strategy: 'original', reasonCode: 'exact_street_match',
-        attempts: 1, policyVersion: 'street-address-v19'
+        attempts: 1, policyVersion: 'street-address-v20'
     }}));
     const harness = createLocationHarness(addresses, async () => { throw new Error('unexpected retry'); });
     const rows = addresses.map((address, index) => harness.context.ui.createAddressItem(address, index));
@@ -807,7 +807,7 @@ test('building verification displays separated and compact units accepted by the
     ];
     const addresses = cases.map(({ text }) => candidate({ text, resolution: {
         status: 'VERIFIED_BUILDING', strategy: 'original', reasonCode: 'unit_not_confirmed',
-        attempts: 1, policyVersion: 'street-address-v19'
+        attempts: 1, policyVersion: 'street-address-v20'
     }}));
     const harness = createLocationHarness(addresses, async () => { throw new Error('unexpected retry'); });
     const rows = addresses.map((address, index) => harness.context.ui.createAddressItem(address, index));
@@ -824,7 +824,7 @@ test('recovered locations show the Google address and retained screenshot text w
         text: '123 Main St, Requested City MI',
         resolution: {
             status: 'VERIFIED_UNIT', strategy: 'corroborated_locality', reasonCode: 'recovered_locality', attempts: 3,
-            policyVersion: 'street-address-v19', matchedAddress: '123 Main St, Alternate City, MI 48104, USA'
+            policyVersion: 'street-address-v20', matchedAddress: '123 Main St, Alternate City, MI 48104, USA'
         }
     });
     const streetRepresentation = candidate({
@@ -832,7 +832,7 @@ test('recovered locations show the Google address and retained screenshot text w
         resolution: {
             status: 'VERIFIED_UNIT', strategy: 'corroborated_street_representation',
             reasonCode: 'recovered_street_representation', attempts: 3,
-            policyVersion: 'street-address-v19', matchedAddress: '456 North Oak Ave, Example City, MI 48104, USA'
+            policyVersion: 'street-address-v20', matchedAddress: '456 North Oak Ave, Example City, MI 48104, USA'
         }
     });
     const buildingOnly = candidate({
@@ -840,13 +840,13 @@ test('recovered locations show the Google address and retained screenshot text w
         resolution: {
             status: 'VERIFIED_BUILDING', strategy: 'corroborated_locality',
             reasonCode: 'unit_not_confirmed', attempts: 3,
-            policyVersion: 'street-address-v19', matchedAddress: '789 Pine Rd, Alternate City, MI 48104, USA'
+            policyVersion: 'street-address-v20', matchedAddress: '789 Pine Rd, Alternate City, MI 48104, USA'
         }
     });
     const ordinary = candidate({
         resolution: {
             status: 'VERIFIED_UNIT', strategy: 'original', reasonCode: 'exact_unit_match', attempts: 1,
-            policyVersion: 'street-address-v19', matchedAddress: '123 Main St, Map City, MI 48104, USA'
+            policyVersion: 'street-address-v20', matchedAddress: '123 Main St, Map City, MI 48104, USA'
         }
     });
     const addresses = [locality, streetRepresentation, buildingOnly, ordinary];
@@ -871,7 +871,7 @@ test('area-only provider results explain the coverage hold without changing the 
     const text = '9440 CRYSTAL TARN, FENTON, MI';
     const address = candidate({text, resolution: {
         status: 'NO_MATCH', strategy: 'recovery_exhausted', reasonCode: 'provider_area_only',
-        attempts: 2, policyVersion: 'street-address-v19'
+        attempts: 2, policyVersion: 'street-address-v20'
     }});
     const harness = createLocationHarness([address], async () => { throw new Error('unexpected retry'); });
     const row = harness.context.ui.createAddressItem(address, 0);
@@ -885,7 +885,7 @@ test('postal recovery explains the city difference and keeps the supplied addres
     const text = '878 NOTTINGHAM RD, GROSSE POINTE, MI';
     const address = candidate({text, resolution: {
         status: 'VERIFIED_BUILDING', strategy: 'corroborated_postal_locality', reasonCode: 'exact_street_match',
-        attempts: 2, policyVersion: 'street-address-v19',
+        attempts: 2, policyVersion: 'street-address-v20',
         matchedAddress: '878 Nottingham Rd, Grosse Pointe Park, MI 48230, USA'
     }});
     const harness = createLocationHarness([address], async () => { throw new Error('unexpected retry'); });
@@ -903,7 +903,7 @@ test('an estimated street suggestion remains unverified and preserves the OCR st
     const text = '13342 S NORFOLK, DETROIT, MI';
     const address = unlocatedCandidate({text, ocrAgreement: 2, resolution: {
         status: 'NO_MATCH', strategy: 'recovery_exhausted', reasonCode: 'street_location_estimated',
-        attempts: 2, policyVersion: 'street-address-v19',
+        attempts: 2, policyVersion: 'street-address-v20',
         matchedAddress: '13342 S Norfolk Ct, Detroit, MI 48235, USA'
     }});
     const harness = createLocationHarness([address], async () => { throw new Error('unexpected retry'); });
@@ -925,7 +925,7 @@ test('estimated street hints render provider text literally and handle absent su
     for (const matchedAddress of [null, {}, 17, '', 'x'.repeat(513), '<img src=x onerror=alert(1)>']) {
         const address = unlocatedCandidate({resolution: {
             status: 'NO_MATCH', strategy: 'recovery_exhausted', reasonCode: 'street_location_estimated',
-            attempts: 2, policyVersion: 'street-address-v19', matchedAddress
+            attempts: 2, policyVersion: 'street-address-v20', matchedAddress
         }});
         const harness = createLocationHarness([address], async () => { throw new Error('unexpected retry'); });
         const status = harness.context.ui.createAddressItem(address, 0).querySelector('.location-status');
@@ -944,7 +944,7 @@ test('a corroborated postal unit keeps apartment text and explains the verified 
     const text = '414 MILLER AVE APT 109, ROCHESTER HILLS, MI';
     const address = candidate({text, resolution: {
         status: 'VERIFIED_UNIT', strategy: 'corroborated_postal_unit_parent', reasonCode: 'exact_unit_match',
-        attempts: 4, policyVersion: 'street-address-v19',
+        attempts: 4, policyVersion: 'street-address-v20',
         matchedAddress: '414 Miller Ave #109, Rochester, MI 48307, USA'
     }});
     const harness = createLocationHarness([address], async () => { throw new Error('unexpected retry'); });
@@ -963,7 +963,7 @@ test('street structure recovery shows the verified map address without changing 
     const text = '6734 COTTONWOOD KNL, WEST BLOOMFIELD, MI';
     const address = candidate({text, resolution: {
         status: 'VERIFIED_BUILDING', strategy: 'corroborated_street_structure', reasonCode: 'exact_street_match',
-        attempts: 3, policyVersion: 'street-address-v19',
+        attempts: 3, policyVersion: 'street-address-v20',
         matchedAddress: '6734 Cottonwood Knoll Ct, West Bloomfield Township, MI 48322, USA'
     }});
     const harness = createLocationHarness([address], async () => { throw new Error('unexpected retry'); });
@@ -981,7 +981,7 @@ test('recovered verification safely falls back when matchedAddress is absent or 
     for (const matchedAddress of [undefined, null, {}, 17, '', 'x'.repeat(513)]) {
         const resolution = {
             status: 'VERIFIED_UNIT', strategy: 'corroborated_street_representation',
-            reasonCode: 'recovered_street_representation', attempts: 3, policyVersion: 'street-address-v19'
+            reasonCode: 'recovered_street_representation', attempts: 3, policyVersion: 'street-address-v20'
         };
         if (matchedAddress !== undefined) resolution.matchedAddress = matchedAddress;
         const address = candidate({ text: originalText, resolution });
@@ -1002,7 +1002,7 @@ test('provider matchedAddress is rendered literally as text', () => {
         text: '555 Birch St, Original City MI',
         resolution: {
             status: 'VERIFIED_UNIT', strategy: 'corroborated_locality', reasonCode: 'recovered_locality', attempts: 3,
-            policyVersion: 'street-address-v19', matchedAddress: untrustedAddress
+            policyVersion: 'street-address-v20', matchedAddress: untrustedAddress
         }
     });
     const harness = createLocationHarness([address], async () => { throw new Error('unexpected retry'); });
@@ -1018,7 +1018,7 @@ test('locality mismatch feedback preserves the source address and permits an exp
     const matchedAddress = '8336 E Morrow Cir, Dearborn MI 48126 USA';
     const address = unlocatedCandidate({ text: sourceText, resolution: {
         status: 'NO_MATCH', strategy: 'original', reasonCode: 'locality_mismatch', attempts: 1,
-        policyVersion: 'street-address-v19', matchedAddress
+        policyVersion: 'street-address-v20', matchedAddress
     }});
     let resolveCalls = 0;
     const harness = createLocationHarness([address], async (url, options) => {
@@ -1052,7 +1052,7 @@ test('locality mismatch feedback safely falls back for malformed and oversized p
     for (const matchedAddress of [undefined, null, {}, 17, '', 'x'.repeat(513)]) {
         const resolution = {
             status: 'NO_MATCH', strategy: 'original', reasonCode: 'locality_mismatch', attempts: 1,
-            policyVersion: 'street-address-v19'
+            policyVersion: 'street-address-v20'
         };
         if (matchedAddress !== undefined) resolution.matchedAddress = matchedAddress;
         const address = unlocatedCandidate({ text: '8336 E MORROW CIR DETROIT MI', resolution });
@@ -1072,7 +1072,7 @@ test('locality mismatch provider feedback is literal text, not markup', () => {
     const untrustedAddress = '<img src=x onerror=alert(1)> 8336 E Morrow Cir, Dearborn MI 48126 USA';
     const address = unlocatedCandidate({ text: '8336 E MORROW CIR DETROIT MI', resolution: {
         status: 'NO_MATCH', strategy: 'original', reasonCode: 'locality_mismatch', attempts: 1,
-        policyVersion: 'street-address-v19', matchedAddress: untrustedAddress
+        policyVersion: 'street-address-v20', matchedAddress: untrustedAddress
     }});
     const harness = createLocationHarness([address], async () => { throw new Error('unexpected lookup'); });
     const status = harness.context.ui.createAddressItem(address, 0).querySelector('.location-status');
@@ -1205,6 +1205,7 @@ test('late location responses cannot overwrite edited text and reordered or remo
 
 for (const [savedState, resolution, savedText] of [
     ['legacy coordinates', null],
+    ['v19 unverified literal street', {status: 'NO_MATCH', strategy: 'recovery_exhausted', reasonCode: 'no_safe_match', attempts: 2, policyVersion: 'street-address-v19'}, '543 IOWA, BELLEVILLE, MI'],
     ['v18 rejected building label', { status: 'NO_MATCH', strategy: 'original', reasonCode: 'unit_conflict', attempts: 1, policyVersion: 'street-address-v18' }, '8429 LAPORTE DR BLDG 24, STERLING HEIGHTS, MI'],
     ['v5 verified unit', { status: 'VERIFIED_UNIT', strategy: 'original', reasonCode: 'exact_unit_match', attempts: 1, policyVersion: 'street-address-v5' }],
     ['v5 unit conflict', { status: 'NO_MATCH', strategy: 'original', reasonCode: 'unit_conflict', attempts: 1, policyVersion: 'street-address-v5' }],
@@ -1272,7 +1273,7 @@ test(`restoring a session re-resolves ${savedState} before saving current-policy
     assert.equal(context.extractedAddresses[0], unresolved);
     assert.equal(unresolved.pid, 'restored-place');
     assert.equal(unresolved.text, savedText || '120 Main St Apt 330, Ann Arbor MI');
-    assert.equal(unresolved.resolution.policyVersion, 'street-address-v19');
+    assert.equal(unresolved.resolution.policyVersion, 'street-address-v20');
     assert.deepEqual(saved, ['restored-place']);
 });
 }
@@ -1409,14 +1410,14 @@ test('manual and automatic sends stay blocked on unresolved locations without di
     await manualContext.send(0, 0, 1);
     assert.equal(apiCalls, 0);
     assert.equal(holdWrites, 0);
-    assert.match(statuses.at(-1).message, /verified location/);
+    assert.match(statuses.at(-1).message, /usable location/);
 
     const autoContext = vm.createContext({ ...globals });
     new vm.Script(autoSource + '\nglobalThis.start = startAutoNavigation;').runInContext(autoContext);
     await autoContext.start();
     assert.equal(apiCalls, 0);
     assert.equal(holdWrites, 0);
-    assert.match(statuses.at(-1).message, /verified location/);
+    assert.match(statuses.at(-1).message, /usable location/);
 });
 
 test('locality mismatch stays on hold for manual and automatic command dispatch', async () => {
@@ -1427,7 +1428,7 @@ test('locality mismatch stays on hold for manual and automatic command dispatch'
     const sourceText = '8336 E MORROW CIR DETROIT MI';
     const address = unlocatedCandidate({ text: sourceText, resolution: {
         status: 'NO_MATCH', strategy: 'original', reasonCode: 'locality_mismatch', attempts: 1,
-        policyVersion: 'street-address-v19', matchedAddress: '8336 E Morrow Cir, Dearborn MI 48126 USA'
+        policyVersion: 'street-address-v20', matchedAddress: '8336 E Morrow Cir, Dearborn MI 48126 USA'
     }});
     const statuses = [];
     let apiCalls = 0;
@@ -1446,7 +1447,7 @@ test('locality mismatch stays on hold for manual and automatic command dispatch'
     await manualContext.send(0, 0, 1);
     assert.equal(apiCalls, 0);
     assert.equal(holdWrites, 0);
-    assert.match(statuses.at(-1).message, /verified location/);
+    assert.match(statuses.at(-1).message, /usable location/);
     assert.equal(address.text, sourceText);
 
     const autoContext = vm.createContext({ ...globals });
@@ -1454,7 +1455,7 @@ test('locality mismatch stays on hold for manual and automatic command dispatch'
     await autoContext.start();
     assert.equal(apiCalls, 0);
     assert.equal(holdWrites, 0);
-    assert.match(statuses.at(-1).message, /verified location/);
+    assert.match(statuses.at(-1).message, /usable location/);
     assert.equal(address.text, sourceText);
 });
 
@@ -1486,10 +1487,13 @@ test('clearing a command hold does not reenable location-blocked route buttons',
     assert.equal(groupButton.textContent, 'Send Route 1 to Tesla');
     assert.equal(groupButton.dataset.commandBlocked, undefined);
     assert.equal(autoButton.disabled, true);
-    assert.equal(autoButton.title, 'Resolve every stop to a verified location before starting.');
+    assert.equal(autoButton.title, 'Resolve every stop to a usable location before starting.');
 
     Object.assign(addresses[0], {
-        lat: 42.31, lon: -83.81, pid: 'resolved-place', resolution: candidate().resolution
+        lat: 42.1550986, lon: -83.5321065, pid: 'estimated-place', resolution: {
+            ...candidate().resolution, status: 'ESTIMATED_STREET',
+            strategy: 'corroborated_street_estimate', reasonCode: 'corroborated_road_estimate'
+        }
     });
     context.refresh('VIN-TEST');
     assert.equal(groupButton.disabled, false);
@@ -1594,7 +1598,7 @@ test('corroborated building labels retain building identity without claiming an 
     const text = '8429 LAPORTE DR BLDG 24, STERLING HEIGHTS, MI';
     const address = candidate({text, resolution: {
         status: 'VERIFIED_BUILDING', strategy: 'corroborated_building_label', reasonCode: 'exact_building_match',
-        attempts: 4, policyVersion: 'street-address-v19',
+        attempts: 4, policyVersion: 'street-address-v20',
         matchedAddress: '8429 Laporte Dr bldg 24, Sterling Heights, MI 48312, USA'
     }});
     const harness = createLocationHarness([address], async () => { throw new Error('unexpected retry'); });
@@ -1612,10 +1616,81 @@ test('corroborated building labels retain building identity without claiming an 
 test('a parent-only building result retains an unverified building label', () => {
     const address = candidate({text: '8429 LAPORTE DR BLDG 24, STERLING HEIGHTS, MI', resolution: {
         status: 'VERIFIED_BUILDING', strategy: 'original', reasonCode: 'unit_not_confirmed',
-        attempts: 2, policyVersion: 'street-address-v19'
+        attempts: 2, policyVersion: 'street-address-v20'
     }});
     const harness = createLocationHarness([address], async () => { throw new Error('unexpected retry'); });
     const message = harness.context.ui.createAddressItem(address, 0).querySelector('.location-status').textContent;
     assert.match(message, /Building 24 retained; the building label was not verified/);
     assert.doesNotMatch(message, /Building 24 verified|Apartment or suite verified/);
+});
+
+
+test('an uncorroborated street estimate explains its hold', () => {
+    const text = '543 IOWA, BELLEVILLE, MI';
+    const address = unlocatedCandidate({text, resolution: {
+        status: 'NO_MATCH', strategy: 'recovery_exhausted', reasonCode: 'street_estimate_unconfirmed',
+        attempts: 2, policyVersion: 'street-address-v20', matchedAddress: '543 Iowa, Belleville, MI 48111, USA'
+    }});
+    const harness = createLocationHarness([address], async () => { throw new Error('unexpected lookup'); });
+    const row = harness.context.ui.createAddressItem(address, 0);
+    const message = row.querySelector('.location-status').textContent;
+    assert.match(message, /estimated road location for 543 Iowa, Belleville, MI 48111, USA/);
+    assert.match(message, /could not confirm it consistently/);
+    assert.match(message, /This stop remains unresolved/);
+    assert.doesNotMatch(message, /Check the complete street name|edit the address before retrying|Building verified/);
+    assert.equal(row.querySelector('.address-input').value, text);
+    assert.equal(harness.context.ui.isLocated(address), false);
+    assert.equal(address.pid, null);
+    assert.equal(address.lat, 0);
+    assert.equal(address.lon, 0);
+    harness.context.ui.updateLocationResolutionNotice();
+    assert.match(harness.notice.textContent, /0 of 1 stops verified. 1 estimated location/);
+    assert.match(harness.notice.textContent, /Review the flagged stops below/);
+    assert.doesNotMatch(harness.notice.textContent, /1 no safe match|Retry lookup or edit/);
+});
+
+test('literal street estimate suggestions are bounded literal text', () => {
+    for (const matchedAddress of [null, {}, 'x'.repeat(513), '<img src=x onerror=alert(1)>']) {
+        const address = unlocatedCandidate({text: '543 IOWA, BELLEVILLE, MI', resolution: {
+            status: 'NO_MATCH', strategy: 'recovery_exhausted', reasonCode: 'street_estimate_unconfirmed',
+            attempts: 2, policyVersion: 'street-address-v20', matchedAddress
+        }});
+        const harness = createLocationHarness([address], async () => { throw new Error('unexpected lookup'); });
+        const status = harness.context.ui.createAddressItem(address, 0).querySelector('.location-status');
+        assert.equal(status.children.length, 0);
+        assert.doesNotMatch(status.textContent, /\[object Object\]|x{513}/);
+        assert.match(status.textContent, /This stop remains unresolved/);
+        if (typeof matchedAddress === 'string' && matchedAddress.startsWith('<img')) {
+            assert.ok(status.textContent.includes(matchedAddress));
+        }
+        assert.equal(harness.context.ui.isLocated(address), false);
+    }
+});
+
+
+test('corroborated road estimate is ready and amber without claiming building verification', () => {
+    for (const matchedAddress of ['543 Iowa, Belleville, MI 48111, USA', null, {}, 'x'.repeat(513), '<img src=x onerror=alert(1)>']) {
+        const address = candidate({text: '543 IOWA, BELLEVILLE, MI', lat: 42.1550986, lon: -83.5321065,
+            pid: 'estimated-place', resolution: {
+                status: 'ESTIMATED_STREET', strategy: 'corroborated_street_estimate',
+                reasonCode: 'corroborated_road_estimate', attempts: 2, policyVersion: 'street-address-v20', matchedAddress
+            }});
+        const harness = createLocationHarness([address], async () => { throw new Error('unexpected lookup'); });
+        const row = harness.context.ui.createAddressItem(address, 0);
+        const status = row.querySelector('.location-status');
+        assert.match(status.className, /estimated/);
+        assert.match(status.textContent, /Estimated road location accepted/);
+        assert.match(status.textContent, /no verified building location was available/);
+        assert.doesNotMatch(status.textContent, /Building verified|Apartment or suite verified|\[object Object\]|x{513}/);
+        assert.equal(status.children.length, 0);
+        assert.equal(row.querySelector('.retry-location-btn'), null);
+        assert.equal(row.querySelector('.address-input').value, address.text);
+        assert.equal(harness.context.ui.isLocated(address), true);
+        harness.context.ui.updateLocationResolutionNotice();
+        assert.equal(harness.notice.textContent, '1 of 1 stops ready: 0 verified, 1 estimated road location accepted.');
+        assert.match(harness.notice.className, /estimated/);
+        if (typeof matchedAddress === 'string' && matchedAddress.startsWith('<img')) {
+            assert.ok(status.textContent.includes(matchedAddress));
+        }
+    }
 });

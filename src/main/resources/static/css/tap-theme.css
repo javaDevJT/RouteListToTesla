@@ -99,6 +99,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); }
 .status, .alert { margin-top: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 4px; overflow-wrap: anywhere; }
 .status.success, .alert-success { background: var(--success-soft); color: var(--success); border-color: #bdd7b9; }
 .status.error, .alert-error { background: #fff0ed; color: #8b201b; border-color: #e4b3a9; }
+.status.estimated { background: #fff4d6; color: #6b4a00; border-color: #d0ad5f; }
 .status.loading { background: var(--panel-warm); color: var(--muted); }
 .status.loading::before { content: ""; display: inline-block; width: 14px; height: 14px; margin-right: 9px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; vertical-align: -2px; animation: status-spin .9s linear infinite; }
 @keyframes status-spin { to { transform: rotate(360deg); } }

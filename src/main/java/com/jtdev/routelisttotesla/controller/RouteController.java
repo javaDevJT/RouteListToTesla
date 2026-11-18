@@ -341,7 +341,7 @@ public class RouteController {
                         + (index + 1) + ". Try again shortly. No route was sent.");
             }
             if (!hasResolvedLocation(candidate) || candidate.resolution() == null
-                    || !candidate.resolution().verified()
+                    || !candidate.resolution().navigable()
                     || !GeocodingClient.GEOCODING_VERSION.equals(candidate.resolution().policyVersion())) {
                 throw new IllegalArgumentException("Stop " + (index + 1)
                         + " has no unambiguous street location after automatic address recovery. Review its lookup status. No route was sent.");

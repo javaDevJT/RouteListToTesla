@@ -352,6 +352,56 @@ class RouteControllerTest {
     }
 
     @Test
+    void freshServerEstimatedLocationCanBeUsedByBothDispatchPaths() throws Exception {
+        when(vehicles.vehicles(IDENTITY)).thenReturn(List.of(new TapVehicleClient.Vehicle(VIN, "test car", true, true)));
+        PlaceCandidate stale = unresolved("543 IOWA, BELLEVILLE, MI", "iowa.png", 0)
+                .withLatLonPid(42.0, -83.0, "client-point");
+        PlaceCandidate fresh = stale.withLatLonPid(42.1550986, -83.5321065, "server-estimate")
+                .withResolution(new LocationResolution(LocationResolution.Status.ESTIMATED_STREET,
+                        "corroborated_street_estimate", "corroborated_road_estimate", 2,
+                        GeocodingClient.GEOCODING_VERSION, null));
+        when(geocoder.batchGeocode(OWNER, List.of(stale))).thenReturn(List.of(fresh));
+        when(navigation.sendManualRoute(IDENTITY, VIN, List.of(fresh), IDEMPOTENCY_KEY))
+                .thenReturn(new TapVehicleClient.CommandResult("PENDING", null, "pending"));
+        AutoNavSession session = new AutoNavSession("estimated-session", VIN, OWNER, IDENTITY.grantId(), List.of(fresh));
+        when(navigation.createSession(VIN, IDENTITY, List.of(fresh))).thenReturn(session);
+        String body = mapper.writeValueAsString(new PlaceCandidatesResponse(List.of(stale)));
+
+        mvc.perform(post("/route/send/" + VIN).with(csrf()).with(login())
+                        .header("Idempotency-Key", IDEMPOTENCY_KEY).contentType("application/json").content(body))
+                .andExpect(status().isAccepted());
+        mvc.perform(post("/route/auto-navigate/" + VIN).with(csrf()).with(login())
+                        .contentType("application/json").content(body))
+                .andExpect(status().isOk());
+
+        verify(geocoder, times(2)).batchGeocode(OWNER, List.of(stale));
+        verify(navigation).sendManualRoute(IDENTITY, VIN, List.of(fresh), IDEMPOTENCY_KEY);
+        verify(navigation).createSession(VIN, IDENTITY, List.of(fresh));
+        verify(navigation).startSession("estimated-session", IDENTITY);
+    }
+
+    @Test
+    void clientEstimatedStatusCannotBypassFreshServerLocationHold() throws Exception {
+        when(vehicles.vehicles(IDENTITY)).thenReturn(List.of(new TapVehicleClient.Vehicle(VIN, "test car", true, true)));
+        PlaceCandidate forged = unresolved("543 IOWA, BELLEVILLE, MI", "iowa.png", 0)
+                .withLatLonPid(42.1550986, -83.5321065, "client-estimate")
+                .withResolution(new LocationResolution(LocationResolution.Status.ESTIMATED_STREET,
+                        "corroborated_street_estimate", "corroborated_road_estimate", 2,
+                        GeocodingClient.GEOCODING_VERSION, null));
+        when(geocoder.batchGeocode(OWNER, List.of(forged)))
+                .thenReturn(List.of(forged.withLatLonPid(0, 0, null).withResolution(new LocationResolution(
+                        LocationResolution.Status.NO_MATCH, "recovery_exhausted", "no_safe_match", 2,
+                        GeocodingClient.GEOCODING_VERSION, null))));
+        String body = mapper.writeValueAsString(new PlaceCandidatesResponse(List.of(forged)));
+        for (String path : List.of("/route/send/", "/route/auto-navigate/")) {
+            mvc.perform(post(path + VIN).with(csrf()).with(login())
+                            .header("Idempotency-Key", IDEMPOTENCY_KEY).contentType("application/json").content(body))
+                    .andExpect(status().isBadRequest());
+        }
+        verifyNoInteractions(navigation);
+    }
+
+    @Test
     void unresolvedFreshGeocodePreventsSendingPreviouslyValidClientTuple() throws Exception {
         when(vehicles.vehicles(IDENTITY)).thenReturn(List.of(new TapVehicleClient.Vehicle(VIN, "test car", true, true)));
         PlaceCandidate stale = unresolved("12345 Sample St W Apt 212, Sample City, MI", "route.png", 0)

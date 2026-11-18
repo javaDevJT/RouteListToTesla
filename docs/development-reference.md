@@ -6,7 +6,16 @@ TAP-managed sign-in and stable-subject authorization replace independent Google 
 
 ### October 19 provider-corroborated recovery
 
-Current source extraction is `ocr-consensus-v10`; geocoding is `street-address-v19`.
+Current source extraction is `ocr-consensus-v10`; geocoding is `street-address-v20`.
+
+Complete literal suffixless street names may use a separately labeled
+`ESTIMATED_STREET` fallback after verified-building recovery is exhausted.
+Two unchanged original/locality-constrained queries must agree on the exact
+unitless address, ZIP, place ID and point within two metres. It remains
+`verified() == false` but `navigable() == true`; both command paths freshly
+validate on the server. Partial, conflicting and suffix-invention results remain
+held. Review distinguishes accepted estimates from verified buildings. See
+[Iowa address precision](iowa-address-verification-2026-11-17.md).
 
 Explicit `BLDG`/`BUILDING` identities have a separate corroborated path. Provider
 subpremise and formatted labels must agree with the supplied building number;

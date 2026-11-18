@@ -32,6 +32,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -43,7 +44,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class GeocodingClient {
-    public static final String GEOCODING_VERSION = "street-address-v19";
+    public static final String GEOCODING_VERSION = "street-address-v20";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GeocodingClient.class);
     private static final String CONFLICTING_UNIT = "\u0000";
@@ -342,15 +343,27 @@ public class GeocodingClient {
             return outcome(candidate, match.candidate(), LocationResolution.Status.VERIFIED_BUILDING,
                     match.strategy(), "unit_not_confirmed", state, null, match.matchedAddress());
         }
+        if (state.conflictingStreetEstimates || state.streetEstimates.size() > 1) {
+            return outcome(candidate, null, LocationResolution.Status.AMBIGUOUS,
+                    "estimated_street_fallback", "multiple_destinations", state, null);
+        }
+        if (state.streetEstimates.size() == 1) {
+            EstimatedStreetMatch estimate = state.streetEstimates.values().iterator().next();
+            if (estimate.original && estimate.constrained) {
+                return outcome(candidate, estimate.candidate, LocationResolution.Status.ESTIMATED_STREET,
+                        "corroborated_street_estimate", "corroborated_road_estimate", state, null, estimate.address);
+            }
+        }
         String localityHint = state.localityMismatches.size() == 1
                 ? state.localityMismatches.iterator().next() : null;
-        String estimatedStreetHint = state.interpolatedStreetHints.size() == 1
+        InterpolatedStreetHint estimatedStreetHint = state.interpolatedStreetHints.size() == 1
                 ? state.interpolatedStreetHints.values().iterator().next() : null;
         return outcome(candidate, null, LocationResolution.Status.NO_MATCH, "recovery_exhausted",
                 localityHint != null ? "locality_mismatch"
-                        : estimatedStreetHint != null ? "street_location_estimated"
+                        : estimatedStreetHint != null ? estimatedStreetHint.reasonCode()
                         : state.areaResultSeen && !state.addressResultSeen ? "provider_area_only" : "no_safe_match",
-                state, null, localityHint != null ? localityHint : estimatedStreetHint);
+                state, null, localityHint != null ? localityHint
+                        : estimatedStreetHint != null ? estimatedStreetHint.address() : null);
     }
 
     private LookupOutcome lookup(String owner, PlaceCandidate candidate, ExpectedAddress expected, LookupForm form,
@@ -451,11 +464,16 @@ public class GeocodingClient {
                             .anyMatch(number -> !expected.houseNumber().equals(canonicalHouseNumber(number)))) continue;
                     boolean streetMatches = streetsMatch(expected.route(), match);
                     boolean cityMatches = lookupLocalityMatches(match, expected.localityHint());
-                    if (proof == null && form.strategy().equals("original")) {
-                        String hint = interpolatedStreetEditingHint(match, expected, candidate.text(), cityMatches);
+                    if (proof == null && !form.reverse()) {
+                        InterpolatedStreetHint hint = interpolatedStreetEditingHint(match, expected, candidate.text(), cityMatches);
                         if (hint != null) {
-                            state.interpolatedStreetHints.putIfAbsent(match.path("place_id").asString("") + ":"
-                                    + match.path("geometry").path("location"), hint);
+                            if (form.strategy().equals("original")) {
+                                state.interpolatedStreetHints.putIfAbsent(match.path("place_id").asString("") + ":"
+                                        + match.path("geometry").path("location"), hint);
+                            }
+                            if (hint.reasonCode().equals("street_estimate_unconfirmed")) {
+                                recordStreetEstimate(match, candidate, expected, form, hint, state);
+                            }
                         }
                     }
                     if (proof == null && form.strategy().equals("original") && streetMatches && !cityMatches
@@ -543,7 +561,11 @@ public class GeocodingClient {
                             return new LookupOutcome(LookupStatus.AMBIGUOUS, null);
                         }
                     }
-                    boolean structureRecovery = proof == null && form.strategy().equals("original")
+                    boolean structureRecovery = proof == null && (form.strategy().equals("original")
+                            || form.strategy().equals("structured_locality") && form.address().equals(candidate.text())
+                                && state.streetEstimates.values().stream().anyMatch(estimate -> estimate.original)
+                                && expected.unit() == null && !hasStreetSuffix(expected.route())
+                                && canonicalStreetWords(expected.route()).equals(canonicalStreetWords(addressComponent(match, "route"))))
                             && recoverableStreetStructure(match, expected, candidate.text(), cityMatches);
                     if (!streetMatches || !cityMatches && !postalCityMatches
                             || proof == null && (!hasStreetSuffix(expected.route())
@@ -943,17 +965,43 @@ public class GeocodingClient {
                 && streetStructureDetailsMatch(match, expected, originalText, cityMatches);
     }
 
-    /** An unverified editing hint only; interpolated coordinates never enter the recovery proof. */
-    private static String interpolatedStreetEditingHint(JsonNode match, ExpectedAddress expected,
+    /** Interpolation is not rooftop evidence; only its separate corroborated fallback can be navigable. */
+    private static InterpolatedStreetHint interpolatedStreetEditingHint(JsonNode match, ExpectedAddress expected,
                                                         String originalText, boolean cityMatches) {
+        String route = addressComponent(match, "route");
+        boolean literalStreet = !hasStreetSuffix(expected.route())
+                && canonicalStreetWords(expected.route()).equals(canonicalStreetWords(route));
         if (expected.unit() != null || !cityMatches || !localityMatches(match, expected.localityHint())
                 || hasSecondaryUnitEvidence(match)
                 || !match.path("geometry").path("location_type").asString("").equals("RANGE_INTERPOLATED")
-                || !missingTerminalSuffix(expected.route(), addressComponent(match, "route"))
+                || !literalStreet && !missingTerminalSuffix(expected.route(), route)
                 || !streetStructureDetailsMatch(match, expected, originalText, cityMatches)
                 || singleLocalityComponent(match).type().equals("administrative_area_level_3")) return null;
         String display = match.path("formatted_address").asString("").trim();
-        return display.isEmpty() || display.length() > 512 ? null : display;
+        return display.isEmpty() || display.length() > 512 ? null
+                : new InterpolatedStreetHint(display, literalStreet
+                    ? "street_estimate_unconfirmed" : "street_location_estimated");
+    }
+
+    private static void recordStreetEstimate(JsonNode match, PlaceCandidate candidate, ExpectedAddress expected,
+                                             LookupForm form, InterpolatedStreetHint hint, RecoveryState state) {
+        if (expected.unit() != null || form.unitlessFallback() || !form.address().equals(candidate.text())) return;
+        boolean original = form.strategy().equals("original") && form.components() == null;
+        boolean constrained = form.strategy().equals("structured_locality")
+                && Objects.equals(form.components(), structuredComponents(expected.localityHint()));
+        if (!original && !constrained) return;
+        JsonNode point = match.path("geometry").path("location");
+        String id = match.path("place_id").asString();
+        PlaceCandidate location = candidate.withLatLonPid(point.path("lat").asDouble(), point.path("lng").asDouble(), id);
+        String key = id + ":" + singlePostalCode(match);
+        EstimatedStreetMatch estimate = state.streetEstimates.computeIfAbsent(key,
+                ignored -> new EstimatedStreetMatch(location, hint.address()));
+        if (distanceMetres(estimate.candidate.lat(), estimate.candidate.lon(), location.lat(), location.lon()) > 2) {
+            state.conflictingStreetEstimates = true;
+            return;
+        }
+        estimate.original |= original;
+        estimate.constrained |= constrained;
     }
 
     private static boolean streetStructureDetailsMatch(JsonNode match, ExpectedAddress expected,
@@ -2147,11 +2195,25 @@ public class GeocodingClient {
 
     private static final class RecoveryState {
         private final Set<String> localityMismatches = new HashSet<>();
-        private final Map<String, String> interpolatedStreetHints = new LinkedHashMap<>();
+        private final Map<String, InterpolatedStreetHint> interpolatedStreetHints = new LinkedHashMap<>();
+        private final Map<String, EstimatedStreetMatch> streetEstimates = new LinkedHashMap<>();
+        private boolean conflictingStreetEstimates;
         private JsonNode reverseLocalityResponse;
         private boolean areaResultSeen;
         private boolean addressResultSeen;
         private int attempts;
+    }
+
+    private static final class EstimatedStreetMatch {
+        private final PlaceCandidate candidate;
+        private final String address;
+        private boolean original;
+        private boolean constrained;
+
+        private EstimatedStreetMatch(PlaceCandidate candidate, String address) {
+            this.candidate = candidate;
+            this.address = address;
+        }
     }
 
     private enum LookupStatus { NO_MATCH, UNIT_MATCH, UNIT_CONFLICT, BUILDING_MATCH, AMBIGUOUS }
@@ -2239,6 +2301,7 @@ public class GeocodingClient {
     private record ExpectedAddress(String houseNumber, String route, String unit, LocalityHint localityHint) { }
 
     private record LocalityHint(String city, String state, String country) { }
+    private record InterpolatedStreetHint(String address, String reasonCode) { }
 
     private record AddressParts(String route, LocalityHint localityHint) { }
 

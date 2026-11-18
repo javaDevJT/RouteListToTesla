@@ -787,10 +787,10 @@ public class AutoNavigationService {
                 throw new IllegalStateException("Location validation changed waypoint text or order");
             }
             LocationResolution resolution = result.resolution();
-            if (resolution == null || !resolution.verified()
+            if (resolution == null || !resolution.navigable()
                     || !GeocodingClient.GEOCODING_VERSION.equals(resolution.policyVersion())
                     || !hasRouteCoordinates(result)) {
-                throw new IllegalStateException("A waypoint lacks current-policy verified street coordinates");
+                throw new IllegalStateException("A waypoint lacks current-policy usable street coordinates");
             }
             // Keep the saved OCR identity/provenance while accepting only server-returned
             // location and resolution fields.

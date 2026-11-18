@@ -1,5 +1,6 @@
 # Documentation
 
+- [Iowa address precision](iowa-address-verification-2026-11-17.md): approved estimated road fallback, honest review labels and C Drive OCR evidence.
 - [Laporte building verification](laporte-building-verification-2026-11-17.md): deployed v19 typed building labels, rooftop/parent corroboration and release evidence.
 - [Norfolk street estimate review](norfolk-verification-2026-11-15.md): deployed v18 estimate feedback, unverified-stop safeguards and release evidence.
 - [Fenton and Linden verification](fenton-linden-verification-2026-11-14.md): deployed v17 omitted-direction corroboration, explicit provider-coverage holds and release evidence.

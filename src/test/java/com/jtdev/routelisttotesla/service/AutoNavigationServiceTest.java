@@ -117,6 +117,34 @@ class AutoNavigationServiceTest {
     }
 
     @Test
+    void pendingGroupUsesFreshEstimatedPointAndRetainsSourceReviewMetadata() {
+        PlaceCandidate original = new PlaceCandidate("543 IOWA, BELLEVILLE, MI", "543 IOWA", "iowa.png", 4,
+                42.0, -83.0, "client-point", 2, false, List.of("IOWA", "IONA"));
+        AutoNavSession session = service.createSession(VIN, IDENTITY, List.of(original));
+        service.startSession(session.getSessionId(), IDENTITY);
+        PlaceCandidate estimated = original.withLatLonPid(42.1550986, -83.5321065, "fresh-estimate")
+                .withResolution(new LocationResolution(LocationResolution.Status.ESTIMATED_STREET,
+                        "corroborated_street_estimate", "corroborated_road_estimate", 2,
+                        GeocodingClient.GEOCODING_VERSION, null));
+        when(geocodingClient.batchGeocode(USER, locationQueries(List.of(original))))
+                .thenReturn(List.of(estimated));
+        when(vehicleClient.telemetry(eq(IDENTITY), eq(VIN), isNull()))
+                .thenReturn(new TelemetryPage(List.of(),
+                        telemetry(1, "P", 0, NOW.minusSeconds(2), NOW.minusSeconds(2)),
+                        1, false, false, NOW));
+
+        service.pollRunningSessions();
+
+        assertEquals(AutoNavSession.CommandState.ACCEPTED, session.getCommandState());
+        PlaceCandidate saved = session.getAllAddresses().getFirst();
+        assertEquals(estimated, saved);
+        assertFalse(saved.resolution().verified());
+        assertTrue(saved.resolution().navigable());
+        verify(geocodingClient).batchGeocode(USER, locationQueries(List.of(original)));
+        verify(vehicleClient).sendRoute(eq(IDENTITY), eq(VIN), eq(List.of(estimated)), anyString());
+    }
+
+    @Test
     void freshValidationRejectsLegacyCityCenterCoordinatesAndHoldsWithoutRouteCommand() throws IOException {
         PlaceCandidate original = addresses(1).get(0)
                 .withLatLonPid(42.3314, -83.0458, "legacy-city-center");
