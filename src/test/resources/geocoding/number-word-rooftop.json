@@ -1,0 +1,92 @@
+{
+  "results": [
+    {
+      "address_components": [
+        {
+          "long_name": "22506",
+          "short_name": "22506",
+          "types": [
+            "street_number"
+          ]
+        },
+        {
+          "long_name": "West Eleven Mile Road",
+          "short_name": "W Eleven Mile Rd",
+          "types": [
+            "route"
+          ]
+        },
+        {
+          "long_name": "Southfield",
+          "short_name": "Southfield",
+          "types": [
+            "locality",
+            "political"
+          ]
+        },
+        {
+          "long_name": "Oakland County",
+          "short_name": "Oakland County",
+          "types": [
+            "administrative_area_level_2",
+            "political"
+          ]
+        },
+        {
+          "long_name": "Michigan",
+          "short_name": "MI",
+          "types": [
+            "administrative_area_level_1",
+            "political"
+          ]
+        },
+        {
+          "long_name": "United States",
+          "short_name": "US",
+          "types": [
+            "country",
+            "political"
+          ]
+        },
+        {
+          "long_name": "48034",
+          "short_name": "48034",
+          "types": [
+            "postal_code"
+          ]
+        },
+        {
+          "long_name": "4734",
+          "short_name": "4734",
+          "types": [
+            "postal_code_suffix"
+          ]
+        }
+      ],
+      "formatted_address": "22506 W Eleven Mile Rd, Southfield, MI 48034, USA",
+      "geometry": {
+        "location": {
+          "lat": 42.4871726,
+          "lng": -83.26664699999999
+        },
+        "location_type": "ROOFTOP",
+        "viewport": {
+          "northeast": {
+            "lat": 42.4884947802915,
+            "lng": -83.26529541970848
+          },
+          "southwest": {
+            "lat": 42.4857968197085,
+            "lng": -83.2679933802915
+          }
+        }
+      },
+      "place_id": "ChIJrR6s2MO3JIgRxP66zkF3MHQ",
+      "types": [
+        "street_address",
+        "subpremise"
+      ]
+    }
+  ],
+  "status": "OK"
+}

@@ -6,7 +6,15 @@ TAP-managed sign-in and stable-subject authorization replace independent Google 
 
 ### October 19 provider-corroborated recovery
 
-Current source extraction is `ocr-consensus-v10`; geocoding is `street-address-v20`.
+Current source extraction is `ocr-consensus-v10`; geocoding is `street-address-v21`.
+
+English number words and numerical forms may corroborate the same street name
+(`Eleven` / `11`, `Twenty First` / `21st`) beyond numbered mile roads. The
+original, unchanged-street constrained and reverse lookups must agree on a
+nonpartial rooftop, house number, ZIP, place ID and point within two metres.
+Cardinals and ordinals remain distinct; directions, suffixes and unit safeguards
+still apply. Review retains the supplied text and explains the provider's spelling.
+See [numbered street verification](numbered-street-verification-2026-11-19.md).
 
 Complete literal suffixless street names may use a separately labeled
 `ESTIMATED_STREET` fallback after verified-building recovery is exhausted.

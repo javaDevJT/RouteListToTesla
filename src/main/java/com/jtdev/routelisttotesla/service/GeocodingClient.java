@@ -7,6 +7,7 @@ import com.jtdev.routelisttotesla.model.LocationResolution;
 import com.jtdev.routelisttotesla.model.PlaceCandidate;
 import com.jtdev.routelisttotesla.util.AddressExtractor;
 import com.jtdev.routelisttotesla.util.StreetSuffixCatalog;
+import com.jtdev.routelisttotesla.util.StreetNumberWords;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,7 +45,7 @@ import java.util.regex.Pattern;
 
 @Service
 public class GeocodingClient {
-    public static final String GEOCODING_VERSION = "street-address-v20";
+    public static final String GEOCODING_VERSION = "street-address-v21";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GeocodingClient.class);
     private static final String CONFLICTING_UNIT = "\u0000";
@@ -463,6 +464,8 @@ public class GeocodingClient {
                     if (streetNumbers.isEmpty() || streetNumbers.stream()
                             .anyMatch(number -> !expected.houseNumber().equals(canonicalHouseNumber(number)))) continue;
                     boolean streetMatches = streetsMatch(expected.route(), match);
+                    boolean numberWordMatch = numberWordStreetMatches(expected.route(), match);
+                    if (proof != null && proof.structure() != null) streetMatches |= numberWordMatch;
                     boolean cityMatches = lookupLocalityMatches(match, expected.localityHint());
                     if (proof == null && !form.reverse()) {
                         InterpolatedStreetHint hint = interpolatedStreetEditingHint(match, expected, candidate.text(), cityMatches);
@@ -503,6 +506,7 @@ public class GeocodingClient {
                                 streetRoutesMatch(proof.structure().suppliedRoute(), route)
                                         || missingTerminalSuffix(proof.structure().suppliedRoute(), route)
                                         || providerOmittedTerminalSuffix(proof.structure().suppliedRoute(), route)
+                                        || numberWordStreetEquivalent(proof.structure().suppliedRoute(), route)
                                         || providerAddedLeadingDirection(proof.structure().suppliedRoute(), route))) {
                         JsonNode point = match.path("geometry").path("location");
                         double lat = point.path("lat").asDouble(Double.NaN), lon = point.path("lng").asDouble(Double.NaN);
@@ -569,6 +573,7 @@ public class GeocodingClient {
                             && recoverableStreetStructure(match, expected, candidate.text(), cityMatches);
                     if (!streetMatches || !cityMatches && !postalCityMatches
                             || proof == null && (!hasStreetSuffix(expected.route())
+                                || numberWordMatch
                                 || hasExplicitMunicipalLocality(expected.localityHint())
                                 || buildingLabel(candidate.text()) != null)) {
                         if (proof == null && (structureRecovery || form.strategy().equals("original")
@@ -587,7 +592,7 @@ public class GeocodingClient {
                         continue;
                     }
                     if (proof != null && proof.structure() != null
-                            && (!unambiguousStreet(match, expected.route())
+                            && (!(unambiguousStreet(match, expected.route()) || numberWordStreetMatches(expected.route(), match))
                                 || proof.structure().explicitMunicipality()
                                     && !explicitMunicipalityMatches(match, expected.localityHint())
                                 || providerOmittedTerminalSuffix(proof.structure().suppliedRoute(), expected.route())
@@ -1019,7 +1024,7 @@ public class GeocodingClient {
                 || !Double.isFinite(lat) || !Double.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180
                 || lat == 0 && lon == 0 || !match.path("place_id").asString("").matches("[A-Za-z0-9_-]{1,512}")) return false;
         String route = addressComponent(match, "route");
-        if (route == null || !unambiguousStreet(match, route)) return false;
+        if (route == null || !(unambiguousStreet(match, route) || numberWordStreetMatches(route, match))) return false;
         boolean literalSuffixless = !hasStreetSuffix(expected.route())
                 && canonicalStreetWords(expected.route()).equals(canonicalStreetWords(route));
         boolean explicitMunicipalStreet = hasExplicitMunicipalLocality(hint)
@@ -1027,7 +1032,9 @@ public class GeocodingClient {
         boolean explicitBuilding = buildingLabel(originalText) != null && cityMatches
                 && streetRoutesMatch(expected.route(), route)
                 && expected.unit() != null && expected.unit().equals(returnedUnit(match, originalText));
-        if (!explicitBuilding && !literalSuffixless && !explicitMunicipalStreet && !missingTerminalSuffix(expected.route(), route)
+        boolean numberWordStreet = cityMatches && localityMatches(match, hint)
+                && numberWordStreetMatches(expected.route(), match);
+        if (!explicitBuilding && !literalSuffixless && !explicitMunicipalStreet && !numberWordStreet && !missingTerminalSuffix(expected.route(), route)
                 && !providerOmittedTerminalSuffix(expected.route(), route)
                 && !providerAddedLeadingDirection(expected.route(), route)) return false;
         boolean municipalityOnly = singleLocalityComponent(match).type().equals("administrative_area_level_3");
@@ -1095,7 +1102,9 @@ public class GeocodingClient {
         return new LookupOutcome(status, candidate.withLatLonPid(lat, lon, id),
                 status == LookupStatus.UNIT_MATCH && buildingLabel(candidate.text()) != null
                         ? "corroborated_building_label"
-                        : parentConfirmed ? "corroborated_unit_parent" : "corroborated_street_structure", display);
+                        : parentConfirmed ? "corroborated_unit_parent"
+                        : numberWordStreetMatches(expected.route(), proposed) ? "corroborated_number_word_street"
+                        : "corroborated_street_structure", display);
     }
 
     private static boolean unitlessParentMatches(JsonNode match, ExpectedAddress expected, ProofTarget proof) {
@@ -2022,6 +2031,31 @@ public class GeocodingClient {
             } else if (!requestedWords.get(index).equals(returnedWords.get(index))) return false;
         }
         return true;
+    }
+
+    private static boolean numberWordStreetMatches(String requested, JsonNode result) {
+        if (componentCount(result, "route") != 1) return false;
+        for (JsonNode component : result.path("address_components")) {
+            if (!hasType(component, "route")) continue;
+            String full = component.path("long_name").asString("");
+            String shortName = component.path("short_name").asString("");
+            return !full.isBlank() && !shortName.isBlank()
+                    && (providerRouteNamesConsistent(full, shortName) || numberWordStreetEquivalent(full, shortName))
+                    && (numberWordStreetEquivalent(requested, full) || numberWordStreetEquivalent(requested, shortName));
+        }
+        return false;
+    }
+
+    private static boolean numberWordStreetEquivalent(String first, String second) {
+        if (first == null || second == null || first.matches(".*(?:^|\\s)-[0-9].*")
+                || second.matches(".*(?:^|\\s)-[0-9].*")) return false;
+        List<String> left = canonicalStreetWords(first), right = canonicalStreetWords(second);
+        for (List<String> words : List.of(left, right)) {
+            int suffix = suffixIndex(words);
+            if (suffix >= 0 && StreetSuffixCatalog.isKnown(words.get(suffix)))
+                words.set(suffix, StreetSuffixCatalog.canonical(words.get(suffix)));
+        }
+        return StreetNumberWords.equivalent(left, right);
     }
 
     private static boolean providerRouteNamesConsistent(String longName, String shortName) {

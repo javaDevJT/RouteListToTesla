@@ -132,7 +132,7 @@ class LiteralStreetEstimateHintTest {
         assertEquals(LocationResolution.Status.NO_MATCH, result.resolution().status());
         assertEquals("recovery_exhausted", result.resolution().strategy());
         assertEquals(reason, result.resolution().reasonCode());
-        assertEquals("street-address-v20", result.resolution().policyVersion());
+        assertEquals("street-address-v21", result.resolution().policyVersion());
         assertEquals(address.provider().formattedAddress(), result.resolution().matchedAddress());
     }
 

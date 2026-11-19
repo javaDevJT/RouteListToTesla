@@ -1,5 +1,7 @@
 # Documentation
 
+- [Numbered street verification](numbered-street-verification-2026-11-19.md): general number-word equivalence and West Eleven Mile rooftop corroboration.
+
 - [Iowa address precision](iowa-address-verification-2026-11-17.md): deployed v20 estimated road fallback, C Drive OCR review and verified release receipts.
 - [Laporte building verification](laporte-building-verification-2026-11-17.md): deployed v19 typed building labels, rooftop/parent corroboration and release evidence.
 - [Norfolk street estimate review](norfolk-verification-2026-11-15.md): deployed v18 estimate feedback, unverified-stop safeguards and release evidence.
