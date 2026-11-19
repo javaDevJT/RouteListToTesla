@@ -36,7 +36,10 @@ FROM ${RUNTIME_IMAGE} AS ubuntu-base
 # Temurin image, then let Ubuntu install its own ca-certificates package.
 COPY --from=java-base /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 RUN sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g; s|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources \
-    && printf '%s\n' 'Acquire::Retries "3";' 'Acquire::https::Timeout "30";' > /etc/apt/apt.conf.d/80route-downloads
+    && printf '%s\n' 'Acquire::Retries "3";' 'Acquire::https::Timeout "30";' \
+         'Acquire::https::CAInfo "/etc/ssl/certs/ca-certificates.crt";' \
+         'Acquire::https::Verify-Peer "true";' 'Acquire::https::Verify-Host "true";' \
+         > /etc/apt/apt.conf.d/80route-downloads
 
 FROM ubuntu-base AS runtime-base
 # Rockcraft adds a Pebble binary to this base. Java runs directly;

@@ -43,7 +43,10 @@ the Ubuntu HTTP mirrors were unreachable. Build stages now use the same signed
 Ubuntu repositories over HTTPS, three bounded download retries and strict index
 update failure handling. The pinned Temurin image supplies the bootstrap CA
 bundle because the minimal Ubuntu base does not include one; Ubuntu then installs
-its own certificate package. TLS and package signature verification remain enabled.
+its own certificate package. The minimal base also lacks OpenSSL's default
+trust-file links. After `44527051063/1` exposed that bootstrap failure, APT is
+configured with the explicit CA bundle path and peer/hostname verification
+enabled. Package signature verification remains enabled.
 
 Private operational evidence is indexed in
 `output/private/west11mile-triage-20261119/RELEASE.md`. The five of 24 approved
