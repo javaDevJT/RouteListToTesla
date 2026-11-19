@@ -2,7 +2,9 @@
 ARG JAVA_BUILD_IMAGE=eclipse-temurin:25-jdk-noble@sha256:8599ea2d8f71696f00dcdf46213a4b65fa97ceeaa318671fccba6b0af2727792
 ARG RUNTIME_IMAGE=ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
 
-FROM ${JAVA_BUILD_IMAGE} AS java-build
+FROM ${JAVA_BUILD_IMAGE} AS java-base
+
+FROM java-base AS java-build
 # Temurin's November CSPU binary is published ahead of its Docker images.
 # Pin its official checksum and use the patched JDK for compilation and jlink.
 ADD --checksum=sha256:760f91b22c3efc9bd1b64ff950598231be82928cc807e30691a0e7a2995a62c0 \
@@ -29,19 +31,26 @@ RUN mkdir /build/extracted \
     && jlink --add-modules "$(cat /build/java-modules.txt),jdk.crypto.ec,jdk.unsupported,jdk.charsets,jdk.localedata" \
         --strip-debug --no-header-files --no-man-pages --compress=zip-6 --output /build/jre
 
-FROM ${RUNTIME_IMAGE} AS runtime-base
+FROM ${RUNTIME_IMAGE} AS ubuntu-base
+# The minimal Ubuntu base has no CA bundle. Bootstrap HTTPS using the pinned
+# Temurin image, then let Ubuntu install its own ca-certificates package.
+COPY --from=java-base /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g; s|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources \
+    && printf '%s\n' 'Acquire::Retries "3";' 'Acquire::https::Timeout "30";' > /etc/apt/apt.conf.d/80route-downloads
+
+FROM ubuntu-base AS runtime-base
 # Rockcraft adds a Pebble binary to this base. Java runs directly;
 # remove the unused service manager rather than ship its vulnerable Go runtime.
 RUN rm -f /usr/bin/pebble \
-    && apt-get update && apt-get upgrade -y \
+    && apt-get --error-on=any update && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
         ca-certificates curl findutils python3 tesseract-ocr tesseract-ocr-eng \
         libgomp1 libgl1 libglib2.0-0t64 libxcb1 libfreetype6 libfontconfig1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Keep native compilation independent of the runtime security-refresh stage.
-FROM ${RUNTIME_IMAGE} AS opencv-build
-RUN apt-get update && apt-get install -y --no-install-recommends \
+FROM ubuntu-base AS opencv-build
+RUN apt-get --error-on=any update && apt-get install -y --no-install-recommends \
     build-essential python3-dev python3-venv \
     && rm -rf /var/lib/apt/lists/*
 RUN python3 -m venv /opt/opencv-build \
@@ -53,7 +62,7 @@ RUN python3 -m venv /opt/opencv-build \
          opencv-python==5.0.0.93 opencv-python-headless==5.0.0.93
 
 FROM runtime-base AS ocr-build
-RUN apt-get update && apt-get install -y --no-install-recommends python3-venv \
+RUN apt-get --error-on=any update && apt-get install -y --no-install-recommends python3-venv \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=opencv-build /opencv-wheelhouse /tmp/opencv-wheelhouse
 COPY ocr/requirements.txt /app/ocr/requirements.txt

@@ -38,6 +38,13 @@ binary closes that publication gap. The runtime base, compiler-free jlink
 packaging, security gate, UID and read-only deployment contract are retained.
 See [Temurin's security guidance](https://adoptium.net/news/2026/11/temurin-november-2026-cspu-java4shell/).
 
+The following run, `44524118168/1`, failed before application compilation when
+the Ubuntu HTTP mirrors were unreachable. Build stages now use the same signed
+Ubuntu repositories over HTTPS, three bounded download retries and strict index
+update failure handling. The pinned Temurin image supplies the bootstrap CA
+bundle because the minimal Ubuntu base does not include one; Ubuntu then installs
+its own certificate package. TLS and package signature verification remain enabled.
+
 Private operational evidence is indexed in
 `output/private/west11mile-triage-20261119/RELEASE.md`. The five of 24 approved
 Google requests are retained; the remaining budget is closed. No Tesla commands
