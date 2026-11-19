@@ -29,6 +29,15 @@ number expressions, original/constrained/reverse failures, competing buildings,
 unit conflicts and unchanged OCR metadata. Release qualification and deployment
 are pending; a local package is not deployment evidence.
 
+The first candidate CI run, `44515207365/1`, correctly blocked publication on
+two High OpenJDK findings in the previous pinned Java 25.0.4.1 runtime:
+`CVE-2026-114938` and `CVE-2026-91415`. The build now uses the official Temurin
+25.0.5.1+2 Linux x64 binary, pinned by its release SHA-256, for both compilation
+and jlink. Temurin's Docker tag still supplies 25.0.5+8; the checksum-pinned
+binary closes that publication gap. The runtime base, compiler-free jlink
+packaging, security gate, UID and read-only deployment contract are retained.
+See [Temurin's security guidance](https://adoptium.net/news/2026/11/temurin-november-2026-cspu-java4shell/).
+
 Private operational evidence is indexed in
 `output/private/west11mile-triage-20261119/RELEASE.md`. The five of 24 approved
 Google requests are retained; the remaining budget is closed. No Tesla commands

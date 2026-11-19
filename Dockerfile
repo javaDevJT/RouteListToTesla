@@ -1,8 +1,17 @@
 # syntax=docker/dockerfile:1
-ARG JAVA_BUILD_IMAGE=eclipse-temurin:25-jdk-noble@sha256:5b14970485a676b41faa08f4a7bc8716cc20915daa1d581d7a75f37a8ebaf9a8
+ARG JAVA_BUILD_IMAGE=eclipse-temurin:25-jdk-noble@sha256:8599ea2d8f71696f00dcdf46213a4b65fa97ceeaa318671fccba6b0af2727792
 ARG RUNTIME_IMAGE=ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
 
 FROM ${JAVA_BUILD_IMAGE} AS java-build
+# Temurin's November CSPU binary is published ahead of its Docker images.
+# Pin its official checksum and use the patched JDK for compilation and jlink.
+ADD --checksum=sha256:760f91b22c3efc9bd1b64ff950598231be82928cc807e30691a0e7a2995a62c0 \
+    https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5.1%2B2/OpenJDK25U-jdk_x64_linux_hotspot_25.0.5.1_2.tar.gz /tmp/patched-jdk.tar.gz
+RUN mkdir -p /opt/java/patched \
+    && tar -xzf /tmp/patched-jdk.tar.gz --strip-components=1 -C /opt/java/patched \
+    && rm /tmp/patched-jdk.tar.gz \
+    && grep -F 'JAVA_VERSION="25.0.5.1"' /opt/java/patched/release
+ENV JAVA_HOME=/opt/java/patched PATH="/opt/java/patched/bin:${PATH}"
 WORKDIR /build
 COPY --chmod=0755 mvnw ./
 COPY .mvn/ .mvn/
