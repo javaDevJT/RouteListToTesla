@@ -710,7 +710,7 @@ export async function produceBuildReceipts(options) {
       runAttempt: evidence.runAttempt,
       runConclusion: 'success',
       publisherIdentity: config.publisherIdentity,
-      imageRepository: target.imageRepository,
+      imageRepository: `ghcr.io/${target.imageRepository}`,
       imageDigest,
       checkRuns: evidence.checks,
       securityResults: checksForSecurity,
