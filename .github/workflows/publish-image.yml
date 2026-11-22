@@ -43,6 +43,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
+      - name: Test signed receipt producer
+        run: |
+          node -e "if (Number(process.versions.node.split('.')[0]) < 20) process.exit(1)"
+          node --test tests/ci/portable-build-receipt.test.mjs
       - name: Log in to Docker Hub
         if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -113,6 +117,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Test signed receipt producer
+        run: |
+          node -e "if (Number(process.versions.node.split('.')[0]) < 20) process.exit(1)"
+          node --test tests/ci/portable-build-receipt.test.mjs
       - name: Log in to Docker Hub
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:

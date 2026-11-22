@@ -133,6 +133,7 @@ See [release evidence](docs/container-modernization-2026-09-28.md) and
 ## Documentation
 
 - [Documentation index](docs/README.md)
+- [Quarterback receipt registry identity](docs/quarterback-receipt-registry-identity.md)
 - [TAP delegated login setup](OAUTH_SETUP.md)
 - [Development reference](docs/development-reference.md)
 - [iPhone setup](docs/ios-setup.md)
