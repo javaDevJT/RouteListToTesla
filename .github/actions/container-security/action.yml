@@ -49,8 +49,17 @@ runs:
         SECURITY_REPORT_DIRECTORY: ${{ inputs.report-directory }}
         SECURITY_PLATFORMS: ${{ inputs.platforms }}
         SECURITY_IMAGE: ${{ inputs.image }}
+        SECURITY_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       run: |
         set -euo pipefail
+        revision="$GITHUB_SHA"
+        if [[ "$GITHUB_EVENT_NAME" == "pull_request_target" ]]; then
+          revision="$SECURITY_PR_HEAD_SHA"
+        fi
+        [[ "$revision" =~ ^[a-f0-9]{40}$ ]] || {
+          echo "::error::Invalid scan source revision" >&2
+          exit 2
+        }
         platforms=()
         IFS=',' read -r -a platforms <<< "${SECURITY_PLATFORMS//$'\n'/,}"
         args=(python3 "$GITHUB_WORKSPACE/.github/scripts/minimize-security-reports.py")
@@ -75,7 +84,7 @@ runs:
           exit 2
         }
         args+=(--output "$RUNNER_TEMP/security-high-critical.json"
-          --repository "$GITHUB_REPOSITORY" --revision "$GITHUB_SHA"
+          --repository "$GITHUB_REPOSITORY" --revision "$revision"
           --image "$SECURITY_IMAGE" --platform "$SECURITY_PLATFORMS")
         "${args[@]}"
         echo "available=true" >> "$GITHUB_OUTPUT"
