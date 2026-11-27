@@ -149,8 +149,11 @@ function mockFetch({
     calls.push({ url: url.href, method: init.method ?? 'GET', authorization: init.headers?.authorization, signal: init.signal });
     if (url.origin === 'https://qb.example' && url.pathname === '/api/v1/build-receipts' && init.method === 'POST') {
       postBodies.push(String(init.body));
-      posts.push(JSON.parse(String(init.body)));
-      return makeResponse({ accepted: true }, 201);
+      const receipt = JSON.parse(String(init.body));
+      posts.push(receipt);
+      const baseKey = `${receipt.imageRepository}@${receipt.imageDigest}`.toLowerCase();
+      const key = posts.length % 2 === 0 ? `${baseKey}@${receipt.sourceCommit}`.toLowerCase() : baseKey;
+      return makeResponse({ accepted: true, key, receipt }, posts.length % 2 === 0 ? 200 : 201);
     }
     if (url.hostname === 'signed-logs.example') return makeResponse(Buffer.alloc(0));
     if (url.origin !== apiOrigin) throw new Error(`Unexpected request origin: ${url.origin}`);
@@ -251,6 +254,41 @@ test('publishes separately signed receipts from two exact publisher jobs on one 
   assert.equal(mock.calls.some((call) => call.method === 'POST' && call.authorization === 'Bearer receipt-post-token-fixture'), true);
   assert.equal(mock.calls.every((call) => call.signal instanceof AbortSignal), true);
 });
+
+for (const [label, makeSuccessResponse] of [
+  ['an HTML success page', () => makeResponse('<html>private endpoint URL and token=secret</html>', 200, { 'content-type': 'text/html' })],
+  ['missing acknowledgement fields', () => makeResponse({ accepted: true }, 200)],
+  ['a mismatched signed receipt', (receipt) => makeResponse({
+    accepted: true,
+    key: `${receipt.imageRepository}@${receipt.imageDigest}`.toLowerCase(),
+    receipt: { ...receipt, imageDigest: frontendDigest },
+  }, 200)],
+]) {
+  test(`treats ${label} as indeterminate without retrying`, async () => {
+    const mock = mockFetch();
+    let postAttempts = 0;
+    const waits = [];
+    const fetchImpl = async (input, init = {}) => {
+      const url = new URL(input);
+      if (url.origin === 'https://qb.example' && init.method === 'POST') {
+        postAttempts++;
+        return makeSuccessResponse(JSON.parse(String(init.body)));
+      }
+      return mock.fetchImpl(input, init);
+    };
+
+    await assert.rejects(produceBuildReceipts(options({
+      fetchImpl,
+      sleep: async (milliseconds) => { waits.push(milliseconds); },
+    })), (error) => {
+      assert.equal(error.message, 'Quarterback receipt submission returned an indeterminate success response; check the persisted receipt before replaying.');
+      assert.doesNotMatch(error.message, /private endpoint|token=secret|https?:\/\//);
+      return true;
+    });
+    assert.equal(postAttempts, 1);
+    assert.deepEqual(waits, []);
+  });
+}
 
 test('publishes separately signed receipts from a scheduled trusted default-branch run', async () => {
   const mock = mockFetch({ runEvent: 'schedule' });
