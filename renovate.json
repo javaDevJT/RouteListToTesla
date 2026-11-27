@@ -49,6 +49,57 @@
       ],
       "automerge": true,
       "matchCurrentVersion": "!/^0[.]/"
+    },
+    {
+      "description": "Keep the embedded Tomcat property on the 11.0 maintenance line",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchPackageNames": [
+        "org.apache.tomcat.embed:tomcat-embed-core"
+      ],
+      "matchDatasources": [
+        "maven"
+      ],
+      "allowedVersions": "[11.0.30,11.1)",
+      "matchFileNames": [
+        "pom.xml"
+      ]
+    },
+    {
+      "description": "Automerge eligible embedded Tomcat updates through the required Renovate dependency CI check",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchPackageNames": [
+        "org.apache.tomcat.embed:tomcat-embed-core"
+      ],
+      "matchDatasources": [
+        "maven"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "automerge": true,
+      "matchFileNames": [
+        "pom.xml"
+      ],
+      "matchCurrentVersion": "!/^0[.]/"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "matchStrings": [
+        "<tomcat\\.version>(?<currentValue>[^<\\s]+)</tomcat\\.version>"
+      ],
+      "depNameTemplate": "org.apache.tomcat.embed:tomcat-embed-core",
+      "datasourceTemplate": "maven",
+      "versioningTemplate": "maven",
+      "managerFilePatterns": [
+        "/^pom\\.xml$/"
+      ]
     }
   ]
 }
